@@ -28,6 +28,13 @@ export default {
     '[&_span]:!text-xs',
     '!text-center',
     '[&>div>div>div]:font-normal',
+    'bg-white/[0.9]',
+    'dark:bg-[#1E1E1E]/[0.9]',
+    'list-decimal',
+    '!leading-4',
+    'lg:col-span-2',
+    'min-h-[560px]',
+    '!pt-0',
   ],
   plugins: [generated],
 };

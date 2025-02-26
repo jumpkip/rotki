@@ -18,6 +18,7 @@ declare global {
   const BaseAsset: typeof import('@rotki/common')['BaseAsset']
   const BigNumber: typeof import('@rotki/common')['BigNumber']
   const Blockchain: typeof import('@rotki/common')['Blockchain']
+  const CommonQueryStatusData: typeof import('@rotki/common')['CommonQueryStatusData']
   const DARK_THEME: typeof import('@rotki/common')['DARK_THEME']
   const EffectScope: typeof import('vue')['EffectScope']
   const Eth2DailyStats: typeof import('@rotki/common')['Eth2DailyStats']
@@ -263,6 +264,7 @@ declare global {
   const useCloned: typeof import('@vueuse/core')['useCloned']
   const useColorMode: typeof import('@vueuse/core')['useColorMode']
   const useConfirmDialog: typeof import('@vueuse/core')['useConfirmDialog']
+  const useCountdown: typeof import('@vueuse/core')['useCountdown']
   const useCounter: typeof import('@vueuse/core')['useCounter']
   const useCssModule: typeof import('vue')['useCssModule']
   const useCssVar: typeof import('@vueuse/core')['useCssVar']
@@ -439,8 +441,6 @@ import { UnwrapRef } from 'vue'
 declare module 'vue' {
   interface GlobalComponents {}
   interface ComponentCustomProperties {
-    readonly AaveBalances: UnwrapRef<typeof import('@rotki/common')['AaveBalances']>
-    readonly AaveHistory: UnwrapRef<typeof import('@rotki/common')['AaveHistory']>
     readonly AssetBalance: UnwrapRef<typeof import('@rotki/common')['AssetBalance']>
     readonly AssetBalanceWithPriceBeforeBreakdown: UnwrapRef<typeof import('@rotki/common')['AssetBalanceWithPriceBeforeBreakdown']>
     readonly AssetCollection: UnwrapRef<typeof import('@rotki/common')['AssetCollection']>
@@ -451,6 +451,7 @@ declare module 'vue' {
     readonly BaseAsset: UnwrapRef<typeof import('@rotki/common')['BaseAsset']>
     readonly BigNumber: UnwrapRef<typeof import('@rotki/common')['BigNumber']>
     readonly Blockchain: UnwrapRef<typeof import('@rotki/common')['Blockchain']>
+    readonly CommonQueryStatusData: UnwrapRef<typeof import('@rotki/common')['CommonQueryStatusData']>
     readonly DARK_THEME: UnwrapRef<typeof import('@rotki/common')['DARK_THEME']>
     readonly EffectScope: UnwrapRef<typeof import('vue')['EffectScope']>
     readonly Eth2DailyStats: UnwrapRef<typeof import('@rotki/common')['Eth2DailyStats']>
@@ -460,7 +461,6 @@ declare module 'vue' {
     readonly EvmTokenKindEnum: UnwrapRef<typeof import('@rotki/common')['EvmTokenKindEnum']>
     readonly HistoricalAssetPricePayload: UnwrapRef<typeof import('@rotki/common')['HistoricalAssetPricePayload']>
     readonly HistoricalAssetPriceResponse: UnwrapRef<typeof import('@rotki/common')['HistoricalAssetPriceResponse']>
-    readonly HistoricalPriceQueryStatusData: UnwrapRef<typeof import('@rotki/common')['HistoricalPriceQueryStatusData']>
     readonly HistoryEventEntryType: UnwrapRef<typeof import('@rotki/common')['HistoryEventEntryType']>
     readonly LIGHT_THEME: UnwrapRef<typeof import('@rotki/common')['LIGHT_THEME']>
     readonly LiquityBalances: UnwrapRef<typeof import('@rotki/common')['LiquityBalances']>
@@ -476,7 +476,6 @@ declare module 'vue' {
     readonly LiquityStatisticDetails: UnwrapRef<typeof import('@rotki/common')['LiquityStatisticDetails']>
     readonly LiquityStatistics: UnwrapRef<typeof import('@rotki/common')['LiquityStatistics']>
     readonly LocationData: UnwrapRef<typeof import('@rotki/common')['LocationData']>
-    readonly LpType: UnwrapRef<typeof import('@rotki/common')['LpType']>
     readonly NetValue: UnwrapRef<typeof import('@rotki/common')['NetValue']>
     readonly NoPrice: UnwrapRef<typeof import('@rotki/common')['NoPrice']>
     readonly NotificationCategory: UnwrapRef<typeof import('@rotki/common')['NotificationCategory']>
@@ -501,12 +500,6 @@ declare module 'vue' {
     readonly TimedAssetBalances: UnwrapRef<typeof import('@rotki/common')['TimedAssetBalances']>
     readonly TimedAssetHistoricalBalances: UnwrapRef<typeof import('@rotki/common')['TimedAssetHistoricalBalances']>
     readonly TimedBalances: UnwrapRef<typeof import('@rotki/common')['TimedBalances']>
-    readonly UnderlyingToken: UnwrapRef<typeof import('@rotki/common')['UnderlyingToken']>
-    readonly XswapAsset: UnwrapRef<typeof import('@rotki/common')['XswapAsset']>
-    readonly XswapBalance: UnwrapRef<typeof import('@rotki/common')['XswapBalance']>
-    readonly XswapBalances: UnwrapRef<typeof import('@rotki/common')['XswapBalances']>
-    readonly XswapEvents: UnwrapRef<typeof import('@rotki/common')['XswapEvents']>
-    readonly XswapPool: UnwrapRef<typeof import('@rotki/common')['XswapPool']>
     readonly Zero: UnwrapRef<typeof import('@rotki/common')['Zero']>
     readonly acceptHMRUpdate: UnwrapRef<typeof import('pinia')['acceptHMRUpdate']>
     readonly assert: UnwrapRef<typeof import('@rotki/common')['assert']>
@@ -696,6 +689,7 @@ declare module 'vue' {
     readonly useCloned: UnwrapRef<typeof import('@vueuse/core')['useCloned']>
     readonly useColorMode: UnwrapRef<typeof import('@vueuse/core')['useColorMode']>
     readonly useConfirmDialog: UnwrapRef<typeof import('@vueuse/core')['useConfirmDialog']>
+    readonly useCountdown: UnwrapRef<typeof import('@vueuse/core')['useCountdown']>
     readonly useCounter: UnwrapRef<typeof import('@vueuse/core')['useCounter']>
     readonly useCssModule: UnwrapRef<typeof import('vue')['useCssModule']>
     readonly useCssVar: UnwrapRef<typeof import('@vueuse/core')['useCssVar']>

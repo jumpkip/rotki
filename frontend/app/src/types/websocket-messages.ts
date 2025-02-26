@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Blockchain, HistoricalPriceQueryStatusData, type Notification } from '@rotki/common';
+import { Blockchain, CommonQueryStatusData, type Notification } from '@rotki/common';
 import { EvmChainAddress, EvmChainLikeAddress } from '@/types/history/events';
 import { CalendarEventPayload } from '@/types/history/calendar';
 
@@ -33,7 +33,10 @@ export const SocketMessageProgressUpdateSubType = {
   CSV_IMPORT_RESULT: 'csv_import_result',
   EVM_UNDECODED_TRANSACTIONS: 'evm_undecoded_transactions',
   HISTORICAL_PRICE_QUERY_STATUS: 'historical_price_query_status',
+  LIQUITY_STAKING_QUERY: 'liquity_staking_query',
+  MULTIPLE_PRICES_QUERY_STATUS: 'multiple_prices_query_status',
   PROTOCOL_CACHE_UPDATES: 'protocol_cache_updates',
+  STATS_PRICE_QUERY: 'stats_price_query',
 } as const;
 
 export type SocketMessageProgressUpdateSubType = (typeof SocketMessageProgressUpdateSubType)[keyof typeof SocketMessageProgressUpdateSubType];
@@ -45,10 +48,8 @@ export const EvmTransactionQueryData = z
   })
   .merge(EvmChainAddress);
 
-export const EvmUnDecodedTransactionsData = z.object({
+export const EvmUnDecodedTransactionsData = CommonQueryStatusData.extend({
   chain: z.string(),
-  processed: z.number(),
-  total: z.number(),
 });
 
 export type EvmUnDecodedTransactionsData = z.infer<typeof EvmUnDecodedTransactionsData>;
@@ -65,6 +66,12 @@ export const EvmUndecodedTransactionBreakdown = z.object({
 export const EvmUndecodedTransactionResponse = z.record(EvmUndecodedTransactionBreakdown);
 
 export type EvmUndecodedTransactionResponse = z.infer<typeof EvmUndecodedTransactionResponse>;
+
+export const StatsPriceQueryData = CommonQueryStatusData.extend({
+  counterparty: z.string(),
+});
+
+export type StatsPriceQueryData = z.infer<typeof StatsPriceQueryData>;
 
 export const HistoryEventsQueryStatus = {
   QUERYING_EVENTS_FINISHED: 'querying_events_finished',
@@ -172,11 +179,22 @@ export type ProtocolCacheUpdatesData = z.infer<typeof ProtocolCacheUpdatesData>;
 
 export const ProtocolCacheUpdatesDataWithSubtype = ProtocolCacheUpdatesData.extend({
   subtype: z.literal(SocketMessageProgressUpdateSubType.PROTOCOL_CACHE_UPDATES),
-
 });
 
-export const HistoricalPriceQueryStatusDataWithSubtype = HistoricalPriceQueryStatusData.extend({
+export const HistoricalPriceQueryStatusDataWithSubtype = CommonQueryStatusData.extend({
   subtype: z.literal(SocketMessageProgressUpdateSubType.HISTORICAL_PRICE_QUERY_STATUS),
+});
+
+export const LiquityStakingQueryDataWithSubtype = CommonQueryStatusData.extend({
+  subtype: z.literal(SocketMessageProgressUpdateSubType.LIQUITY_STAKING_QUERY),
+});
+
+export const StatsPriceQueryDataWithSubtype = StatsPriceQueryData.extend({
+  subtype: z.literal(SocketMessageProgressUpdateSubType.STATS_PRICE_QUERY),
+});
+
+export const MultiplePricesQueryStatusWithSubtype = CommonQueryStatusData.extend({
+  subtype: z.literal(SocketMessageProgressUpdateSubType.MULTIPLE_PRICES_QUERY_STATUS),
 });
 
 export const CsvImportResult = z.object({
@@ -196,13 +214,14 @@ export const CsvImportResultWithSubtype = CsvImportResult.extend({
   subtype: z.literal(SocketMessageProgressUpdateSubType.CSV_IMPORT_RESULT),
 });
 
-export type CsvImportResultWithSubtype = z.infer<typeof CsvImportResultWithSubtype>;
-
 export const ProgressUpdateResultData = z.discriminatedUnion('subtype', [
   EvmUnDecodedTransactionsDataWithSubtype,
   ProtocolCacheUpdatesDataWithSubtype,
   HistoricalPriceQueryStatusDataWithSubtype,
   CsvImportResultWithSubtype,
+  LiquityStakingQueryDataWithSubtype,
+  StatsPriceQueryDataWithSubtype,
+  MultiplePricesQueryStatusWithSubtype,
 ]);
 
 export type ProgressUpdateResultData = z.infer<typeof ProgressUpdateResultData>;

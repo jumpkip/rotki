@@ -9,7 +9,7 @@ T = TypeVar('T')
 
 class ABCEnumMeta(EnumMeta, ABCMeta):
     """Taken from https://stackoverflow.com/questions/56131308/create-an-abstract-enum-class"""
-    def __new__(cls: type[T], *args: Any, **kw: Any) -> T:  # the noqa is due to https://github.com/astral-sh/ruff/issues/16127 # noqa: PYI019, E501
+    def __new__(cls: type[T], *args: Any, **kw: Any) -> T:
         abstract_enum_cls = super().__new__(cls, *args, **kw)  # type: ignore
         # Only check abstractions if members were defined.
         if abstract_enum_cls._member_map_:
@@ -135,9 +135,6 @@ class SerializableEnumIntValueMixin(SerializableEnumMixin):
             return cls(upper_value)
         except ValueError as e:
             raise DeserializationError(f'Failed to deserialize {cls.__name__} value {value}') from e  # noqa: E501
-
-
-D = TypeVar('D', bound=DBEnumMixIn)
 
 
 class DBCharEnumMixIn(SerializableEnumNameMixin, DBEnumMixIn):

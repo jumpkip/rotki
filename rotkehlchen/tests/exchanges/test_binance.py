@@ -15,6 +15,7 @@ from rotkehlchen.assets.asset import Asset
 from rotkehlchen.assets.converters import asset_from_binance
 from rotkehlchen.constants.assets import A_ADA, A_BNB, A_BTC, A_DOT, A_ETH, A_EUR, A_USDT, A_WBTC
 from rotkehlchen.constants.misc import ONE
+from rotkehlchen.db.cache import DBCacheDynamic
 from rotkehlchen.db.constants import BINANCE_MARKETS_KEY
 from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset
 from rotkehlchen.errors.misc import RemoteError
@@ -252,6 +253,15 @@ def test_binance_query_trade_history(function_scope_binance):
 
     with patch.object(binance.session, 'request', side_effect=mock_my_trades):
         trades = binance.query_trade_history(start_ts=0, end_ts=1638529919, only_cache=False)
+
+    with function_scope_binance.db.conn.read_ctx() as cursor:
+        assert function_scope_binance.db.get_dynamic_cache(
+            cursor=cursor,
+            name=DBCacheDynamic.BINANCE_PAIR_LAST_ID,
+            location=function_scope_binance.location.serialize(),
+            location_name=function_scope_binance.name,
+            queried_pair='BNBBTC',
+        ) == 28457
 
     expected_trades = [Trade(
         timestamp=1499865549,
@@ -884,9 +894,9 @@ def test_binance_query_lending_interests_history(
     )
     binance = function_scope_binance
 
-    def mock_my_lendings(url, *args, **kwargs):  # pylint: disable=unused-argument
+    def mock_my_lendings(url, params, *args, **kwargs):  # pylint: disable=unused-argument
         if 'simple-earn/flexible/history/rewardsRecord' in url:
-            if 'BONUS' in url:
+            if (request_type := params.get('type')) == 'BONUS':
                 return MockResponse(200, """{
                     "rows": [{
                         "asset": "BUSD",
@@ -897,7 +907,7 @@ def test_binance_query_lending_interests_history(
                     }],
                     "total": 2
                 }""")
-            elif 'REALTIME' in url:
+            elif request_type == 'REALTIME':
                 return MockResponse(200, """{
                     "rows": [{
                         "asset": "USDT",
@@ -934,17 +944,23 @@ def test_binance_query_lending_interests_history(
 
     with (
         patch.object(binance.session, 'request', side_effect=mock_my_lendings),
-        binance.db.conn.cursor() as cursor,
+        binance.db.conn.read_ctx() as cursor,
     ):
-        assert binance.query_lending_interests_history(
-            cursor=cursor,
-            start_ts=Timestamp(0),
-            end_ts=Timestamp(API_TIME_INTERVAL_CONSTRAINT_TS),
-        ) is False
+        for count, location in [
+            (0, Location.BINANCEUS),
+            (4, Location.BINANCE),
+        ]:
+            binance.location = location
+            assert binance.query_lending_interests_history(
+                cursor=binance.db.conn.cursor(),
+                start_ts=Timestamp(0),
+                end_ts=Timestamp(API_TIME_INTERVAL_CONSTRAINT_TS),
+            ) is False
 
-        assert cursor.execute(
-            'SELECT COUNT(*) FROM history_events WHERE subtype="reward";',
-        ).fetchone()[0] == 4
+            assert cursor.execute(
+                'SELECT COUNT(*) FROM history_events WHERE subtype="reward" AND location=?;',
+                (location.serialize_for_db(),),
+            ).fetchone()[0] == count
 
     assert len(binance.msg_aggregator.consume_errors()) == 0
     assert len(binance.msg_aggregator.consume_warnings()) == 0

@@ -42,6 +42,7 @@ from rotkehlchen.constants.misc import NFT_DIRECTIVE, USERDB_NAME
 from rotkehlchen.constants.timing import HOUR_IN_SECONDS
 from rotkehlchen.db.cache import (
     AddressArgType,
+    BinancePairLastTradeArgsType,
     DBCacheDynamic,
     DBCacheStatic,
     ExtraTxArgType,
@@ -101,7 +102,7 @@ from rotkehlchen.errors.api import (
     IncorrectApiKeyFormat,
     RotkehlchenPermissionError,
 )
-from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset
+from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.errors.misc import (
     DBUpgradeError,
     InputError,
@@ -703,6 +704,15 @@ class DBHandler:
     def get_dynamic_cache(
             self,
             cursor: 'DBCursor',
+            name: Literal[DBCacheDynamic.BINANCE_PAIR_LAST_ID],
+            **kwargs: Unpack[BinancePairLastTradeArgsType],
+    ) -> int | None:
+        ...
+
+    @overload
+    def get_dynamic_cache(
+            self,
+            cursor: 'DBCursor',
             name: Literal[DBCacheDynamic.LAST_QUERY_TS],
             **kwargs: Unpack[LabeledLocationIdArgsType],
     ) -> Timestamp | None:
@@ -794,6 +804,16 @@ class DBHandler:
             name: Literal[DBCacheDynamic.LAST_CRYPTOTX_OFFSET],
             value: int,
             **kwargs: Unpack[LabeledLocationArgsType],
+    ) -> None:
+        ...
+
+    @overload
+    def set_dynamic_cache(
+            self,
+            write_cursor: 'DBCursor',
+            name: Literal[DBCacheDynamic.BINANCE_PAIR_LAST_ID],
+            value: int,
+            **kwargs: Unpack[BinancePairLastTradeArgsType],
     ) -> None:
         ...
 
@@ -1511,6 +1531,7 @@ class DBHandler:
             self,
             cursor: 'DBCursor',
             balance_type: BalanceType | None = BalanceType.ASSET,
+            include_entries_with_missing_assets: bool = False,
     ) -> list[ManuallyTrackedBalance]:
         """Returns the manually tracked balances from the DB"""
         query_balance_type = ''
@@ -1526,18 +1547,25 @@ class DBHandler:
         data = []
         for entry in query:
             tags = deserialize_tags_from_db(entry[4])
+            if (
+                (asset_is_missing := not Asset(entry[0]).exists()) is True
+                and include_entries_with_missing_assets is False
+            ):
+                continue
+
             try:
                 balance_type = BalanceType.deserialize_from_db(entry[5])
                 data.append(ManuallyTrackedBalance(
                     identifier=entry[6],
-                    asset=Asset(entry[0]).check_existence(),
+                    asset=Asset(entry[0]),
                     label=entry[1],
                     amount=FVal(entry[2]),
                     location=Location.deserialize_from_db(entry[3]),
                     tags=tags,
                     balance_type=balance_type,
+                    asset_is_missing=asset_is_missing,
                 ))
-            except (DeserializationError, UnknownAsset, UnsupportedAsset, ValueError) as e:
+            except (DeserializationError, ValueError) as e:
                 # ValueError would be due to FVal failing
                 self.msg_aggregator.add_warning(
                     f'Unexpected data in a ManuallyTrackedBalance entry in the DB: {e!s}',
@@ -1899,9 +1927,11 @@ class DBHandler:
                         extras[key] = KrakenAccountType.deserialize(entry[1])
                     except DeserializationError as e:
                         log.error(f'Couldnt deserialize kraken account type from DB. {e!s}')
-                        continue
-                else:
-                    extras[key] = entry[1]
+                else:  # can only be BINANCE_MARKETS_KEY
+                    try:
+                        extras[key] = json.loads(entry[1])
+                    except json.JSONDecodeError as e:
+                        log.error(f'Could not deserialize binance markets from DB. {e!s}')
 
         return extras
 

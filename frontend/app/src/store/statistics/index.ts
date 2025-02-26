@@ -2,7 +2,6 @@ import {
   type BigNumber,
   type HistoricalAssetPricePayload,
   HistoricalAssetPriceResponse,
-  type HistoricalPriceQueryStatusData,
   type NetValue,
   type TimeFramePeriod,
   TimeUnit,
@@ -16,13 +15,14 @@ import { useNonFungibleBalancesStore } from '@/store/balances/non-fungible';
 import { useGeneralSettingsStore } from '@/store/settings/general';
 import { useNotificationsStore } from '@/store/notifications';
 import { useFrontendSettingsStore } from '@/store/settings/frontend';
-import { useLiquidityPosition } from '@/composables/defi';
 import { useAggregatedBalances } from '@/composables/balances/aggregated';
 import { useStatisticsApi } from '@/composables/api/statistics/statistics-api';
 import { isTaskCancelled } from '@/utils';
 import { TaskType } from '@/types/task-type';
 import { useTaskStore } from '@/store/tasks';
 import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
+import { useSessionAuthStore } from '@/store/session/auth';
+import { usePremium } from '@/composables/premium';
 import type { TaskMeta } from '@/types/task';
 
 function defaultNetValue(): NetValue {
@@ -46,33 +46,28 @@ export const useStatisticsStore = defineStore('statistics', () => {
 
   const { t } = useI18n();
 
-  const settingsStore = useFrontendSettingsStore();
-  const { nftsInNetValue } = storeToRefs(settingsStore);
+  const { nftsInNetValue } = storeToRefs(useFrontendSettingsStore());
   const { notify } = useNotificationsStore();
   const { currencySymbol, floatingPrecision } = storeToRefs(useGeneralSettingsStore());
   const { nonFungibleTotalValue } = storeToRefs(useNonFungibleBalancesStore());
   const { timeframe } = storeToRefs(useSessionSettingsStore());
   const { exchangeRate } = useBalancePricesStore();
   const { assetName } = useAssetInfoRetrieval();
-
-  const historicalAssetPriceStatus = ref<HistoricalPriceQueryStatusData>();
+  const premium = usePremium();
 
   const api = useStatisticsApi();
-  const { lpTotal } = useLiquidityPosition();
   const { balances, liabilities } = useAggregatedBalances();
   const { awaitTask } = useTaskStore();
+  const { logged } = storeToRefs(useSessionAuthStore());
 
   const calculateTotalValue = (includeNft = false): ComputedRef<BigNumber> => computed<BigNumber>(() => {
     const aggregatedBalances = get(balances());
     const totalLiabilities = get(liabilities());
     const nftTotal = includeNft ? get(nonFungibleTotalValue) : 0;
-
-    const lpTotalBalance = get(lpTotal);
-
     const assetValue = aggregatedBalances.reduce((sum, value) => sum.plus(value.usdValue), Zero);
     const liabilityValue = totalLiabilities.reduce((sum, value) => sum.plus(value.usdValue), Zero);
 
-    return assetValue.plus(nftTotal).plus(lpTotalBalance).minus(liabilityValue);
+    return assetValue.plus(nftTotal).minus(liabilityValue);
   });
 
   const totalNetWorth = computed<BigNumber>(() => {
@@ -210,18 +205,17 @@ export const useStatisticsStore = defineStore('statistics', () => {
     }
   };
 
-  const setHistoricalAssetPriceStatus = (status: HistoricalPriceQueryStatusData): void => {
-    set(historicalAssetPriceStatus, status);
-  };
+  watch(premium, async () => {
+    if (get(logged))
+      await fetchNetValue();
+  });
 
   return {
     fetchHistoricalAssetPrice,
     fetchNetValue,
     getNetValue,
-    historicalAssetPriceStatus,
     netValue,
     overall,
-    setHistoricalAssetPriceStatus,
     totalNetWorth,
     totalNetWorthUsd,
   };

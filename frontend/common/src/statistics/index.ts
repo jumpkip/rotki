@@ -51,6 +51,7 @@ export const HistoricalAssetPricePayload = z.object({
   asset: z.string(),
   fromTimestamp: z.number(),
   interval: z.number(),
+  onlyCachePeriod: z.number().optional(),
   toTimestamp: z.number(),
 });
 
@@ -63,9 +64,9 @@ export const HistoricalAssetPriceResponse = z.object({
 
 export type HistoricalAssetPriceResponse = z.infer<typeof HistoricalAssetPriceResponse>;
 
-export const HistoricalPriceQueryStatusData = z.object({
+export const CommonQueryStatusData = z.object({
   processed: z.number(),
   total: z.number(),
 });
 
-export type HistoricalPriceQueryStatusData = z.infer<typeof HistoricalPriceQueryStatusData>;
+export type CommonQueryStatusData = z.infer<typeof CommonQueryStatusData>;

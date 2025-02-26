@@ -9,8 +9,6 @@ import { awaitParallelExecution } from '@/utils/await-parallel-execution';
 import { useTaskStore } from '@/store/tasks';
 import { useNotificationsStore } from '@/store/notifications';
 import { useBlockchainStore } from '@/store/blockchain';
-import { useStatusStore } from '@/store/status';
-import { useDefiStore } from '@/store/defi';
 import { useSettingsStore } from '@/store/settings';
 import { useAddressesNamesStore } from '@/store/blockchain/accounts/addresses-names';
 import { useBlockchainTokensStore } from '@/store/blockchain/tokens';
@@ -74,8 +72,6 @@ export function useBlockchains(): UseBlockchainsReturn {
   const { fetchDetected } = useBlockchainTokensStore();
   const { fetchEnsNames } = useAddressesNamesStore();
   const { enableModule } = useSettingsStore();
-  const { reset: resetDefi } = useDefiStore();
-  const { resetDefiStatus } = useStatusStore();
   const { detectEvmAccounts: detectEvmAccountsCaller } = useBlockchainAccountsApi();
   const { evmChains, getChainName, isEvm, supportedChains, supportsTransactions } = useSupportedChains();
   const { getAddresses } = useBlockchainStore();
@@ -137,8 +133,6 @@ export function useBlockchains(): UseBlockchainsReturn {
   };
 
   const resetStatuses = (): void => {
-    resetDefi();
-    resetDefiStatus();
     resetNftSectionStatus();
   };
 
@@ -233,8 +227,8 @@ export function useBlockchains(): UseBlockchainsReturn {
 
         else
           failedToAddAccounts.push(result.account);
-      }
-      , 2,
+      },
+      2,
     );
 
     if (failedToAddAccounts.length > 0)
@@ -297,8 +291,8 @@ export function useBlockchains(): UseBlockchainsReturn {
           assert(!('xpub' in result.account));
           failedToAddAccounts.push(result.account);
         }
-      }
-      , 2,
+      },
+      2,
     );
 
     if (failedToAddAccounts.length > 0)

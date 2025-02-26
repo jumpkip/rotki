@@ -4,6 +4,7 @@ import dayjs from 'dayjs';
 import { helpers, required, requiredIf } from '@vuelidate/validators';
 import { isEmpty } from 'es-toolkit/compat';
 import useVuelidate from '@vuelidate/core';
+import { isEqual } from 'es-toolkit';
 import { TRADE_LOCATION_EXTERNAL } from '@/data/defaults';
 import { toMessages } from '@/utils/validation';
 import { DateFormat } from '@/types/date-format';
@@ -187,6 +188,7 @@ async function save(): Promise<boolean> {
     feeAsset: null,
     location: get(location),
     locationLabel: get(locationLabel),
+    notes: get(notes),
     timestamp,
   };
 
@@ -217,7 +219,12 @@ function checkPropsData() {
   reset();
 }
 
-watchImmediate([editableItem, groupEvents], checkPropsData);
+watchImmediate([editableItem, groupEvents], ([editableItem, groupEvents], [oldEditableItem, oldGroupEvents]) => {
+  if (isEqual(editableItem, oldEditableItem) && isEqual(groupEvents, oldGroupEvents)) {
+    return;
+  }
+  checkPropsData();
+});
 
 watch(location, (location: string) => {
   if (location)

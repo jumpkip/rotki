@@ -105,7 +105,10 @@ def test_name():
 def test_coverage_of_kraken_balances():
     response = requests.get('https://api.kraken.com/0/public/Assets')
     got_assets = set(response.json()['result'].keys())
-    expected_assets = get_exchange_asset_symbols(Location.KRAKEN) - set(KRAKEN_DELISTED)
+    expected_assets = get_exchange_asset_symbols(
+        exchange=Location.KRAKEN,
+        query_suffix=';',  # exclude false-positives of delisted assets
+    )
 
     # Special/staking assets and which assets they should map to
     special_assets = {
@@ -152,21 +155,25 @@ def test_coverage_of_kraken_balances():
         'MATIC04.S': strethaddress_to_identifier('0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0'),
         'KSM07.S': A_KSM,
     }
-    got_assets -= set(special_assets.keys())
 
-    diff = expected_assets.symmetric_difference(got_assets)
-    if len(diff) != 0:
+    for kraken_asset in got_assets:
+        if kraken_asset in special_assets:
+            assert asset_from_kraken(kraken_asset) == special_assets[kraken_asset]
+        elif kraken_asset not in KRAKEN_DELISTED:
+            try:
+                asset_from_kraken(kraken_asset)
+            except (DeserializationError, UnknownAsset):
+                test_warnings.warn(UserWarning(
+                    f'Found unknown primary asset {kraken_asset} in kraken. '
+                    f'Support for it has to be added',
+                ))
+
+    delisted = expected_assets - got_assets - set(KRAKEN_DELISTED)
+    if delisted:
         test_warnings.warn(UserWarning(
-            f"Our known assets don't match kraken's assets. Difference: {diff}",
+            f'Detected newly delisted assets from Kraken: {delisted}. '
+            f'Please update KRAKEN_DELISTED constant.',
         ))
-    else:
-        # Make sure all assets are covered by our from and to functions
-        for kraken_asset in got_assets:
-            _ = asset_from_kraken(kraken_asset)
-
-    # also check that all special/staked assets are properly processed
-    for kraken_asset, expected_asset in special_assets.items():
-        assert asset_from_kraken(kraken_asset) == expected_asset
 
 
 def test_querying_balances(kraken):
@@ -914,9 +921,9 @@ def test_kraken_staking(rotkehlchen_api_server_with_exchanges, start_with_valid_
     else:
         assert result['entries_limit'] == FREE_HISTORY_EVENTS_LIMIT
     assert result['entries_total'] == 4
-    assert result['received'] == [  # TODO: @yabirgb adjust usd value
-        {'asset': 'ETH2', 'amount': '0.000053862', 'usd_value': '0'},
-        {'asset': 'XTZ', 'amount': '0.00001', 'usd_value': '0'},
+    assert result['received'] == [
+        {'asset': 'XTZ', 'amount': '0.0000100000', 'usd_value': '0.000046300000'},
+        {'asset': 'ETH2', 'amount': '0.0000538620', 'usd_value': '0.219353533620'},
     ]
 
     # test that the correct number of entries is returned with pagination

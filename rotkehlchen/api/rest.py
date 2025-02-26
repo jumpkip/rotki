@@ -66,6 +66,7 @@ from rotkehlchen.balances.manual import (
 from rotkehlchen.chain.accounts import SingleBlockchainAccountData
 from rotkehlchen.chain.bitcoin.xpub import XpubManager
 from rotkehlchen.chain.ethereum.airdrops import check_airdrops, fetch_airdrops_metadata
+from rotkehlchen.chain.ethereum.constants import CPT_KRAKEN
 from rotkehlchen.chain.ethereum.defi.protocols import DEFI_PROTOCOLS
 from rotkehlchen.chain.ethereum.modules.convex.convex_cache import (
     query_convex_data,
@@ -2122,7 +2123,11 @@ class RestAPI:
         return OK_RESULT
 
     def _get_manually_tracked_balances(self, usd_value_threshold: FVal | None) -> dict[str, Any]:
-        db_entries = get_manually_tracked_balances(db=self.rotkehlchen.data.db, balance_type=None)
+        db_entries = get_manually_tracked_balances(
+            db=self.rotkehlchen.data.db,
+            balance_type=None,
+            include_entries_with_missing_assets=True,
+        )
         # Filter balances if threshold is set
         if usd_value_threshold is not None:
             db_entries = [
@@ -2130,11 +2135,7 @@ class RestAPI:
                 if entry.value.usd_value > usd_value_threshold
             ]
 
-        balances = process_result(
-            {
-                'balances': db_entries,
-            },
-        )
+        balances = process_result({'balances': db_entries})
         return _wrap_in_ok_result(balances)
 
     @async_api_call()
@@ -2475,21 +2476,6 @@ class RestAPI:
         return api_response(result, status_code=status_code)
 
     @async_api_call()
-    def get_defi_balances(self) -> dict[str, Any]:
-        """
-        This returns the typical async response dict but with the
-        extra status code argument for errors
-        """
-        try:
-            balances = self.rotkehlchen.chains_aggregator.query_defi_balances()
-        except EthSyncError as e:
-            return {'result': None, 'message': str(e), 'status_code': HTTPStatus.CONFLICT}
-        except RemoteError as e:
-            return {'result': None, 'message': str(e), 'status_code': HTTPStatus.BAD_GATEWAY}
-
-        return {'result': process_result(balances), 'message': ''}
-
-    @async_api_call()
     def get_ethereum_airdrops(self) -> dict[str, Any]:
         try:
             data = check_airdrops(
@@ -2677,136 +2663,6 @@ class RestAPI:
             status_code = HTTPStatus.CONFLICT
 
         return {'result': result, 'message': msg, 'status_code': status_code}
-
-    @async_api_call()
-    def get_makerdao_dsr_balance(self) -> dict[str, Any]:
-        return self._eth_module_query(
-            module_name='makerdao_dsr',
-            method='get_current_dsr',
-            query_specific_balances_before=None,
-        )
-
-    @async_api_call()
-    def get_makerdao_dsr_history(self) -> dict[str, Any]:
-        return self._eth_module_query(
-            module_name='makerdao_dsr',
-            method='get_historical_dsr',
-            query_specific_balances_before=None,
-        )
-
-    @async_api_call()
-    def get_makerdao_vaults(self) -> dict[str, Any]:
-        return self._eth_module_query(
-            module_name='makerdao_vaults',
-            method='get_vaults',
-            query_specific_balances_before=None,
-        )
-
-    @async_api_call()
-    def get_makerdao_vault_details(self) -> dict[str, Any]:
-        return self._eth_module_query(
-            module_name='makerdao_vaults',
-            method='get_vault_details',
-            query_specific_balances_before=None,
-        )
-
-    @async_api_call()
-    def get_aave_balances(self) -> dict[str, Any]:
-        # Once that has ran we can be sure that defi_balances mapping is populated
-        return self._eth_module_query(
-            module_name='aave',
-            method='get_balances',
-            # We need to query defi balances before since defi_balances must be populated
-            query_specific_balances_before=['defi'],
-            # Giving the eth/defi balances as a lambda functions here so that they
-            # are retrieved only after we are sure the eth/defi balances have been
-            # queried.
-            given_defi_balances=lambda: self.rotkehlchen.chains_aggregator.defi_balances,
-            given_eth_balances=lambda: self.rotkehlchen.chains_aggregator.balances.eth,
-        )
-
-    @async_api_call()
-    def get_module_stats_using_balances(
-            self,
-            module: Literal['aave', 'compound'],
-            from_timestamp: Timestamp,
-            to_timestamp: Timestamp,
-    ) -> dict[str, Any]:
-        """Query the provided module for statistics using the tracked addresses for such module.
-        This function uses the eth/defi balances to enrich statistics."""
-        return self._eth_module_query(
-            module_name=module,
-            method='get_stats_for_addresses',
-            # We need to query defi balances before since defi_balances must be populated
-            query_specific_balances_before=['defi'],
-            addresses=self.rotkehlchen.chains_aggregator.queried_addresses_for_module(module),
-            from_timestamp=from_timestamp,
-            to_timestamp=to_timestamp,
-            # Giving the eth/defi balances as lambda functions here so that they
-            # are retrieved only after we are sure the eth/defi balances have been
-            # queried.
-            given_defi_balances=lambda: self.rotkehlchen.chains_aggregator.defi_balances,
-            given_eth_balances=lambda: self.rotkehlchen.chains_aggregator.balances.eth,
-        )
-
-    @async_api_call()
-    def get_module_stats(
-            self,
-            module: Literal['uniswap', 'sushiswap'],
-            from_timestamp: Timestamp,
-            to_timestamp: Timestamp,
-    ) -> dict[str, Any]:
-        return self._eth_module_query(
-            module_name=module,
-            method='get_stats_for_addresses',
-            query_specific_balances_before=None,
-            addresses=self.rotkehlchen.chains_aggregator.queried_addresses_for_module(module),
-            from_timestamp=from_timestamp,
-            to_timestamp=to_timestamp,
-        )
-
-    @async_api_call()
-    def get_compound_balances(self) -> dict[str, Any]:
-        # Once that has ran we can be sure that defi_balances mapping is populated
-        return self._eth_module_query(
-            module_name='compound',
-            method='get_balances',
-            # We need to query defi balances before since defi_balances must be populated
-            query_specific_balances_before=['defi'],
-            # Giving the defi balances as a lambda function here so that they
-            # are retrieved only after we are sure the defi balances have been
-            # queried.
-            given_defi_balances=lambda: self.rotkehlchen.chains_aggregator.defi_balances,
-            given_eth_balances=lambda: self.rotkehlchen.chains_aggregator.balances.eth,
-        )
-
-    @async_api_call()
-    def get_yearn_vaults_balances(self) -> dict[str, Any]:
-        # Once that has ran we can be sure that defi_balances mapping is populated
-        return self._eth_module_query(
-            module_name='yearn_vaults',
-            method='get_balances',
-            # We need to query defi balances before since defi_balances must be populated
-            query_specific_balances_before=['defi'],
-            # Giving the defi balances as a lambda function here so that they
-            # are retrieved only after we are sure the defi balances have been
-            # queried.
-            given_defi_balances=lambda: self.rotkehlchen.chains_aggregator.defi_balances,
-        )
-
-    @async_api_call()
-    def get_yearn_vaults_v2_balances(self) -> dict[str, Any]:
-        # Once that has ran we can be sure that defi_balances mapping is populated
-        return self._eth_module_query(
-            module_name='yearn_vaults_v2',
-            method='get_balances',
-            # We need to query defi balances before since eth balances must be populated
-            query_specific_balances_before=['defi'],
-            # Giving the eth balances as a lambda function here so that they
-            # are retrieved only after we are sure the eth balances have been
-            # queried.
-            given_eth_balances=lambda: self.rotkehlchen.chains_aggregator.balances.eth,
-        )
 
     @async_api_call()
     def get_amm_platform_balances(
@@ -3355,42 +3211,6 @@ class RestAPI:
         else:
             return api_response(result=OK_RESULT)
 
-    @staticmethod
-    def _get_historical_assets_price(
-            assets_timestamp: list[tuple[Asset, Timestamp]],
-            target_asset: Asset,
-    ) -> dict[str, Any]:
-        """Return the price of the assets at the given timestamps in the target
-        asset currency.
-        """
-        log.debug(
-            f'Querying the historical {target_asset.identifier} price of these assets: '
-            f'{", ".join(f"{asset.identifier} at {ts}" for asset, ts in assets_timestamp)}',
-            assets_timestamp=assets_timestamp,
-        )
-        assets_price: defaultdict[Asset, defaultdict] = defaultdict(lambda: defaultdict(lambda: ZERO_PRICE))  # noqa: E501
-        for asset, timestamp in assets_timestamp:
-            try:
-                price = PriceHistorian().query_historical_price(
-                    from_asset=asset,
-                    to_asset=target_asset,
-                    timestamp=timestamp,
-                )
-            except (RemoteError, NoPriceForGivenTimestamp) as e:
-                log.warning(
-                    f'Could not query the historical {target_asset.identifier} price for '
-                    f'{asset.identifier} at time {timestamp} due to: {e!s}. Skipping',
-                )
-                continue
-
-            assets_price[asset][timestamp] = price
-
-        result = {
-            'assets': {k: dict(v) for k, v in assets_price.items()},
-            'target_asset': target_asset,
-        }
-        return _wrap_in_ok_result(process_result(result))
-
     @async_api_call()
     def get_historical_assets_price(
             self,
@@ -3412,10 +3232,16 @@ class RestAPI:
 
             return _wrap_in_ok_result(result)
 
-        return self._get_historical_assets_price(
+        assets_price = PriceHistorian.query_multiple_prices(
             assets_timestamp=assets_timestamp,
             target_asset=target_asset,
+            msg_aggregator=self.rotkehlchen.msg_aggregator,
         )
+        result = {
+            'assets': {k: dict(v) for k, v in assets_price.items()},
+            'target_asset': target_asset,
+        }
+        return _wrap_in_ok_result(process_result(result))
 
     @async_api_call()
     def sync_data(self, action: Literal['upload', 'download']) -> dict[str, Any]:
@@ -4547,17 +4373,18 @@ class RestAPI:
                 query_filter=table_filter,
             )
             value_query_filters, value_bindings = value_filter.prepare(with_pagination=False, with_order=False)  # noqa: E501
-            usd_value, amounts = history_events_db.get_value_stats(
+            asset_amounts_and_value, total_usd = history_events_db.get_amount_and_value_stats(
                 cursor=cursor,
                 query_filters=value_query_filters,
                 bindings=value_bindings,
+                counterparty=CPT_KRAKEN,
             )
             result = {
                 'entries': events,
                 'entries_found': entries_found,
                 'entries_limit': entries_limit,
                 'entries_total': entries_total,
-                'total_usd_value': usd_value,
+                'total_usd_value': total_usd,
                 'assets': history_events_db.get_entries_assets_history_events(
                     cursor=cursor,
                     query_filter=table_filter,
@@ -4567,7 +4394,7 @@ class RestAPI:
                         'asset': entry[0],
                         'amount': entry[1],
                         'usd_value': entry[2],
-                    } for entry in amounts
+                    } for entry in asset_amounts_and_value
                 ],
             }
 
@@ -5451,14 +5278,30 @@ class RestAPI:
             interval: int,
             to_timestamp: Timestamp,
             from_timestamp: Timestamp,
+            only_cache_period: int | None = None,
     ) -> dict[str, Any]:
-        prices, no_prices_ts = {}, []
+        prices = {}
+        no_prices_ts: list[Timestamp] = []
         with (db := self.rotkehlchen.data.db).conn.read_ctx() as cursor:
             main_currency = db.get_setting(cursor=cursor, name='main_currency')
 
         total_intervals = (to_timestamp - from_timestamp) // interval + 1
-        processed_count, current_ts = 0, from_timestamp
-        while current_ts <= to_timestamp:
+        timestamps = [Timestamp(from_timestamp + (i * interval)) for i in range(total_intervals)]
+
+        if only_cache_period is not None:
+            for price_result in GlobalDBHandler.get_historical_prices(
+                query_data=[(asset, main_currency, ts) for ts in timestamps],
+                max_seconds_distance=only_cache_period,
+            ):
+                if price_result is not None:
+                    prices[price_result.timestamp] = str(price_result.price)
+
+            return _wrap_in_ok_result(result={
+                'prices': prices,
+                'no_prices_timestamps': no_prices_ts,
+            })
+
+        for processed_count, current_ts in enumerate(timestamps, 1):
             try:
                 price = PriceHistorian.query_historical_price(
                     from_asset=asset,
@@ -5470,8 +5313,6 @@ class RestAPI:
             else:
                 prices[current_ts] = str(price)
 
-            processed_count += 1
-            current_ts += interval  # type: ignore[assignment]  # they are both integers
             if processed_count % 10 == 0:  # Send progress update every 10 price queries
                 db.msg_aggregator.add_message(
                     message_type=WSMessageType.PROGRESS_UPDATES,

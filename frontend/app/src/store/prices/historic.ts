@@ -6,13 +6,18 @@ import { useNotificationsStore } from '@/store/notifications';
 import { useGeneralSettingsStore } from '@/store/settings/general';
 import { usePriceApi } from '@/composables/api/balances/price';
 import { useItemCache } from '@/composables/item-cache';
-import type { BigNumber } from '@rotki/common';
+import type { StatsPriceQueryData } from '@/types/websocket-messages';
+import type { BigNumber, CommonQueryStatusData } from '@rotki/common';
 import type { TaskMeta } from '@/types/task';
 
 export const useHistoricCachePriceStore = defineStore('prices/historic-cache', () => {
+  const statsPriceQueryStatus = ref<Record<string, StatsPriceQueryData>>({});
+  const historicalPriceStatus = ref<CommonQueryStatusData>();
+  const historicalDailyPriceStatus = ref<CommonQueryStatusData>();
+
   const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
   const { queryHistoricalRates } = usePriceApi();
-  const { awaitTask } = useTaskStore();
+  const { awaitTask, cancelTaskByTaskType } = useTaskStore();
   const { t } = useI18n();
   const { notify } = useNotificationsStore();
 
@@ -78,7 +83,7 @@ export const useHistoricCachePriceStore = defineStore('prices/historic-cache', (
     };
   };
 
-  const { cache, deleteCacheKey, isPending, reset, retrieve } = useItemCache<BigNumber>(async keys =>
+  const { cache, deleteCacheKey, isPending, reset, retrieve, unknown } = useItemCache<BigNumber>(async keys =>
     fetchHistoricPrices(keys),
   );
 
@@ -96,6 +101,7 @@ export const useHistoricCachePriceStore = defineStore('prices/historic-cache', (
     const oneHourInMs = 60 * 60;
     const keysToBeDeleted = new Set<string>();
     const cacheKeys = Object.keys(get(cache));
+    const unknownKeys = get(unknown).keys();
 
     items.forEach((item) => {
       const targetTime = item.timestamp;
@@ -103,7 +109,7 @@ export const useHistoricCachePriceStore = defineStore('prices/historic-cache', (
       const upperBound = targetTime + oneHourInMs;
 
       // Do deletion for (timestamp - 1 hour) and (timestamp + 1 hour)
-      cacheKeys.forEach((cacheKey) => {
+      [...cacheKeys, ...unknownKeys].forEach((cacheKey) => {
         const [cacheAsset, cacheTimestamp] = cacheKey.split('#');
         const cacheTime = parseInt(cacheTimestamp, 10);
 
@@ -117,18 +123,56 @@ export const useHistoricCachePriceStore = defineStore('prices/historic-cache', (
     });
   };
 
-  watch(currencySymbol, () => {
+  watch(currencySymbol, async () => {
+    await cancelTaskByTaskType([TaskType.FETCH_HISTORIC_PRICE, TaskType.FETCH_DAILY_HISTORIC_PRICE]);
     reset();
   });
+
+  const getProtocolStatsPriceQueryStatus = (counterparty: string): ComputedRef<StatsPriceQueryData | undefined> => computed(() => get(statsPriceQueryStatus)[counterparty]);
+
+  const setStatsPriceQueryStatus = (data: StatsPriceQueryData): void => {
+    const currentData = {
+      ...get(statsPriceQueryStatus),
+    };
+
+    currentData[data.counterparty] = data;
+
+    set(statsPriceQueryStatus, currentData);
+  };
+
+  const resetProtocolStatsPriceQueryStatus = (counterparty: string): void => {
+    const currentData = {
+      ...get(statsPriceQueryStatus),
+    };
+
+    delete currentData[counterparty];
+
+    set(statsPriceQueryStatus, currentData);
+  };
+
+  const setHistoricalDailyPriceStatus = (status: CommonQueryStatusData): void => {
+    set(historicalDailyPriceStatus, status);
+  };
+
+  const setHistoricalPriceStatus = (status: CommonQueryStatusData): void => {
+    set(historicalPriceStatus, status);
+  };
 
   return {
     cache,
     createKey,
+    getProtocolStatsPriceQueryStatus,
+    historicalDailyPriceStatus,
+    historicalPriceStatus,
     historicPriceInCurrentCurrency,
     isPending,
     reset,
     resetHistoricalPricesData,
+    resetProtocolStatsPriceQueryStatus,
     retrieve,
+    setHistoricalDailyPriceStatus,
+    setHistoricalPriceStatus,
+    setStatsPriceQueryStatus,
   };
 });
 

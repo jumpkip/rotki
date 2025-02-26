@@ -1,8 +1,8 @@
 import { Chart, type TooltipModel, registerables } from 'chart.js';
 import zoomPlugin from 'chartjs-plugin-zoom';
 import { useDarkMode } from '@/composables/dark-mode';
-import type { BigNumber, TooltipDisplayOption } from '@rotki/common';
-import type { ComputedRef, Ref } from 'vue';
+import type { BigNumber, GraphApi, TooltipDisplayOption } from '@rotki/common';
+import type { Ref } from 'vue';
 
 export function initGraph(): void {
   Chart.defaults.font.family = 'Roboto';
@@ -10,17 +10,7 @@ export function initGraph(): void {
   Chart.register(zoomPlugin);
 }
 
-interface UseGraphReturn {
-  getCanvasCtx: () => CanvasRenderingContext2D;
-  baseColor: ComputedRef<string>;
-  gradient: ComputedRef<CanvasGradient>;
-  secondaryColor: ComputedRef<string>;
-  backgroundColor: ComputedRef<string>;
-  fontColor: ComputedRef<string>;
-  gridColor: ComputedRef<string>;
-}
-
-export function useGraph(canvasId: string): UseGraphReturn {
+export function useGraph(canvasId: string): GraphApi {
   const getCanvasCtx = (): CanvasRenderingContext2D => {
     const canvas = document.getElementById(canvasId);
     assert(canvas && canvas instanceof HTMLCanvasElement, 'Canvas could not be found');
@@ -50,7 +40,9 @@ export function useGraph(canvasId: string): UseGraphReturn {
   const secondaryColor = computed(() => (get(isDark) ? white : secondaryBlack));
   const backgroundColor = computed(() => (!get(isDark) ? white : secondaryBlack));
 
-  const fontColor = computed(() => (get(isDark) ? white : 'rgba(0,0,0,.8)'));
+  const thirdColor = computed(() => get(usedTheme).primary);
+
+  const fontColor = computed(() => (get(isDark) ? 'rgba(255,255,255,.5)' : 'rgba(0,0,0,.7)'));
   const gridColor = computed(() => (get(isDark) ? '#555' : '#ddd'));
 
   return {
@@ -61,6 +53,7 @@ export function useGraph(canvasId: string): UseGraphReturn {
     gradient,
     gridColor,
     secondaryColor,
+    thirdColor,
   };
 }
 

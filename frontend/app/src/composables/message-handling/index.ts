@@ -31,7 +31,8 @@ import { useSync } from '@/composables/session/sync';
 import { usePremium } from '@/composables/premium';
 import { useSessionApi } from '@/composables/api/session';
 import { useBlockchainBalances } from '@/composables/blockchain/balances';
-import { useStatisticsStore } from '@/store/statistics';
+import { useLiquityStore } from '@/store/defi/liquity';
+import { useHistoricCachePriceStore } from '@/store/prices/historic';
 
 interface UseMessageHandling {
   handleMessage: (data: string) => Promise<void>;
@@ -43,6 +44,7 @@ export function useMessageHandling(): UseMessageHandling {
   const { setQueryStatus: setEventsQueryStatus } = useEventsQueryStatusStore();
   const { updateDataMigrationStatus, updateDbUpgradeStatus } = useSessionAuthStore();
   const { fetchBlockchainBalances } = useBlockchainBalances();
+  const { setHistoricalDailyPriceStatus, setHistoricalPriceStatus, setStatsPriceQueryStatus } = useHistoricCachePriceStore();
   const notificationsStore = useNotificationsStore();
   const { data: notifications } = storeToRefs(notificationsStore);
   const { notify } = notificationsStore;
@@ -50,7 +52,7 @@ export function useMessageHandling(): UseMessageHandling {
   const { consumeMessages } = useSessionApi();
   const { uploadStatus, uploadStatusAlreadyHandled } = useSync();
   const { setProtocolCacheStatus, setUndecodedTransactionsStatus } = useHistoryStore();
-  const { setHistoricalAssetPriceStatus } = useStatisticsStore();
+  const { setStakingQueryStatus: setLiquityStakingQueryStatus } = useLiquityStore();
   const { handle: handleMissingApiKeyMessage } = useMissingApiKeyHandler(t);
   const { handle: handleAccountingRuleConflictMessage } = useAccountingRuleConflictMessageHandler(t);
   const { handle: handleCalendarReminder } = useCalendarReminderHandler(t);
@@ -139,7 +141,16 @@ export function useMessageHandling(): UseMessageHandling {
       setProtocolCacheStatus(rawData);
     }
     else if (subtype === SocketMessageProgressUpdateSubType.HISTORICAL_PRICE_QUERY_STATUS) {
-      setHistoricalAssetPriceStatus(rawData);
+      setHistoricalDailyPriceStatus(rawData);
+    }
+    else if (subtype === SocketMessageProgressUpdateSubType.LIQUITY_STAKING_QUERY) {
+      setLiquityStakingQueryStatus(rawData);
+    }
+    else if (subtype === SocketMessageProgressUpdateSubType.STATS_PRICE_QUERY) {
+      setStatsPriceQueryStatus(rawData);
+    }
+    else if (subtype === SocketMessageProgressUpdateSubType.MULTIPLE_PRICES_QUERY_STATUS) {
+      setHistoricalPriceStatus(rawData);
     }
     return null;
   };

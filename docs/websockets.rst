@@ -463,3 +463,69 @@ During historical price queries, progress updates are sent to track the status o
 - ``total``: Total number of time intervals to query
 - ``processed``: Number of intervals that have been processed so far
 - ``subtype``: Set to "historical_price_query_status" to identify historical price query progress
+
+
+Liquity staking status
+=======================
+
+Liquity staking has several products whose price needs to be remotely queried. The progress of these queries can be followed by
+
+::
+
+    {
+        "type": "progress_updates",
+        "data": {
+            "total": 4,
+            "processed": 1,
+            "subtype": "liquity_statking_query"
+        }
+    }
+
+
+- ``total``: Total number of products that the staking logic has to check.
+- ``processed``: Number of products queried.
+- ``subtype``: Set to "liquity_statking_query" to identify liquity staking queries.
+
+
+Async prices queries
+======================
+
+Kraken and Liquity query prices for historical events and they report the status using the following structure sent after processing some number of events:
+
+::
+
+    {
+        "type": "progress_updates",
+        "data": {
+            "total": 220,
+            "processed": 190,
+            "subtype": "stats_price_query"
+        }
+    }
+
+
+- ``total``: Total number of history events that need their price queried.
+- ``processed``: Number of events processed.
+- ``subtype``: Set to "stats_price_query" to identify prices queries for statistics.
+
+
+Multiple timestamp price queries
+=================================
+
+Track the progress for when we need to query prices at multiple timestamps.
+
+::
+
+    {
+        "type": "progress_updates",
+        "data": {
+            "total": 6,
+            "processed": 5,
+            "subtype": "multiple_prices_query_status"
+        }
+    }
+
+
+- ``total``: Total number of combinations asset-price that will be queried.
+- ``processed``: Number of prices queried.
+- ``subtype``: Set to "multiple_prices_query_status" to identify prices queries.

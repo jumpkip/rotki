@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 from rotkehlchen.data_import.importers.constants import ROTKI_EVENT_PREFIX
 from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED
+from rotkehlchen.db.settings import DEFAULT_ACTIVE_MODULES
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.history.types import DEFAULT_HISTORICAL_PRICE_ORACLES_ORDER
 from rotkehlchen.logging import RotkehlchenLogsAdapter, enter_exit_debug_log
@@ -11,6 +12,8 @@ from rotkehlchen.types import Location
 from rotkehlchen.utils.progress import perform_userdb_upgrade_steps, progress_step
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from rotkehlchen.db.dbhandler import DBHandler
     from rotkehlchen.db.drivers.gevent import DBCursor
     from rotkehlchen.db.upgrade_manager import DBUpgradeProgressHandler
@@ -267,9 +270,42 @@ def upgrade_v46_to_v47(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
             (json.dumps(oracles), 'historical_price_oracles'),
         )
 
+    @progress_step(description='Remove deleted ethereum modules')
+    def _remove_deleted_ethereum_modules(write_cursor: 'DBCursor') -> None:
+        deleted_modules = ('compound', 'yearn_vaults', 'yearn_vaults_v2', 'aave')
+        write_cursor.execute(
+            'SELECT value FROM settings WHERE name=?',
+            ('active_modules',),
+        )
+        if (result := write_cursor.fetchone()) is None:
+            return
+
+        try:
+            modules: Sequence[str] = [
+                x for x in json.loads(result[0])
+                if x not in deleted_modules
+            ]
+        except json.JSONDecodeError:
+            log.error(f'During v46->v47 DB upgrade, a non-json ethereum module entry was found: {result[0]}.')  # noqa: E501
+            modules = DEFAULT_ACTIVE_MODULES
+
+        write_cursor.execute(
+            'UPDATE settings SET value=? WHERE name=?',
+            (json.dumps(modules), 'active_modules'),
+        )
+        write_cursor.executemany(
+            'DELETE FROM multisettings WHERE name=?',
+            [(f'queried_address_{x}',) for x in deleted_modules],
+        )
+
     @progress_step(description='Remove old accounting rules')
     def _drop_usd_value_column(write_cursor: 'DBCursor') -> None:
         """Drops the usd value column from history events"""
         write_cursor.execute('ALTER TABLE history_events DROP COLUMN usd_value;')
+
+    @progress_step(description='Remove old setting')
+    def _remove_old_setting(write_cursor: 'DBCursor') -> None:
+        """Removes a key that wasn't correctly deleted for one user and might affect others"""
+        write_cursor.execute("DELETE FROM settings WHERE name='last_data_upload_ts'")
 
     perform_userdb_upgrade_steps(db=db, progress_handler=progress_handler, should_vacuum=True)
