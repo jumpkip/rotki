@@ -1,6 +1,7 @@
+use crate::logging::RotkiLogLevel;
+
 use clap::{Arg, ArgAction, Command};
 use std::path::PathBuf;
-use tracing_subscriber::filter::LevelFilter;
 
 // macro to get the datadir depending on os
 macro_rules! get_datadir {
@@ -45,7 +46,8 @@ pub struct Args {
     pub log_to_stdout: bool,
     pub max_logfiles_num: usize,
     pub max_size_in_mb: usize,
-    pub log_level: LevelFilter,
+    pub log_level: RotkiLogLevel,
+    pub api_cors: Vec<String>
 }
 
 pub fn parse_args() -> Args {
@@ -96,16 +98,18 @@ pub fn parse_args() -> Args {
         .arg(
             Arg::new("log-level")
                 .long("log-level")
-                .value_parser(clap::value_parser!(LevelFilter))
+                .value_parser(clap::value_parser!(RotkiLogLevel))
                 .default_value("info")
                 .help(format!(
                     "Log level for the app: {:?}",
                     [
-                        LevelFilter::ERROR.to_string(),
-                        LevelFilter::WARN.to_string(),
-                        LevelFilter::INFO.to_string(),
-                        LevelFilter::DEBUG.to_string(),
-                        LevelFilter::TRACE.to_string(),
+                        RotkiLogLevel::Critical.to_string(),
+                        RotkiLogLevel::Error.to_string(),
+                        RotkiLogLevel::Warning.to_string(),
+                        RotkiLogLevel::Info.to_string(),
+                        RotkiLogLevel::Debug.to_string(),
+                        RotkiLogLevel::Trace.to_string(),
+                        RotkiLogLevel::Off.to_string(),
                     ]
                 )),
         )
@@ -115,6 +119,12 @@ pub fn parse_args() -> Args {
                 .value_parser(clap::value_parser!(usize))
                 .default_value("50")
                 .help("Max size in MB for each one of the log files"),
+        )
+        .arg(
+            Arg::new("api-cors")
+                .long("api-cors")
+                .default_value("http://localhost:*/*")
+                .help("Comma separated list of domains for the API to accept cross origin requests.")
         )
         .get_matches();
 
@@ -127,7 +137,12 @@ pub fn parse_args() -> Args {
         port: *matches.get_one::<u16>("port").unwrap(),
         log_to_stdout: *matches.get_one::<bool>("log-to-stdout").unwrap(),
         max_logfiles_num: *matches.get_one::<usize>("max-logfiles-num").unwrap(),
-        log_level: *matches.get_one::<LevelFilter>("log-level").unwrap(),
+        log_level: *matches.get_one::<RotkiLogLevel>("log-level").unwrap(),
         max_size_in_mb: *matches.get_one::<usize>("max-size-in-mb").unwrap(),
+        api_cors: matches.get_one::<String>("api-cors")
+                .unwrap()
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .collect(),
     }
 }

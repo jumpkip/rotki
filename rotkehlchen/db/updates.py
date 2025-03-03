@@ -91,14 +91,14 @@ class RotkiDataUpdater:
             if min_version is not None:
                 p_min_version = pversion.parse(min_version)
                 if p_min_version > self.version:
-                    log.warning(f'Not updating {update_type.value} to {update_version=} due to {min_version=}')  # noqa: E501
+                    log.warning(f'Not updating {update_type.value} to {update_version=} due to {min_version=} and {self.version=}')  # noqa: E501
                     break  # stop iteration since all next versions will also hit this. User needs to update  # noqa: E501
 
             max_version = version_info.get('max_version', None)
             if max_version is not None:
                 p_max_version = pversion.parse(max_version)
                 if p_max_version < self.version:
-                    log.warning(f'Not updating {update_type.value} to {update_version=} due to {max_version=}')  # noqa: E501
+                    log.warning(f'Not updating {update_type.value} to {update_version=} due to {max_version=} and {self.version=}')  # noqa: E501
                     continue  # probably can never apply this update. Check next one
 
             file_url = f'https://raw.githubusercontent.com/rotki/data/{self.branch}/updates/{update_type.value}/v{update_version}.json'
@@ -352,9 +352,9 @@ class RotkiDataUpdater:
         """Applies location asset mappings updates in the global DB"""
         log.info(f'Applying update for location asset mappings to v{version}')
         for update_function, entry_type, raw_data_key in (
-            (GlobalDBHandler.add_location_asset_mappings, LocationAssetMappingUpdateEntry, 'additions'),  # noqa: E501
-            (GlobalDBHandler.update_location_asset_mappings, LocationAssetMappingUpdateEntry, 'updates'),  # noqa: E501
             (GlobalDBHandler.delete_location_asset_mappings, LocationAssetMappingDeleteEntry, 'deletions'),  # noqa: E501
+            (GlobalDBHandler.update_location_asset_mappings, LocationAssetMappingUpdateEntry, 'updates'),  # noqa: E501
+            (GlobalDBHandler.add_location_asset_mappings, LocationAssetMappingUpdateEntry, 'additions'),  # noqa: E501
         ):
             entries, raw_data = [], data.get(raw_data_key)
             if raw_data is None:

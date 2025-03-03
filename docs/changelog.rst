@@ -2,8 +2,15 @@
 Changelog
 =========
 
+* :feature:`9145` Deposits and withdrawals from Hyperliquid will be decoded.
+* :bug:`-` Uniswap v3 swaps in ethereum using the universal router 2 will now be decoded properly.
+* :bug:`9547` Bitcoin balance query should work again for users of the linux binary.
+
+* :release:`1.38.0 <2025-02-28>`
 * :bug:`-` Fix selected binance trading pairs not being properly loaded when restarting rotki.
 * :bug:`-` rotki will now skip balance queries for exited validators, reducing API rate limits and improving performance.
+* :bug:`-` Aura positions will no longer be double counted.
+* :bug:`-` Unstaked umami balances in arbitrum will no longer be double counted.
 * :feature:`-` The old deprecated DeFi section is now removed.
 * :feature:`-` Support for compound v3 protocol on OP mainnet has now been added. Also USDS in mainnet and AERO in BASE for Compound v3 should be seen properly now. Finally compound interactions that wrap ETH to WETH through the Compound bulker and vice versa should be seen properly now.
 * :feature:`1379` For the asset amount and value graph, users can now choose to use historical events and prices as the source, instead of snapshots.
@@ -40,6 +47,8 @@ Changelog
 * :bug:`-` Some specific cases of yearn v2 vault deposit/withdrawals that had problems will now be decoded properly.
 * :bug:`-` Deleting an ethereum address will now remove the withdrawals cache for that address so re-adding it will now properly detect ethereum staking withdrawals again.
 * :bug:`-` Fix double count of cowswap fees.
+* :bug:`-` Odos airdrop will appear as claimed or unclaimed instead of as unknown.
+* :bug:`-` rotki will no longer exceed the two years limit when requesting trades from Bybit.
 * :bug:`-` Fix an error when merging two assets if they both appear at the same snapshot.
 * :bug:`-` Allow rotki app to be minimized using the shortcut for each platform.
 * :bug:`-` Deleting Kusama, Polkadot, or Beaconchain RPC URL should now work properly again.
