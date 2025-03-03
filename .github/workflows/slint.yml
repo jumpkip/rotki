@@ -1,4 +1,4 @@
-name: Stylelint Check
+name: Prettier Check
 
 on:
   push:
@@ -24,8 +24,7 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install
-        working-directory: frontend
+        
 
-      - name: Run Stylelint
-        run: npx stylelint "**/*.css"
-        working-directory: frontend
+      - name: Run Prettier
+        run: npx prettier --check "**/*.{js,ts,css,md}"
