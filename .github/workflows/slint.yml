@@ -24,7 +24,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install
+        working-directory: frontend
         
 
       - name: Run Prettier
         run: npx prettier --check "**/*.{js,ts,css,md}"
+        working-directory: frontend
