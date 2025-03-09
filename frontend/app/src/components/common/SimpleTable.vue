@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { toRem } from '@/utils/data';
 import type { StyleValue } from 'vue';
+import { toRem } from '@/utils/data';
 
 defineOptions({
   inheritAttrs: false,
@@ -16,6 +16,10 @@ const props = withDefaults(
     variant: 'outlined',
   },
 );
+
+defineSlots<{
+  default: () => any;
+}>();
 
 const style = computed<StyleValue | undefined>(() => {
   if (!props.height)

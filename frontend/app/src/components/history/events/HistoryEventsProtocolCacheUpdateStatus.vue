@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import { TaskType } from '@/types/task-type';
-import { useTaskStore } from '@/store/tasks';
-import { useHistoryStore } from '@/store/history';
-import { useDefiMetadata } from '@/composables/defi/metadata';
-import DefiIcon from '@/components/defi/DefiIcon.vue';
-import LocationDisplay from '@/components/history/LocationDisplay.vue';
-import SuccessDisplay from '@/components/display/SuccessDisplay.vue';
-import type { DataTableColumn } from '@rotki/ui-library';
 import type { ProtocolCacheUpdatesData } from '@/types/websocket-messages';
+import type { DataTableColumn } from '@rotki/ui-library';
+import DefiIcon from '@/components/defi/DefiIcon.vue';
+import SuccessDisplay from '@/components/display/SuccessDisplay.vue';
+import LocationDisplay from '@/components/history/LocationDisplay.vue';
+import { useDefiMetadata } from '@/composables/defi/metadata';
+import { useHistoryStore } from '@/store/history';
+import { useTaskStore } from '@/store/tasks';
+import { TaskType } from '@/types/task-type';
 
 type Data = ProtocolCacheUpdatesData & {
   key: string;
@@ -21,6 +21,10 @@ defineProps<{
   refreshing: boolean;
 }>();
 
+defineSlots<{
+  default: () => any;
+}>();
+
 const historyStore = useHistoryStore();
 const { protocolCacheStatus, receivingProtocolCacheStatus } = storeToRefs(historyStore);
 
@@ -29,32 +33,27 @@ const taskRunning = isTaskRunning(TaskType.REFRESH_GENERAL_CACHE);
 
 const { t } = useI18n();
 
-const headers: DataTableColumn<Data>[] = [
-  {
-    align: 'center',
-    cellClass: 'py-3',
-    key: 'chain',
-    label: t('common.chain'),
-  },
-  {
-    align: 'center',
-    cellClass: 'py-3',
-    key: 'protocol',
-    label: t('common.protocol'),
-  },
-  {
-    align: 'end',
-    cellClass: '!pr-12',
-    class: '!pr-12',
-    key: 'number',
-    label: t('transactions.protocol_cache_updates.outdated_data'),
-  },
-  {
-    align: 'center',
-    key: 'progress',
-    label: t('transactions.events_decoding.progress'),
-  },
-];
+const headers: DataTableColumn<Data>[] = [{
+  align: 'center',
+  cellClass: 'py-3',
+  key: 'chain',
+  label: t('common.chain'),
+}, {
+  align: 'center',
+  cellClass: 'py-3',
+  key: 'protocol',
+  label: t('common.protocol'),
+}, {
+  align: 'end',
+  cellClass: '!pr-12',
+  class: '!pr-12',
+  key: 'number',
+  label: t('transactions.protocol_cache_updates.outdated_data'),
+}, {
+  align: 'center',
+  key: 'progress',
+  label: t('transactions.events_decoding.progress'),
+}];
 
 const { getDefiImage, getDefiName, loading: metadataLoading } = useDefiMetadata();
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
+import HashLink from '@/components/helper/HashLink.vue';
 import { useAssetPageNavigation } from '@/composables/assets/navigation';
 import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
-import HashLink from '@/components/helper/HashLink.vue';
 
 const props = withDefaults(
   defineProps<{
@@ -12,6 +12,10 @@ const props = withDefaults(
     link: false,
   },
 );
+
+defineSlots<{
+  default: () => any;
+}>();
 
 const { asset } = toRefs(props);
 const address = reactify(getAddressFromEvmIdentifier)(asset);

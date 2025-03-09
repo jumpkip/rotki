@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { useRefMap } from '@/composables/utils/useRefMap';
 import type { Auth, ExternalServicePayloadWithAuth } from '@/types/user';
+import { useRefMap } from '@/composables/utils/useRefMap';
 
 const props = withDefaults(
   defineProps<{
@@ -25,6 +25,10 @@ const props = withDefaults(
 const emit = defineEmits<{
   (e: 'delete-key', value: string): void;
   (e: 'save', value: ExternalServicePayloadWithAuth): void;
+}>();
+
+defineSlots<{
+  default: () => any;
 }>();
 
 const { t } = useI18n();

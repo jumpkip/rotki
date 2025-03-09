@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { usePremium } from '@/composables/premium';
+import AppImage from '@/components/common/AppImage.vue';
 import BigDialog from '@/components/dialogs/BigDialog.vue';
 import PremiumLock from '@/components/premium/PremiumLock.vue';
-import AppImage from '@/components/common/AppImage.vue';
+import { usePremium } from '@/composables/premium';
 
 withDefaults(
   defineProps<{
@@ -29,6 +29,11 @@ withDefaults(
 
 const emit = defineEmits<{
   (e: 'confirm'): void;
+}>();
+
+defineSlots<{
+  'default': () => any;
+  'left-buttons': () => any;
 }>();
 
 const { t } = useI18n();

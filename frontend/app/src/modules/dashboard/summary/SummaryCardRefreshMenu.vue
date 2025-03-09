@@ -1,23 +1,23 @@
 <script setup lang="ts">
 import RefreshButton from '@/components/helper/RefreshButton.vue';
 
-withDefaults(
-  defineProps<{
-    tooltip: string;
-    loading?: boolean;
-    disabled?: boolean;
-  }>(),
-  {
-    disabled: false,
-    loading: false,
-  },
-);
+interface SummaryCardRefreshMenuProps {
+  tooltip: string;
+  loading?: boolean;
+  disabled?: boolean;
+}
+withDefaults(defineProps<SummaryCardRefreshMenuProps>(), {
+  disabled: false,
+  loading: false,
+});
 
 const emit = defineEmits<{
-  (e: 'refresh'): void;
+  refresh: [];
 }>();
 
-const refresh = () => emit('refresh');
+defineSlots<{
+  refreshMenu: () => any;
+}>();
 </script>
 
 <template>
@@ -26,7 +26,7 @@ const refresh = () => emit('refresh');
     :loading="loading"
     :disabled="disabled"
     :tooltip="tooltip"
-    @refresh="refresh()"
+    @refresh="emit('refresh')"
   />
   <div
     v-else
@@ -38,7 +38,7 @@ const refresh = () => emit('refresh');
           :loading="loading"
           :disabled="disabled"
           :tooltip="tooltip"
-          @refresh="refresh()"
+          @refresh="emit('refresh')"
         />
         <RuiButton
           :disabled="disabled"

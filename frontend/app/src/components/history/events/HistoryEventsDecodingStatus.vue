@@ -1,12 +1,12 @@
 <script lang="ts" setup>
-import { TaskType } from '@/types/task-type';
-import { useHistoryStore } from '@/store/history';
-import { useTaskStore } from '@/store/tasks';
-import { useHistoryTransactionDecoding } from '@/composables/history/events/tx/decoding';
-import SuccessDisplay from '@/components/display/SuccessDisplay.vue';
-import LocationDisplay from '@/components/history/LocationDisplay.vue';
 import type { EvmUnDecodedTransactionsData, ProtocolCacheUpdatesData } from '@/types/websocket-messages';
 import type { DataTableColumn } from '@rotki/ui-library';
+import SuccessDisplay from '@/components/display/SuccessDisplay.vue';
+import LocationDisplay from '@/components/history/LocationDisplay.vue';
+import { useHistoryTransactionDecoding } from '@/composables/history/events/tx/decoding';
+import { useHistoryStore } from '@/store/history';
+import { useTaskStore } from '@/store/tasks';
+import { TaskType } from '@/types/task-type';
 
 interface LocationData {
   evmChain: string;
@@ -20,8 +20,12 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: 'redecode-all-events'): void;
-  (e: 'reset-undecoded-transactions'): void;
+  'redecode-all-events': [];
+  'reset-undecoded-transactions': [];
+}>();
+
+defineSlots<{
+  default: () => any;
 }>();
 
 const { isTaskRunning } = useTaskStore();
@@ -52,26 +56,22 @@ function refresh() {
     emit('reset-undecoded-transactions');
 }
 
-const headers: DataTableColumn<LocationData>[] = [
-  {
-    align: 'center',
-    cellClass: 'py-3',
-    key: 'chain',
-    label: t('common.location'),
-  },
-  {
-    align: 'end',
-    cellClass: '!pr-12',
-    class: '!pr-12',
-    key: 'number',
-    label: t('transactions.events_decoding.undecoded_transactions'),
-  },
-  {
-    align: 'center',
-    key: 'progress',
-    label: t('transactions.events_decoding.progress'),
-  },
-];
+const headers: DataTableColumn<LocationData>[] = [{
+  align: 'center',
+  cellClass: 'py-3',
+  key: 'chain',
+  label: t('common.location'),
+}, {
+  align: 'end',
+  cellClass: '!pr-12',
+  class: '!pr-12',
+  key: 'number',
+  label: t('transactions.events_decoding.undecoded_transactions'),
+}, {
+  align: 'center',
+  key: 'progress',
+  label: t('transactions.events_decoding.progress'),
+}];
 
 const total = computed<number>(() =>
   props.decodingStatus.reduce((sum, item) => sum + (item.total - item.processed), 0),

@@ -1,39 +1,39 @@
 <script setup lang="ts">
-import { Blockchain } from '@rotki/common';
-import { Routes } from '@/router/routes';
-import { type BlockchainTotal, SupportedSubBlockchainProtocolData } from '@/types/blockchain';
-import { useSupportedChains } from '@/composables/info/chains';
-import { useRefMap } from '@/composables/utils/useRefMap';
-import BlockchainBalanceCardDetails from '@/components/dashboard/blockchain-balance/BlockchainBalanceCardDetails.vue';
-import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
-import Eth2ValidatorLimitTooltip from '@/components/accounts/blockchain/eth2/Eth2ValidatorLimitTooltip.vue';
-import ChainIcon from '@/components/helper/display/icons/ChainIcon.vue';
-import ListItem from '@/components/common/ListItem.vue';
 import type { ActionDataEntry } from '@/types/action';
 import type { RouteLocationRaw } from 'vue-router';
+import Eth2ValidatorLimitTooltip from '@/components/accounts/blockchain/eth2/Eth2ValidatorLimitTooltip.vue';
+import ListItem from '@/components/common/ListItem.vue';
+import BlockchainBalanceCardDetails from '@/components/dashboard/blockchain-balance/BlockchainBalanceCardDetails.vue';
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import ChainIcon from '@/components/helper/display/icons/ChainIcon.vue';
+import { useSupportedChains } from '@/composables/info/chains';
+import { useRefMap } from '@/composables/utils/useRefMap';
+import { Routes } from '@/router/routes';
+import { type BlockchainTotal, SupportedSubBlockchainProtocolData } from '@/types/blockchain';
+import { Blockchain } from '@rotki/common';
 
-const props = defineProps<{
+interface BlockChainBalanceCardListProps {
   total: BlockchainTotal;
-}>();
+}
+
+const props = defineProps<BlockChainBalanceCardListProps>();
 
 const { total } = toRefs(props);
 
 const { getChainAccountType, getChainName } = useSupportedChains();
 
-const amount = useRefMap(total, ({ usdValue }) => usdValue);
-const loading = useRefMap(total, ({ loading }) => loading);
 const chain = useRefMap(total, ({ chain }) => chain);
 const name = getChainName(chain);
 
 const navTarget = computed<RouteLocationRaw>(() => {
-  const balanceChain = get(chain);
-  if (balanceChain === Blockchain.ETH2) {
+  const chain = props.total.chain;
+  if (chain === Blockchain.ETH2) {
     return {
       path: `${Routes.STAKING}/eth`,
     };
   }
 
-  const target = getChainAccountType(balanceChain) ?? 'evm';
+  const target = getChainAccountType(chain) ?? 'evm';
   return {
     path: `${Routes.ACCOUNTS}/${target}`,
   };
@@ -69,8 +69,8 @@ function childData(identifier: string): ActionDataEntry | null {
             <AmountDisplay
               show-currency="symbol"
               fiat-currency="USD"
-              :value="amount"
-              :loading="loading"
+              :value="total.usdValue"
+              :loading="total.loading"
               class="font-medium"
             />
           </div>

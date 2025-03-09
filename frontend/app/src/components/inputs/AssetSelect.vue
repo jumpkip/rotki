@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { CanceledError } from 'axios';
-import { uniqueObjects } from '@/utils/data';
-import { useIgnoredAssetsStore } from '@/store/assets/ignored';
-import { useAssetInfoApi } from '@/composables/api/assets/info';
-import AssetDetailsBase from '@/components/helper/AssetDetailsBase.vue';
-import NftDetails from '@/components/helper/NftDetails.vue';
 import type { AssetInfoWithId } from '@/types/asset';
 import type { NftAsset } from '@/types/nfts';
+import AssetDetailsBase from '@/components/helper/AssetDetailsBase.vue';
+import NftDetails from '@/components/helper/NftDetails.vue';
+import { useAssetInfoApi } from '@/composables/api/assets/info';
+import { useIgnoredAssetsStore } from '@/store/assets/ignored';
+import { uniqueObjects } from '@/utils/data';
+import { CanceledError } from 'axios';
 
 defineOptions({
   inheritAttrs: false,
@@ -14,42 +14,45 @@ defineOptions({
 
 const modelValue = defineModel<string | undefined>({ required: true });
 
-const props = withDefaults(
-  defineProps<{
-    items?: string[];
-    excludes?: string[];
-    hint?: string;
-    successMessages?: string;
-    errorMessages?: string[];
-    label?: string;
-    disabled?: boolean;
-    outlined?: boolean;
-    clearable?: boolean;
-    required?: boolean;
-    showIgnored?: boolean;
-    hideDetails?: boolean;
-    includeNfts?: boolean;
-    asset?: AssetInfoWithId | NftAsset;
-  }>(),
-  {
-    asset: undefined,
-    clearable: false,
-    disabled: false,
-    errorMessages: () => [],
-    excludes: () => [],
-    hideDetails: false,
-    hint: '',
-    includeNfts: false,
-    items: () => [],
-    label: 'Asset',
-    outlined: false,
-    required: false,
-    showIgnored: false,
-    successMessages: '',
-  },
-);
+const props = withDefaults(defineProps<{
+  items?: string[];
+  excludes?: string[];
+  hint?: string;
+  successMessages?: string;
+  errorMessages?: string[];
+  label?: string;
+  disabled?: boolean;
+  outlined?: boolean;
+  clearable?: boolean;
+  required?: boolean;
+  showIgnored?: boolean;
+  hideDetails?: boolean;
+  includeNfts?: boolean;
+  asset?: AssetInfoWithId | NftAsset;
+}>(), {
+  asset: undefined,
+  clearable: false,
+  disabled: false,
+  errorMessages: () => [],
+  excludes: () => [],
+  hideDetails: false,
+  hint: '',
+  includeNfts: false,
+  items: () => [],
+  label: 'Asset',
+  outlined: false,
+  required: false,
+  showIgnored: false,
+  successMessages: '',
+});
 
-const emit = defineEmits<{ (e: 'update:asset', value?: AssetInfoWithId | NftAsset): void }>();
+const emit = defineEmits<{
+  'update:asset': [value?: AssetInfoWithId | NftAsset];
+}>();
+
+defineSlots<{
+  prepend: () => any;
+}>();
 
 const { errorMessages, excludes, includeNfts, items, showIgnored } = toRefs(props);
 const { isAssetIgnored } = useIgnoredAssetsStore();

@@ -1,23 +1,23 @@
 <script setup lang="ts">
-import { Routes } from '@/router/routes';
-import { useLocations } from '@/composables/locations';
+import type { BigNumber } from '@rotki/common';
+import ListItem from '@/components/common/ListItem.vue';
 import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
 import LocationDisplay from '@/components/history/LocationDisplay.vue';
-import ListItem from '@/components/common/ListItem.vue';
-import type { BigNumber } from '@rotki/common';
+import { useLocations } from '@/composables/locations';
+import { Routes } from '@/router/routes';
 
-const props = defineProps<{
+interface ExchangeBoxProps {
   location: string;
   amount: BigNumber;
-}>();
+}
 
-const { location } = toRefs(props);
+const props = defineProps<ExchangeBoxProps>();
 
 const { exchangeName } = useLocations();
 
-const exchangeLocationRoute = computed(() => {
+const exchangeLocationRoute = computed<string>(() => {
   const route = Routes.BALANCES_EXCHANGE;
-  return `${route}/${get(location)}`;
+  return `${route}/${props.location}`;
 });
 </script>
 

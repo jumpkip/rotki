@@ -1,9 +1,13 @@
 <script setup lang="ts">
-import ExternalLink from '@/components/helper/ExternalLink.vue';
-import RotkiLogo from '@/components/common/RotkiLogo.vue';
 import FullSizeContent from '@/components/common/FullSizeContent.vue';
+import RotkiLogo from '@/components/common/RotkiLogo.vue';
+import ExternalLink from '@/components/helper/ExternalLink.vue';
 
 defineProps<{ text: string }>();
+
+defineSlots<{
+  logo: () => any;
+}>();
 
 const { t } = useI18n();
 const { isMdAndUp } = useBreakpoint();

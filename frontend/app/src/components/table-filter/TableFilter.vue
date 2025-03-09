@@ -1,10 +1,4 @@
 <script setup lang="ts">
-import { logger } from '@/utils/logging';
-import { compareTextByKeyword } from '@/utils/assets';
-import { splitSearch } from '@/utils/search';
-import SavedFilterManagement from '@/components/table-filter/SavedFilterManagement.vue';
-import FilterDropdown from '@/components/table-filter/FilterDropdown.vue';
-import SuggestedItem from '@/components/table-filter/SuggestedItem.vue';
 import type {
   MatchedKeyword,
   MatchedKeywordWithBehaviour,
@@ -13,26 +7,33 @@ import type {
   Suggestion,
 } from '@/types/filtering';
 import type { AssetInfo } from '@rotki/common';
+import FilterDropdown from '@/components/table-filter/FilterDropdown.vue';
+import SavedFilterManagement from '@/components/table-filter/SavedFilterManagement.vue';
+import SuggestedItem from '@/components/table-filter/SuggestedItem.vue';
+import { compareTextByKeyword } from '@/utils/assets';
+import { logger } from '@/utils/logging';
+import { splitSearch } from '@/utils/search';
 
 defineOptions({
   inheritAttrs: false,
 });
 
-const props = withDefaults(
-  defineProps<{
-    matches: MatchedKeywordWithBehaviour<any>;
-    matchers: SearchMatcher<any, any>[];
-    location?: SavedFilterLocation;
-    disabled?: boolean;
-  }>(),
-  {
-    disabled: false,
-    location: undefined,
-  },
-);
+const props = withDefaults(defineProps<{
+  matches: MatchedKeywordWithBehaviour<any>;
+  matchers: SearchMatcher<any, any>[];
+  location?: SavedFilterLocation;
+  disabled?: boolean;
+}>(), {
+  disabled: false,
+  location: undefined,
+});
 
 const emit = defineEmits<{
   (e: 'update:matches', matches: MatchedKeywordWithBehaviour<any>): void;
+}>();
+
+defineSlots<{
+  tooltip: () => any;
 }>();
 
 const { matchers, matches } = toRefs(props);
