@@ -1,10 +1,10 @@
 import type { AssetBalances } from '@/types/balances';
-import type { AssetBalance, AssetBalanceWithPrice, Balance, BigNumber } from '@rotki/common';
 import type { ComputedRef } from 'vue';
 import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
 import { useAssetCacheStore } from '@/store/assets/asset-cache';
 import { sortDesc, zeroBalance } from '@/utils/bignumbers';
 import { balanceSum } from '@/utils/calculation';
+import { type AssetBalance, type AssetBalanceWithPrice, type Balance, type BigNumber, NoPrice } from '@rotki/common';
 import { groupBy } from 'es-toolkit';
 
 interface UseBalanceSortingReturn {
@@ -55,7 +55,7 @@ export function useBalanceSorting(): UseBalanceSortingReturn {
       const collectionKey = key.split('collection-')[1];
       const assetCollectionInfo = !isAssetCollection ? false : get(fetchedAssetCollections)?.[collectionKey];
 
-      if (assetCollectionInfo && grouped.length > 1) {
+      if (assetCollectionInfo) {
         const sumBalance = grouped.reduce(
           (accumulator, currentBalance) => balanceSum(accumulator, currentBalance),
           zeroBalance(),

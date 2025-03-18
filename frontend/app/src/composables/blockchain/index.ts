@@ -22,7 +22,7 @@ import { isTaskCancelled } from '@/utils';
 import { arrayify } from '@/utils/array';
 import { awaitParallelExecution } from '@/utils/await-parallel-execution';
 import { logger } from '@/utils/logging';
-import { type Account, Blockchain, Severity } from '@rotki/common';
+import { type Account, assert, Blockchain, Severity } from '@rotki/common';
 import { startPromise } from '@shared/utils';
 
 interface EvmAccountAdditionSuccess {
@@ -303,7 +303,7 @@ export function useBlockchains(): UseBlockchainsReturn {
 
   const addAccounts = async (chain: string, payload: AddAccountsPayload | XpubAccountPayload, options?: AddAccountsOption): Promise<void> => {
     const taskType = TaskType.ADD_ACCOUNT;
-    if (get(isTaskRunning(taskType))) {
+    if (isTaskRunning(taskType)) {
       logger.debug(`${TaskType[taskType]} is already running.`);
       return;
     }

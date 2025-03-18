@@ -1,7 +1,6 @@
 <script setup lang="ts" generic="T extends BlockchainAccountWithBalance | BlockchainAccountGroupWithBalance">
 import type { BlockchainAccountGroupWithBalance, BlockchainAccountWithBalance } from '@/types/blockchain/accounts';
 import type { Collection } from '@/types/collection';
-import type { BigNumber } from '@rotki/common';
 import type { DataTableColumn, DataTableSortData, TablePaginationData } from '@rotki/ui-library';
 import AccountChains from '@/components/accounts/AccountChains.vue';
 import AccountTopTokens from '@/components/accounts/AccountTopTokens.vue';
@@ -22,6 +21,7 @@ import { Section } from '@/types/status';
 import { TaskType } from '@/types/task-type';
 import { sum } from '@/utils/balances';
 import { getAccountAddress, getAccountId, getGroupId } from '@/utils/blockchain/accounts/utils';
+import { type BigNumber, toSentenceCase } from '@rotki/common';
 import { isEmpty } from 'es-toolkit/compat';
 
 type DataRow = T & { id: string };
@@ -59,7 +59,7 @@ const collapsed = ref<DataRow[]>([]) as Ref<DataRow[]>;
 
 const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
 
-const { isTaskRunning } = useTaskStore();
+const { useIsTaskRunning } = useTaskStore();
 const { isLoading } = useStatusStore();
 const { supportsTransactions } = useSupportedChains();
 const { showConfirmation } = useAccountDelete();
@@ -156,8 +156,8 @@ const cols = computed<DataTableColumn<DataRow>[]>(() => {
 });
 
 const accountOperation = logicOr(
-  isTaskRunning(TaskType.ADD_ACCOUNT),
-  isTaskRunning(TaskType.REMOVE_ACCOUNT),
+  useIsTaskRunning(TaskType.ADD_ACCOUNT),
+  useIsTaskRunning(TaskType.REMOVE_ACCOUNT),
   isSectionLoading,
 );
 

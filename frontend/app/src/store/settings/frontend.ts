@@ -10,7 +10,7 @@ import {
   getDefaultFrontendSettings,
 } from '@/types/settings/frontend-settings';
 import { logger } from '@/utils/logging';
-import { BigNumber } from '@rotki/common';
+import { assert, BigNumber } from '@rotki/common';
 
 export const useFrontendSettingsStore = defineStore('settings/frontend', () => {
   const settings = ref<FrontendSettings>(markRaw(getDefaultFrontendSettings()));
@@ -38,6 +38,7 @@ export const useFrontendSettingsStore = defineStore('settings/frontend', () => {
   const darkTheme = useComputedRef(settings, 'darkTheme');
   const defaultThemeVersion = useComputedRef(settings, 'defaultThemeVersion');
   const graphZeroBased = useComputedRef(settings, 'graphZeroBased');
+  const ignoreSnapshotError = useComputedRef(settings, 'ignoreSnapshotError');
   const showGraphRangeSelector = useComputedRef(settings, 'showGraphRangeSelector');
   const nftsInNetValue = useComputedRef(settings, 'nftsInNetValue');
   const renderAllNftImages = useComputedRef(settings, 'renderAllNftImages');
@@ -124,6 +125,7 @@ export const useFrontendSettingsStore = defineStore('settings/frontend', () => {
     enableAliasNames,
     explorers,
     graphZeroBased,
+    ignoreSnapshotError,
     itemsPerPage,
     language,
     lastKnownTimeframe,

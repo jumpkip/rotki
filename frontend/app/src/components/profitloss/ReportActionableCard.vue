@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import type { DialogType } from '@/types/dialogs';
-import type { EditableMissingPrice, MissingAcquisition, MissingPrice, SelectedReport } from '@/types/reports';
+import type { EditableMissingPrice, MissingAcquisition, MissingPrice, Report } from '@/types/reports';
 import type { Pinned } from '@/types/session';
-import type { Nullable } from '@rotki/common';
 import type { Component } from 'vue';
 import { useConfirmStore } from '@/store/confirm';
 import { useReportsStore } from '@/store/reports';
 import { useAreaVisibilityStore } from '@/store/session/visibility';
+import { type Nullable, toSentenceCase } from '@rotki/common';
 
 const props = withDefaults(
   defineProps<{
-    report: SelectedReport;
+    report: Report;
     isPinned?: boolean;
   }>(),
   {
@@ -298,7 +298,6 @@ function closePinnedSidebar() {
         :is="content.selector"
         v-if="step === index + 1"
         :items="content.items"
-        :report="report"
         :is-pinned="isPinned"
         @pin="pinSection()"
       >

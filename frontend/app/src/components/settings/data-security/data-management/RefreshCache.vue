@@ -8,12 +8,13 @@ import { useSessionPurge } from '@/composables/session/purge';
 import { useHistoryStore } from '@/store/history';
 import { useTaskStore } from '@/store/tasks';
 import { TaskType } from '@/types/task-type';
+import { assert, toCapitalCase, toSentenceCase } from '@rotki/common';
 import { startPromise } from '@shared/utils';
 
 const source = ref<string>();
 
 const { protocolCacheStatus } = storeToRefs(useHistoryStore());
-const { isTaskRunning } = useTaskStore();
+const { useIsTaskRunning } = useTaskStore();
 
 const { getChainName } = useSupportedChains();
 const { refreshGeneralCache } = useSessionPurge();
@@ -47,8 +48,8 @@ const { pending, showConfirmation, status } = useCacheClear<string>(
   }),
 );
 
-const taskRunning = isTaskRunning(TaskType.REFRESH_GENERAL_CACHE);
-const eventTaskLoading = isTaskRunning(TaskType.TRANSACTIONS_DECODING);
+const taskRunning = useIsTaskRunning(TaskType.REFRESH_GENERAL_CACHE);
+const eventTaskLoading = useIsTaskRunning(TaskType.TRANSACTIONS_DECODING);
 const loading = logicOr(pending, taskRunning, eventTaskLoading);
 
 const hint = computed<string>(() => {

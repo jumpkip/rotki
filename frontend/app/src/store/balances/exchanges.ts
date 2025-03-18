@@ -8,7 +8,6 @@ import type {
 } from '@/types/exchanges';
 import type { AssetPrices } from '@/types/prices';
 import type { ExchangeMeta, TaskMeta } from '@/types/task';
-import type { AssetBalanceWithPrice, BigNumber } from '@rotki/common';
 import type { MaybeRef } from '@vueuse/core';
 import { useExchangeApi } from '@/composables/api/balances/exchanges';
 import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
@@ -32,6 +31,7 @@ import { mapCollectionResponse } from '@/utils/collection';
 import { uniqueStrings } from '@/utils/data';
 import { logger } from '@/utils/logging';
 import { updateBalancesPrices } from '@/utils/prices';
+import { type AssetBalanceWithPrice, type BigNumber, toSentenceCase } from '@rotki/common';
 
 export const useExchangeBalancesStore = defineStore('balances/exchanges', () => {
   const exchangeBalances = ref<ExchangeData>({});
@@ -131,7 +131,7 @@ export const useExchangeBalancesStore = defineStore('balances/exchanges', () => 
 
     const threshold = get(balanceUsdValueThreshold);
 
-    if (get(isTaskRunning(taskType)) && meta?.location === location)
+    if (isTaskRunning(taskType) && meta?.location === location)
       return;
 
     const { isFirstLoad, resetStatus, setStatus } = useStatusUpdater(Section.EXCHANGES);
@@ -262,7 +262,7 @@ export const useExchangeBalancesStore = defineStore('balances/exchanges', () => 
       if (locations.length > 0)
         await Promise.all(locations.map(syncExchangeSavings));
 
-      setStatus(get(isTaskRunning(TaskType.QUERY_EXCHANGE_SAVINGS)) ? Status.REFRESHING : Status.LOADED);
+      setStatus(isTaskRunning(TaskType.QUERY_EXCHANGE_SAVINGS) ? Status.REFRESHING : Status.LOADED);
     }
     catch (error) {
       logger.error(error);

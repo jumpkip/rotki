@@ -80,7 +80,12 @@ from rotkehlchen.db.settings import ModifiableDBSettings
 from rotkehlchen.db.utils import DBAssetBalance, LocationData
 from rotkehlchen.errors.misc import InputError, RemoteError, XPUBError
 from rotkehlchen.errors.serialization import DeserializationError, EncodingError
-from rotkehlchen.exchanges.constants import ALL_SUPPORTED_EXCHANGES, SUPPORTED_EXCHANGES
+from rotkehlchen.exchanges.constants import (
+    ALL_SUPPORTED_EXCHANGES,
+    EXCHANGES_WITH_PASSPHRASE,
+    EXCHANGES_WITHOUT_API_SECRET,
+    SUPPORTED_EXCHANGES,
+)
 from rotkehlchen.exchanges.kraken import KrakenAccountType
 from rotkehlchen.history.events.structures.asset_movement import (
     AssetMovement,
@@ -94,6 +99,7 @@ from rotkehlchen.history.events.structures.eth2 import (
     EthWithdrawalEvent,
 )
 from rotkehlchen.history.events.structures.evm_event import EvmEvent, EvmProduct
+from rotkehlchen.history.events.structures.swap import create_swap_events
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.history.types import HistoricalPriceOracle
 from rotkehlchen.icons import ALLOWED_ICON_EXTENSIONS
@@ -962,7 +968,7 @@ class CreateHistoryEventSchema(Schema):
         event_identifier = fields.String(required=False, load_default=None)
         asset = AssetField(required=True, expected_type=Asset, form_with_incomplete_data=True)
         fee_asset = AssetField(load_default=None, required=False, expected_type=Asset, form_with_incomplete_data=True)  # noqa: E501
-        notes = fields.String(required=False, load_default=None)
+        notes = fields.List(fields.String(), required=False, validate=validate.Length(min=1, max=2))  # noqa: E501
 
         @post_load
         def make_history_base_entry(
@@ -970,10 +976,22 @@ class CreateHistoryEventSchema(Schema):
                 data: dict[str, Any],
                 **_kwargs: Any,
         ) -> dict[str, Any]:
+            if (notes := data.get('notes')) is None:
+                movement_notes, fee_notes = None, None
+            elif len(notes) == 1:
+                movement_notes, fee_notes = notes[0], None
+            else:  # len == 2, enforced by validate.Length above
+                movement_notes, fee_notes = notes
+
             if ((fee := data['fee']) is None) ^ (data['fee_asset'] is None):
                 raise ValidationError(
                     message='fee and fee_asset must be provided together',
                     field_name='fee',
+                )
+            elif fee is None and fee_notes is not None:
+                raise ValidationError(
+                    message='fee_notes may only be provided when fee_amount is present',
+                    field_name='fee_notes',
                 )
 
             extra_data: AssetMovementExtraData = {}
@@ -997,9 +1015,13 @@ class CreateHistoryEventSchema(Schema):
                 identifier=data.get('identifier'),
                 amount=data['amount'],
                 extra_data=extra_data,
-                fee_identifier=CreateHistoryEventSchema.history_event_context.get()['schema'].get_fee_event_identifier(data),
+                fee_identifier=CreateHistoryEventSchema.history_event_context.get()['schema'].get_grouped_event_identifier(
+                    data=data,
+                    subtype=HistoryEventSubType.FEE,
+                ),
                 location_label=data['location_label'],
-                given_notes=data['notes'],
+                movement_notes=movement_notes,
+                fee_notes=fee_notes,
             ) if fee is not None else [AssetMovement(
                 is_fee=False,
                 asset=data['asset'],
@@ -1012,9 +1034,73 @@ class CreateHistoryEventSchema(Schema):
                 extra_data=extra_data,
                 event_identifier=data['event_identifier'],
                 location_label=data['location_label'],
-                given_notes=data['notes'],
+                notes=movement_notes,
             )]
 
+            return {'events': events}
+
+    class CreateSwapEventSchema(Schema):
+        identifier = fields.Integer(required=True)
+        timestamp = TimestampMSField(required=True)
+        location = LocationField(required=True)
+        spend_amount = AmountField(required=True, validate=validate.Range(min=ZERO, min_inclusive=False))  # noqa: E501
+        spend_asset = AssetField(required=True, expected_type=Asset, form_with_incomplete_data=True)  # noqa: E501
+        receive_amount = AmountField(required=True, validate=validate.Range(min=ZERO, min_inclusive=False))  # noqa: E501
+        receive_asset = AssetField(required=True, expected_type=Asset, form_with_incomplete_data=True)  # noqa: E501
+        fee_amount = FeeField(required=False, load_default=None, validate=validate.Range(min=ZERO, min_inclusive=False))  # noqa: E501
+        fee_asset = AssetField(required=False, load_default=None, expected_type=Asset, form_with_incomplete_data=True)  # noqa: E501
+        location_label = fields.String(required=False, load_default=None)
+        unique_id = fields.String(required=False, load_default=None)
+        notes = fields.List(fields.String(), required=False, validate=validate.Length(min=2, max=3))  # noqa: E501
+        event_identifier = fields.String(required=False, load_default=None)
+
+        @post_load
+        def make_history_base_entry(self, data: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
+            if (notes := data.get('notes')) is None:
+                spend_notes, receive_notes, fee_notes = None, None, None
+            elif len(notes) == 2:
+                spend_notes, receive_notes = notes
+                fee_notes = None
+            else:  # len == 3, enforced by validate.Length above
+                spend_notes, receive_notes, fee_notes = notes
+
+            if ((fee_amount := data['fee_amount']) is None) ^ (data['fee_asset'] is None):
+                raise ValidationError(
+                    message='fee_amount and fee_asset must be provided together',
+                    field_name='fee_amount',
+                )
+            elif fee_amount is None and fee_notes is not None:
+                raise ValidationError(
+                    message='fee_notes may only be provided when fee_amount is present',
+                    field_name='fee_notes',
+                )
+
+            context_schema = CreateHistoryEventSchema.history_event_context.get()['schema']
+            events = create_swap_events(
+                timestamp=data['timestamp'],
+                location=data['location'],
+                spend_asset=data['spend_asset'],
+                spend_amount=data['spend_amount'],
+                receive_asset=data['receive_asset'],
+                receive_amount=data['receive_amount'],
+                fee_amount=fee_amount or ZERO,
+                fee_asset=data['fee_asset'],
+                location_label=data['location_label'],
+                unique_id=data['unique_id'],
+                spend_notes=spend_notes,
+                receive_notes=receive_notes,
+                fee_notes=fee_notes,
+                identifier=data.get('identifier'),
+                event_identifier=data['event_identifier'],
+                receive_identifier=context_schema.get_grouped_event_identifier(
+                    data=data,
+                    subtype=HistoryEventSubType.RECEIVE,
+                ),
+                fee_identifier=context_schema.get_grouped_event_identifier(
+                    data=data,
+                    subtype=HistoryEventSubType.FEE,
+                ),
+            )
             return {'events': events}
 
     ENTRY_TO_SCHEMA: Final[dict[HistoryBaseEntryType, type[Schema]]] = {
@@ -1024,10 +1110,15 @@ class CreateHistoryEventSchema(Schema):
         HistoryBaseEntryType.ETH_WITHDRAWAL_EVENT: CreateEthWithdrawalEventEventSchema,
         HistoryBaseEntryType.EVM_EVENT: CreateEvmEventSchema,
         HistoryBaseEntryType.ASSET_MOVEMENT_EVENT: CreateAssetMovementEventSchema,
+        HistoryBaseEntryType.SWAP_EVENT: CreateSwapEventSchema,
     }
 
-    def get_fee_event_identifier(self, data: dict[str, Any]) -> int | None:
-        """Retrieve fee event's identifier for asset movement, returns None for create."""
+    def get_grouped_event_identifier(
+            self,
+            data: dict[str, Any],
+            subtype: Literal[HistoryEventSubType.RECEIVE, HistoryEventSubType.FEE],
+    ) -> int | None:
+        """Retrieve grouped event's identifier, returns None for create."""
         return None
 
     @post_load
@@ -1049,8 +1140,12 @@ class EditHistoryEventSchema(CreateHistoryEventSchema):
     """Schema used when editing an existing event in the EVM transactions view"""
     include_identifier = True
 
-    def get_fee_event_identifier(self, data: dict[str, Any]) -> int | None:
-        """Retrieve fee event's identifier for asset movement, returns None for create."""
+    def get_grouped_event_identifier(
+            self,
+            data: dict[str, Any],
+            subtype: Literal[HistoryEventSubType.RECEIVE, HistoryEventSubType.FEE],
+    ) -> int | None:
+        """Retrieve grouped event's identifier, returns None for create."""
         with self.database.conn.read_ctx() as cursor:
             result = cursor.execute("""
                 SELECT identifier
@@ -1060,8 +1155,8 @@ class EditHistoryEventSchema(CreateHistoryEventSchema):
                     FROM history_events
                     WHERE identifier = ?
                 )
-                AND subtype = 'fee'
-            """, (data['identifier'],)).fetchone()
+                AND subtype = ?
+            """, (data['identifier'], subtype.serialize())).fetchone()
 
             return result[0] if result else None
 
@@ -1581,10 +1676,29 @@ class ExchangesResourceAddSchema(Schema):
     name = fields.String(required=True)
     location = LocationField(limit_to=SUPPORTED_EXCHANGES, required=True)
     api_key = ApiKeyField(required=True)
-    api_secret = ApiSecretField(required=True)
+    api_secret = ApiSecretField(load_default=None)
     passphrase = fields.String(load_default=None)
     kraken_account_type = SerializableEnumField(enum_class=KrakenAccountType, load_default=None)
     binance_markets = fields.List(fields.String(), load_default=None)
+
+    @validates_schema
+    def validate_schema(
+            self,
+            data: dict[str, Any],
+            **_kwargs: Any,
+    ) -> None:
+        location = data['location']
+        if data['api_secret'] is None and location not in EXCHANGES_WITHOUT_API_SECRET:
+            raise ValidationError(
+                f'{location.name.title()} requires an API secret',
+                field_name='api_secret',
+            )
+
+        if location in EXCHANGES_WITH_PASSPHRASE and not data.get('passphrase'):
+            raise ValidationError(
+                f'{location.name.title()} requires a passphrase',
+                field_name='passphrase',
+            )
 
 
 class ExchangesDataResourceSchema(Schema):
@@ -1717,7 +1831,8 @@ class AccountingReportDataSchema(TimestampRangeSchema, DBPaginationSchema, DBOrd
             data: dict[str, Any],
             **_kwargs: Any,
     ) -> None:
-        valid_ordering_attr = {None, 'timestamp'}
+        valid_ordering_attr = {None, 'timestamp', 'pnl_taxable', 'pnl_free', 'asset'}
+
         if (
             data['order_by_attributes'] is not None and
             not set(data['order_by_attributes']).issubset(valid_ordering_attr)

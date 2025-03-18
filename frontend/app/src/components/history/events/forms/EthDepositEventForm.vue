@@ -12,7 +12,7 @@ import { DateFormat } from '@/types/date-format';
 import { bigNumberifyFromRef } from '@/utils/bignumbers';
 import { convertFromTimestamp, convertToTimestamp } from '@/utils/date';
 import { toMessages } from '@/utils/validation';
-import { Blockchain, HistoryEventEntryType } from '@rotki/common';
+import { Blockchain, HistoryEventEntryType, isValidEthAddress, isValidTxHash, Zero } from '@rotki/common';
 import useVuelidate from '@vuelidate/core';
 import { helpers, required, requiredIf } from '@vuelidate/validators';
 import dayjs from 'dayjs';
@@ -243,7 +243,7 @@ defineExpose({
       disable-asset
     />
 
-    <RuiDivider class="my-10" />
+    <RuiDivider class="mb-6" />
 
     <div class="grid md:grid-cols-2 gap-4">
       <AutoCompleteWithSearchSync

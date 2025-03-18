@@ -7,9 +7,9 @@ import PoapDeliveryAirdrops from '@/components/defi/airdrops/PoapDeliveryAirdrop
 import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
 import BlockchainAccountSelector from '@/components/helper/BlockchainAccountSelector.vue';
 import ExternalLink from '@/components/helper/ExternalLink.vue';
-import HashLink from '@/components/helper/HashLink.vue';
 import TablePageLayout from '@/components/layout/TablePageLayout.vue';
 import { useDefiApi } from '@/composables/api/defi';
+import HashLink from '@/modules/common/links/HashLink.vue';
 import { useNotificationsStore } from '@/store/notifications';
 import { useTaskStore } from '@/store/tasks';
 import {
@@ -23,7 +23,7 @@ import { TaskType } from '@/types/task-type';
 import { isTaskCancelled } from '@/utils';
 import { getAccountAddress } from '@/utils/blockchain/accounts/utils';
 import { logger } from '@/utils/logging';
-import { type BigNumber, Blockchain } from '@rotki/common';
+import { type BigNumber, Blockchain, Zero } from '@rotki/common';
 
 type AirdropWithIndex = Omit<Airdrop, 'amount'> & { index: number; amount: BigNumber };
 
@@ -249,7 +249,10 @@ watch([status, selectedAccounts], () => {
         row-attr="index"
       >
         <template #item.address="{ row }">
-          <HashLink :text="row.address" />
+          <HashLink
+            :text="row.address"
+            location="eth"
+          />
         </template>
         <template #item.amount="{ row }">
           <AmountDisplay

@@ -923,12 +923,12 @@ class ExchangeAuthCredentials(NamedTuple):
 class ExchangeApiCredentials(NamedTuple):
     """Represents Credentials for Exchanges
 
-    The Api in question must at least have an API key and an API secret.
+    The Api in question must at least have an API key.
     """
     name: str  # A unique name to identify this particular Location credentials
     location: Location
     api_key: ApiKey
-    api_secret: ApiSecret
+    api_secret: ApiSecret | None
     passphrase: str | None = None
 
 
@@ -1185,6 +1185,7 @@ class CacheType(Enum):
     VELODROME_GAUGE_BRIBE_ADDRESS = auto()
     AERODROME_GAUGE_FEE_ADDRESS = auto()
     AERODROME_GAUGE_BRIBE_ADDRESS = auto()
+    CURVE_LENDING_VAULT_GAUGE = auto()
 
     def serialize(self) -> str:
         # Using custom serialize method instead of SerializableEnumMixin since mixin replaces
@@ -1239,6 +1240,7 @@ UniqueCacheType = Literal[
     CacheType.CURVE_LENDING_VAULT_COLLATERAL_TOKEN,
     CacheType.CURVE_LENDING_VAULT_BORROWED_TOKEN,
     CacheType.AURA_POOLS,
+    CacheType.CURVE_LENDING_VAULT_GAUGE,
 ]
 
 UNIQUE_CACHE_KEYS: tuple[UniqueCacheType, ...] = typing.get_args(UniqueCacheType)

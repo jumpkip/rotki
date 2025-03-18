@@ -4,6 +4,7 @@ import { useSupportedChains } from '@/composables/info/chains';
 import { Routes } from '@/router/routes';
 import { useLocationStore } from '@/store/locations';
 import { uniqueStrings } from '@/utils/data';
+import { toHumanReadable, toSentenceCase } from '@rotki/common';
 
 function reset() {
   sessionStorage.removeItem('vuex');
@@ -13,7 +14,7 @@ function reset() {
 const resetState = 'Reset State';
 
 const { supportedChains } = useSupportedChains();
-const { allExchanges, allLocations } = storeToRefs(useLocationStore());
+const { allExchanges, allLocations, exchangesWithKey } = storeToRefs(useLocationStore());
 const { counterparties, getCounterpartyData } = useHistoryEventCounterpartyMappings();
 
 const imageUrl = 'https://raw.githubusercontent.com/rotki/rotki/develop/frontend/app/public/assets/images/protocols/';
@@ -29,9 +30,12 @@ const integrationData = computed(() => {
   const exchanges = get(allExchanges).map((item) => {
     const data = get(allLocations)[item];
 
+    const isExchangeWithKey = get(exchangesWithKey).includes(item);
+
     return {
       image: `${imageUrl}${data.image}`,
       label: data.label || toSentenceCase(item),
+      ...(isExchangeWithKey ? { isExchangeWithKey: true } : {}),
     };
   });
 

@@ -23,6 +23,7 @@ import { useMessageStore } from '@/store/message';
 import { useTaskStore } from '@/store/tasks';
 import { TaskType } from '@/types/task-type';
 import { getPlaceholderRule } from '@/utils/settings';
+import { toSentenceCase } from '@rotki/common';
 import { startPromise } from '@shared/utils';
 
 const { t } = useI18n();
@@ -248,10 +249,10 @@ onMounted(async () => {
   await refresh();
 });
 
-const { isTaskRunning } = useTaskStore();
+const { useIsTaskRunning } = useTaskStore();
 
-const exportFileLoading = isTaskRunning(TaskType.EXPORT_ACCOUNTING_RULES);
-const importFileLoading = isTaskRunning(TaskType.IMPORT_ACCOUNTING_RULES);
+const exportFileLoading = useIsTaskRunning(TaskType.EXPORT_ACCOUNTING_RULES);
+const importFileLoading = useIsTaskRunning(TaskType.IMPORT_ACCOUNTING_RULES);
 
 const importFileDialog = ref<boolean>(false);
 </script>

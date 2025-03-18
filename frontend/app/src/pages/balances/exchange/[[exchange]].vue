@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import type { AssetBalanceWithPrice, BigNumber } from '@rotki/common';
 import ExchangeAmountRow from '@/components/accounts/exchanges/ExchangeAmountRow.vue';
 import AssetBalances from '@/components/AssetBalances.vue';
 import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
@@ -17,6 +16,7 @@ import { NoteLocation } from '@/types/notes';
 import { BalanceSource } from '@/types/settings/frontend-settings';
 import { TaskType } from '@/types/task-type';
 import { uniqueStrings } from '@/utils/data';
+import { type AssetBalanceWithPrice, type BigNumber, Zero } from '@rotki/common';
 
 definePage({
   meta: {
@@ -32,7 +32,7 @@ const { t } = useI18n();
 const selectedTab = ref<string | undefined>(props.exchange ?? undefined);
 
 const { exchange } = toRefs(props);
-const { isTaskRunning } = useTaskStore();
+const { useIsTaskRunning } = useTaskStore();
 const { fetchExchangeSavings, getBalances, refreshExchangeSavings } = useExchangeBalancesStore();
 const { connectedExchanges } = storeToRefs(useExchangesStore());
 
@@ -50,7 +50,7 @@ const usedExchanges = computed<string[]>(() =>
     .filter(uniqueStrings),
 );
 
-const isExchangeLoading = isTaskRunning(TaskType.QUERY_EXCHANGE_BALANCES);
+const isExchangeLoading = useIsTaskRunning(TaskType.QUERY_EXCHANGE_BALANCES);
 
 const router = useRouter();
 const route = useRoute();

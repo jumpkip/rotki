@@ -11,7 +11,7 @@ import { DateFormat } from '@/types/date-format';
 import { bigNumberifyFromRef } from '@/utils/bignumbers';
 import { convertFromTimestamp, convertToTimestamp } from '@/utils/date';
 import { toMessages } from '@/utils/validation';
-import { Blockchain, HistoryEventEntryType } from '@rotki/common';
+import { Blockchain, HistoryEventEntryType, isValidEthAddress, Zero } from '@rotki/common';
 import useVuelidate from '@vuelidate/core';
 import { helpers, required, requiredIf } from '@vuelidate/validators';
 import dayjs from 'dayjs';
@@ -210,7 +210,7 @@ defineExpose({
       disable-asset
     />
 
-    <RuiDivider class="my-10" />
+    <RuiDivider class="mb-6" />
 
     <AutoCompleteWithSearchSync
       v-model="withdrawalAddress"
@@ -230,7 +230,7 @@ defineExpose({
       {{ t('transactions.events.form.is_exit.label') }}
     </RuiCheckbox>
 
-    <RuiDivider class="mb-2 mt-6" />
+    <RuiDivider class="mb-2" />
 
     <RuiAccordions>
       <RuiAccordion

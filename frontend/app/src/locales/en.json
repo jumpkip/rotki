@@ -1173,7 +1173,10 @@
     },
     "filter": {
       "address": "Filter by the address",
+      "address_hint": "E.g. 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
       "chain": "Filter by evm chain",
+      "identifier": "Filter by identifier",
+      "identifier_hint": "E.g. eip155:8453/erc20:0x833589fCD6e...b54bdA02913",
       "name": "Filter by the name of the asset",
       "name_hint": "Search using the asset name",
       "symbol": "Filter by the symbol of the asset",
@@ -1396,6 +1399,7 @@
       "validators": "Validators"
     },
     "title": "Blockchain Balances per asset",
+    "validator_index_label": "Ethereum validator No. {index}",
     "validators": "Ethereum Validators"
   },
   "calendar": {
@@ -1780,6 +1784,11 @@
         "only_refresh_balances": "Only refresh balances",
         "redetect_tokens": "Re-detect tokens and refresh balances",
         "title": "Blockchain refresh button behaviour"
+      },
+      "categories": {
+        "bitcoin": "Bitcoin Address",
+        "evm": "EVM Address",
+        "substrate": "Substrate Address"
       },
       "title": "blockchain"
     },
@@ -3461,6 +3470,10 @@
       "title": "CSV Import Result: {sourceName}"
     },
     "deserialization_error": "We could not deserialize {count} assets for your accounts, please check the application logs for more information.",
+    "gnosis_pay_session_key_expired": {
+      "replace_key": "Replace key",
+      "title": "Gnosis Pay session key expired"
+    },
     "missing_api_key": {
       "action": "Enter key",
       "etherscan": {
@@ -4565,7 +4578,7 @@
     },
     "form": {
       "account": {
-        "label": "Account to be associated with the transaction",
+        "no_address_found": "No address found",
         "validation": {
           "non_empty": "The account field cannot be empty"
         }

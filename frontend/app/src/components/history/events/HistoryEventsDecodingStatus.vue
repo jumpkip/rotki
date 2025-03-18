@@ -7,6 +7,7 @@ import { useHistoryTransactionDecoding } from '@/composables/history/events/tx/d
 import { useHistoryStore } from '@/store/history';
 import { useTaskStore } from '@/store/tasks';
 import { TaskType } from '@/types/task-type';
+import { toSentenceCase } from '@rotki/common';
 
 interface LocationData {
   evmChain: string;
@@ -28,16 +29,16 @@ defineSlots<{
   default: () => any;
 }>();
 
-const { isTaskRunning } = useTaskStore();
-const fetching = isTaskRunning(TaskType.FETCH_UNDECODED_TXS);
-const isDecoding = isTaskRunning(TaskType.TRANSACTIONS_DECODING);
+const { useIsTaskRunning } = useTaskStore();
+const fetching = useIsTaskRunning(TaskType.FETCH_UNDECODED_TXS);
+const isDecoding = useIsTaskRunning(TaskType.TRANSACTIONS_DECODING);
 const debouncedIsDecoding = refDebounced(isDecoding, 500);
 const usedIsDecoding = logicOr(isDecoding, debouncedIsDecoding);
-const isTransactionsLoading = isTaskRunning(TaskType.TX);
-const isPartiallyDecoding = isTaskRunning(TaskType.TRANSACTIONS_DECODING, {
+const isTransactionsLoading = useIsTaskRunning(TaskType.TX);
+const isPartiallyDecoding = useIsTaskRunning(TaskType.TRANSACTIONS_DECODING, {
   all: false,
 });
-const isFullyDecoding = isTaskRunning(TaskType.TRANSACTIONS_DECODING, {
+const isFullyDecoding = useIsTaskRunning(TaskType.TRANSACTIONS_DECODING, {
   all: true,
 });
 

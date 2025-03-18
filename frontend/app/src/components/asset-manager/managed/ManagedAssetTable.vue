@@ -2,7 +2,6 @@
 import type { Filters, Matcher } from '@/composables/filters/assets';
 import type { ActionStatus } from '@/types/action';
 import type { Collection } from '@/types/collection';
-import type { SupportedAsset } from '@rotki/common';
 import type { DataTableColumn, DataTableSortData, TablePaginationData } from '@rotki/ui-library';
 import AssetStatusFilter from '@/components/asset-manager/AssetStatusFilter.vue';
 import AssetUnderlyingTokens from '@/components/asset-manager/AssetUnderlyingTokens.vue';
@@ -11,18 +10,18 @@ import DateDisplay from '@/components/display/DateDisplay.vue';
 import AssetDetailsBase from '@/components/helper/AssetDetailsBase.vue';
 import CollectionHandler from '@/components/helper/CollectionHandler.vue';
 import CopyButton from '@/components/helper/CopyButton.vue';
-import HashLink from '@/components/helper/HashLink.vue';
 import RowActions from '@/components/helper/RowActions.vue';
 import IgnoreButtons from '@/components/history/IgnoreButtons.vue';
 import TableFilter from '@/components/table-filter/TableFilter.vue';
 import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
 import { useSpamAsset } from '@/composables/assets/spam';
-import { useSupportedChains } from '@/composables/info/chains';
+import HashLink from '@/modules/common/links/HashLink.vue';
 import { useIgnoredAssetsStore } from '@/store/assets/ignored';
 import { useWhitelistedAssetsStore } from '@/store/assets/whitelisted';
 import { useMessageStore } from '@/store/message';
 import { CUSTOM_ASSET, EVM_TOKEN, IgnoredAssetHandlingType, type IgnoredAssetsHandlingType } from '@/types/asset';
 import { uniqueStrings } from '@/utils/data';
+import { getAddressFromEvmIdentifier, isEvmIdentifier, type SupportedAsset, toSentenceCase } from '@rotki/common';
 import { some } from 'es-toolkit/compat';
 
 interface IgnoredFilter {
@@ -138,8 +137,6 @@ const { fetchIgnoredAssets, ignoreAsset, ignoreAssetWithConfirmation, isAssetIgn
 const { isAssetWhitelisted, unWhitelistAsset, whitelistAsset } = useWhitelistedAssetsStore();
 
 const { markAssetsAsSpam, removeAssetFromSpamList } = useSpamAsset();
-
-const { getChain } = useSupportedChains();
 
 async function toggleIgnoreAsset(asset: SupportedAsset) {
   const { identifier, name, symbol } = asset;
@@ -304,9 +301,8 @@ const disabledRows = computed(() => {
             <HashLink
               v-if="row.address"
               :text="row.address"
-              :chain="row?.evmChain ? getChain(row.evmChain) : undefined"
+              :location="row?.evmChain ?? undefined"
               type="token"
-              hide-alias-name
             />
           </template>
           <template #item.started="{ row }">

@@ -74,8 +74,8 @@ importers:
         specifier: workspace:*
         version: link:../common
       '@rotki/ui-library':
-        specifier: 1.12.1
-        version: 1.12.1(@vueuse/core@12.8.2(typescript@5.8.2))(@vueuse/shared@12.8.2(typescript@5.8.2))(vue@3.5.13(typescript@5.8.2))
+        specifier: 1.12.2
+        version: 1.12.2(@vueuse/core@12.8.2(typescript@5.8.2))(@vueuse/shared@12.8.2(typescript@5.8.2))(vue@3.5.13(typescript@5.8.2))
       '@types/jsdom':
         specifier: 21.1.7
         version: 21.1.7
@@ -311,9 +311,6 @@ importers:
       vite-plugin-vue-devtools:
         specifier: 7.7.2
         version: 7.7.2(rollup@2.79.2)(vite@6.2.1(@types/node@20.17.23)(jiti@1.21.7)(sass@1.85.1)(terser@5.39.0)(tsx@4.19.3)(yaml@2.7.0))(vue@3.5.13(typescript@5.8.2))
-      vite-plugin-vue-layouts:
-        specifier: 0.11.0
-        version: 0.11.0(vite@6.2.1(@types/node@20.17.23)(jiti@1.21.7)(sass@1.85.1)(terser@5.39.0)(tsx@4.19.3)(yaml@2.7.0))(vue-router@4.5.0(vue@3.5.13(typescript@5.8.2)))(vue@3.5.13(typescript@5.8.2))
       vitest:
         specifier: 3.0.8
         version: 3.0.8(@types/debug@4.1.12)(@types/node@20.17.23)(@vitest/ui@3.0.8)(happy-dom@17.2.2)(jiti@1.21.7)(jsdom@26.0.0)(msw@2.7.3(@types/node@20.17.23)(typescript@5.8.2))(sass@1.85.1)(terser@5.39.0)(tsx@4.19.3)(yaml@2.7.0)
@@ -1855,9 +1852,9 @@ packages:
     peerDependencies:
       eslint: ^9.0.0
 
-  '@rotki/ui-library@1.12.1':
-    resolution: {integrity: sha512-5rUdfexJB/rQcb7BMqP1fqZaWufyA08zM+kC2yDS1n6eUUgTdoMkQQCGc0t4pOtZR59VTSVzq4jMXfrgiqAeOw==}
-    engines: {node: '>=20 <21', pnpm: '>=9 <10'}
+  '@rotki/ui-library@1.12.2':
+    resolution: {integrity: sha512-jcf97EcUdIZhCBQyVvABG0w2ihNJkEurOJhw8vbVIFFKlu0fm4Eq15+Mx0tJgTC7afOaJOW/Hpg5xpZ0u/akWA==}
+    engines: {node: '>=20 <21', pnpm: '>=10 <11'}
     peerDependencies:
       '@vueuse/core': '>11.0.0'
       '@vueuse/shared': '>11.0.0'
@@ -7059,13 +7056,6 @@ packages:
     peerDependencies:
       vite: ^3.0.0-0 || ^4.0.0-0 || ^5.0.0-0 || ^6.0.0-0
 
-  vite-plugin-vue-layouts@0.11.0:
-    resolution: {integrity: sha512-uh6NW7lt+aOXujK4eHfiNbeo55K9OTuB7fnv+5RVc4OBn/cZull6ThXdYH03JzKanUfgt6QZ37NbbtJ0og59qw==}
-    peerDependencies:
-      vite: ^4.0.0 || ^5.0.0
-      vue: ^3.2.4
-      vue-router: ^4.0.11
-
   vite@6.2.1:
     resolution: {integrity: sha512-n2GnqDb6XPhlt9B8olZPrgMD/es/Nd1RdChF6CBD/fHW6pUyUTt2sQW2fPRX5GiD9XEa6+8A6A4f2vT6pSsE7Q==}
     engines: {node: ^18.0.0 || ^20.0.0 || >=22.0.0}
@@ -9135,7 +9125,7 @@ snapshots:
       - supports-color
       - typescript
 
-  '@rotki/ui-library@1.12.1(@vueuse/core@12.8.2(typescript@5.8.2))(@vueuse/shared@12.8.2(typescript@5.8.2))(vue@3.5.13(typescript@5.8.2))':
+  '@rotki/ui-library@1.12.2(@vueuse/core@12.8.2(typescript@5.8.2))(@vueuse/shared@12.8.2(typescript@5.8.2))(vue@3.5.13(typescript@5.8.2))':
     dependencies:
       '@vueuse/core': 12.8.2(typescript@5.8.2)
       '@vueuse/shared': 12.8.2(typescript@5.8.2)
@@ -15387,16 +15377,6 @@ snapshots:
       kolorist: 1.8.0
       magic-string: 0.30.17
       vite: 6.2.1(@types/node@20.17.23)(jiti@1.21.7)(sass@1.85.1)(terser@5.39.0)(tsx@4.19.3)(yaml@2.7.0)
-    transitivePeerDependencies:
-      - supports-color
-
-  vite-plugin-vue-layouts@0.11.0(vite@6.2.1(@types/node@20.17.23)(jiti@1.21.7)(sass@1.85.1)(terser@5.39.0)(tsx@4.19.3)(yaml@2.7.0))(vue-router@4.5.0(vue@3.5.13(typescript@5.8.2)))(vue@3.5.13(typescript@5.8.2)):
-    dependencies:
-      debug: 4.4.0(supports-color@8.1.1)
-      fast-glob: 3.3.3
-      vite: 6.2.1(@types/node@20.17.23)(jiti@1.21.7)(sass@1.85.1)(terser@5.39.0)(tsx@4.19.3)(yaml@2.7.0)
-      vue: 3.5.13(typescript@5.8.2)
-      vue-router: 4.5.0(vue@3.5.13(typescript@5.8.2))
     transitivePeerDependencies:
       - supports-color
 

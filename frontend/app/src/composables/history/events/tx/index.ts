@@ -1,6 +1,5 @@
 import type { ActionStatus } from '@/types/action';
 import type { Exchange } from '@/types/exchanges';
-import type { Blockchain } from '@rotki/common';
 import { useHistoryEventsApi } from '@/composables/api/history/events';
 import { useHistoryTransactionDecoding } from '@/composables/history/events/tx/decoding';
 import { useSupportedChains } from '@/composables/info/chains';
@@ -29,6 +28,7 @@ import { isTaskCancelled } from '@/utils';
 import { awaitParallelExecution } from '@/utils/await-parallel-execution';
 import { LimitedParallelizationQueue } from '@/utils/limited-parallelization-queue';
 import { logger } from '@/utils/logging';
+import { type Blockchain, toHumanReadable } from '@rotki/common';
 import { startPromise } from '@shared/utils';
 import { groupBy, omit } from 'es-toolkit';
 
@@ -109,7 +109,7 @@ export const useHistoryTransactions = createSharedComposable(() => {
       }
     }
     finally {
-      setStatus(get(isTaskRunning(taskType, { isEvm })) ? Status.REFRESHING : Status.LOADED);
+      setStatus(isTaskRunning(taskType, { isEvm }) ? Status.REFRESHING : Status.LOADED);
     }
   };
 
@@ -223,7 +223,7 @@ export const useHistoryTransactions = createSharedComposable(() => {
 
     const isEvm = type === TransactionChainType.EVM;
     if (addresses.length > 0)
-      setStatus(get(isTaskRunning(TaskType.TX, { isEvm })) ? Status.REFRESHING : Status.LOADED);
+      setStatus(isTaskRunning(TaskType.TX, { isEvm }) ? Status.REFRESHING : Status.LOADED);
     logger.debug(`finished refreshing ${type} transactions for ${addresses.length} addresses`);
   };
 

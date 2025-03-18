@@ -2,7 +2,6 @@ import type { ActionStatus } from '@/types/action';
 import type { FetchPricePayload } from '@/types/blockchain/accounts';
 import type { Balances } from '@/types/blockchain/balances';
 import type { TaskMeta } from '@/types/task';
-import type { BigNumber } from '@rotki/common';
 import type { MaybeRef } from '@vueuse/core';
 import { usePriceApi } from '@/composables/api/balances/price';
 import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
@@ -25,6 +24,7 @@ import { isTaskCancelled } from '@/utils';
 import { chunkArray } from '@/utils/data';
 import { convertFromTimestamp } from '@/utils/date';
 import { logger } from '@/utils/logging';
+import { assert, type BigNumber, One } from '@rotki/common';
 
 export const useBalancePricesStore = defineStore('balances/prices', () => {
   const prices = ref<AssetPrices>({});
@@ -190,7 +190,7 @@ export const useBalancePricesStore = defineStore('balances/prices', () => {
     toAsset,
   }: OracleCachePayload): Promise<ActionStatus> => {
     const taskType = TaskType.CREATE_PRICE_CACHE;
-    if (get(isTaskRunning(taskType))) {
+    if (isTaskRunning(taskType)) {
       return {
         message: t('actions.balances.create_oracle_cache.already_running'),
         success: false,

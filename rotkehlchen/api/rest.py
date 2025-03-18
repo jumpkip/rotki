@@ -40,7 +40,7 @@ from rotkehlchen.accounting.pot import AccountingPot
 from rotkehlchen.accounting.structures.balance import Balance, BalanceSheet, BalanceType
 from rotkehlchen.accounting.structures.processed_event import AccountingEventExportType
 from rotkehlchen.accounting.structures.types import ActionType
-from rotkehlchen.api.rest_helpers.history_events import edit_asset_movements
+from rotkehlchen.api.rest_helpers.history_events import edit_grouped_events_with_optional_fee
 from rotkehlchen.api.rest_helpers.wrap import calculate_wrap_score
 from rotkehlchen.api.v1.schemas import TradeSchema
 from rotkehlchen.api.v1.types import IncludeExcludeFilterData
@@ -281,7 +281,6 @@ if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
     from rotkehlchen.db.drivers.gevent import DBCursor
     from rotkehlchen.exchanges.kraken import KrakenAccountType
-    from rotkehlchen.history.events.structures.asset_movement import AssetMovement
     from rotkehlchen.history.events.structures.base import HistoryBaseEntry
 
 
@@ -675,7 +674,7 @@ class RestAPI:
             name: str,
             location: Location,
             api_key: ApiKey,
-            api_secret: ApiSecret,
+            api_secret: ApiSecret | None,
             passphrase: str | None,
             kraken_account_type: Optional['KrakenAccountType'],
             binance_markets: list[str] | None,
@@ -1080,13 +1079,17 @@ class RestAPI:
 
     def edit_history_events(self, events: list['HistoryBaseEntry']) -> Response:
         events_db = DBHistoryEvents(self.rotkehlchen.data.db)
-        if events[0].entry_type == HistoryBaseEntryType.ASSET_MOVEMENT_EVENT:
+        if (events_type := events[0].entry_type) in {
+            HistoryBaseEntryType.ASSET_MOVEMENT_EVENT,
+            HistoryBaseEntryType.SWAP_EVENT,
+        }:
             try:
                 with events_db.db.conn.write_ctx() as write_cursor:
-                    edit_asset_movements(
+                    edit_grouped_events_with_optional_fee(
                         events_db=events_db,
                         write_cursor=write_cursor,
-                        events=cast('list[AssetMovement]', events),
+                        events=events,
+                        events_type=events_type,
                     )
             except InputError as e:
                 return api_response(wrap_in_fail_result(str(e)), status_code=HTTPStatus.CONFLICT)
@@ -3118,33 +3121,36 @@ class RestAPI:
             target_asset: Asset,
             ignore_cache: bool,
     ) -> dict[str, Any]:
-        """Return the current price of the assets in the target asset currency.
-        """
+        """Return the current price of the assets in the target asset currency."""
         log.debug(
             f'Querying the current {target_asset.identifier} price of these assets: '
             f'{", ".join([asset.identifier for asset in assets])}',
         )
         # Type is list instead of tuple here because you can't serialize a tuple
         assets_price: dict[Asset, list[Price | (int | None)]] = {}
+        non_nft_assets = []
         for asset in assets:
-            if asset != target_asset:
-                if asset.asset_type == AssetType.NFT:
-                    nft_price_data = self._eth_module_query(
-                        module_name='nfts',
-                        method='get_nfts_with_price',
-                        query_specific_balances_before=None,
-                    )
-                    oracle = CurrentPriceOracle.MANUALCURRENT if nft_price_data['manually_input'] is True else CurrentPriceOracle.BLOCKCHAIN  # noqa: E501
-                    assets_price[asset] = [Price(nft_price_data['usd_price']), oracle.value]
-                else:
-                    price, oracle = Inquirer.find_price_and_oracle(
-                        from_asset=asset,
-                        to_asset=target_asset,
-                        ignore_cache=ignore_cache,
-                    )
-                    assets_price[asset] = [price, oracle.value]
+            if asset.asset_type == AssetType.NFT:
+                nft_price_data = self._eth_module_query(
+                    module_name='nfts',
+                    method='get_nfts_with_price',
+                    query_specific_balances_before=None,
+                )
+                oracle = CurrentPriceOracle.MANUALCURRENT if nft_price_data['manually_input'] is True else CurrentPriceOracle.BLOCKCHAIN  # noqa: E501
+                assets_price[asset] = [Price(nft_price_data['usd_price']), oracle.value]
             else:
-                assets_price[asset] = [Price(ONE), CurrentPriceOracle.BLOCKCHAIN.value]
+                non_nft_assets.append(asset)
+
+        if len(non_nft_assets) != 0:
+            found_prices = Inquirer.find_prices_and_oracles(
+                from_assets=non_nft_assets,
+                to_asset=target_asset,
+                ignore_cache=ignore_cache,
+            )
+            assets_price.update({
+                asset: [price_and_oracle[0], price_and_oracle[1].value]
+                for asset, price_and_oracle in found_prices.items()
+            })
 
         result = {
             'assets': assets_price,
@@ -3660,9 +3666,10 @@ class RestAPI:
         if self.rotkehlchen.premium is None:
             with_limit = True
             entries_limit = FREE_PNL_EVENTS_LIMIT
+
         dbreports = DBAccountingReports(self.rotkehlchen.data.db)
         try:
-            report_data, entries_found = dbreports.get_report_data(
+            report_data, entries_found, entries_total = dbreports.get_report_data(
                 filter_=filter_query,
                 with_limit=with_limit,
             )
@@ -3675,6 +3682,7 @@ class RestAPI:
                 export_type=AccountingEventExportType.API,
             ) for x in report_data],
             'entries_found': entries_found,
+            'entries_total': entries_total,
             'entries_limit': entries_limit,
         }
         result_dict = _wrap_in_result(result, '')

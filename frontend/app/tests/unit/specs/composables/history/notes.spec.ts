@@ -1,6 +1,6 @@
 import { type NoteFormat, NoteType, useHistoryEventNote } from '@/composables/history/events/notes';
 import { useSessionSettingsStore } from '@/store/settings/session';
-import { Blockchain } from '@rotki/common';
+import { bigNumberify, Blockchain, isEvmIdentifier } from '@rotki/common';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/composables/assets/retrieval', () => ({
@@ -133,7 +133,6 @@ describe('composables::history/notes', () => {
       {
         type: NoteType.ADDRESS,
         address,
-        showIcon: true,
         showHashLink: true,
       },
     ];
@@ -155,13 +154,11 @@ describe('composables::history/notes', () => {
       {
         type: NoteType.ADDRESS,
         address,
-        showIcon: true,
         showHashLink: true,
       },
       {
         type: NoteType.ADDRESS,
         address,
-        showIcon: true,
         showHashLink: true,
       },
     ];
@@ -383,13 +380,11 @@ describe('composables::history/notes', () => {
       {
         type: NoteType.ADDRESS,
         address,
-        showIcon: true,
         showHashLink: true,
       },
       {
         type: NoteType.ADDRESS,
         address,
-        showIcon: true,
         showHashLink: true,
       },
       {

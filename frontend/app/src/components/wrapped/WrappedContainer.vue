@@ -5,7 +5,6 @@ import AppImage from '@/components/common/AppImage.vue';
 import RotkiLogo from '@/components/common/RotkiLogo.vue';
 import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
 import ExternalLink from '@/components/helper/ExternalLink.vue';
-import HashLink from '@/components/helper/HashLink.vue';
 import CounterpartyDisplay from '@/components/history/CounterpartyDisplay.vue';
 import LocationDisplay from '@/components/history/LocationDisplay.vue';
 import DateTimePicker from '@/components/inputs/DateTimePicker.vue';
@@ -16,6 +15,7 @@ import { useSupportedChains } from '@/composables/info/chains';
 import { usePremium } from '@/composables/premium';
 import { useExternalApiKeys } from '@/composables/settings/api-keys/external';
 import { useStatusUpdater } from '@/composables/status';
+import HashLink from '@/modules/common/links/HashLink.vue';
 import { Routes } from '@/router/routes';
 import { useTaskStore } from '@/store/tasks';
 import { useCurrencies } from '@/types/currencies';
@@ -33,7 +33,7 @@ const props = defineProps<{
 const { t } = useI18n();
 const premium = usePremium();
 const { apiKey } = useExternalApiKeys(t);
-const { isTaskRunning } = useTaskStore();
+const { useIsTaskRunning } = useTaskStore();
 const { findCurrency } = useCurrencies();
 const { fetchWrapStatistics } = useWrapStatisticsApi();
 const { getChain } = useSupportedChains();
@@ -49,9 +49,9 @@ const summary = ref<WrapStatisticsResult>();
 const { getEarliestEventTimestamp } = useHistoryEvents();
 
 const { isFirstLoad, loading: sectionLoading } = useStatusUpdater(Section.HISTORY_EVENT);
-const eventTaskLoading = isTaskRunning(TaskType.TRANSACTIONS_DECODING);
-const protocolCacheUpdatesLoading = isTaskRunning(TaskType.REFRESH_GENERAL_CACHE);
-const onlineHistoryEventsLoading = isTaskRunning(TaskType.QUERY_ONLINE_EVENTS);
+const eventTaskLoading = useIsTaskRunning(TaskType.TRANSACTIONS_DECODING);
+const protocolCacheUpdatesLoading = useIsTaskRunning(TaskType.REFRESH_GENERAL_CACHE);
+const onlineHistoryEventsLoading = useIsTaskRunning(TaskType.QUERY_ONLINE_EVENTS);
 
 const refreshing = logicOr(sectionLoading, eventTaskLoading, onlineHistoryEventsLoading, protocolCacheUpdatesLoading);
 
@@ -400,7 +400,11 @@ defineExpose({
           />
         </template>
         <template #value="{ item }">
-          {{ item[1] }} {{ t('actions.trades.task.title') }}
+          <AmountDisplay
+            :value="item[1]"
+            integer
+          />
+          {{ t('actions.trades.task.title') }}
         </template>
       </WrappedCard>
 
@@ -425,7 +429,11 @@ defineExpose({
           />
         </template>
         <template #value="{ item }">
-          {{ item[1] }} {{ t('explorers.tx') }}
+          <AmountDisplay
+            :value="item[1]"
+            integer
+          />
+          {{ t('explorers.tx') }}
         </template>
       </WrappedCard>
 
@@ -483,7 +491,11 @@ defineExpose({
           {{ formatDate(item.timestamp) }}
         </template>
         <template #value="{ item }">
-          {{ item.amount }} {{ t('explorers.tx') }}
+          <AmountDisplay
+            :value="item.amount"
+            integer
+          />
+          {{ t('explorers.tx') }}
         </template>
       </WrappedCard>
 
@@ -506,7 +518,11 @@ defineExpose({
           <CounterpartyDisplay :counterparty="item.protocol" />
         </template>
         <template #value="{ item }">
-          {{ item.transactions }} {{ t('explorers.tx') }}
+          <AmountDisplay
+            :value="item.transactions"
+            integer
+          />
+          {{ t('explorers.tx') }}
         </template>
       </WrappedCard>
     </template>

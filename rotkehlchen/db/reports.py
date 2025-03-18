@@ -9,6 +9,7 @@ from rotkehlchen.accounting.constants import FREE_PNL_EVENTS_LIMIT, FREE_REPORTS
 from rotkehlchen.accounting.pnl import PnlTotals
 from rotkehlchen.accounting.structures.processed_event import ProcessedAccountingEvent
 from rotkehlchen.db.settings import DBSettings
+from rotkehlchen.errors.asset import WrongAssetType
 from rotkehlchen.errors.misc import InputError
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -27,9 +28,21 @@ if TYPE_CHECKING:
 def _get_reports_or_events_maybe_limit(
         entry_type: Literal['events'],
         entries_found: int,
+        entries_total: int,
         entries: list[ProcessedAccountingEvent],
         with_limit: bool,
-) -> tuple[list[ProcessedAccountingEvent], int]:
+) -> tuple[list[ProcessedAccountingEvent], int, int]:
+    ...
+
+
+@overload
+def _get_reports_or_events_maybe_limit(
+        entry_type: Literal['events'],
+        entries_found: int,
+        entries_total: None,
+        entries: list[ProcessedAccountingEvent],
+        with_limit: bool,
+) -> tuple[list[ProcessedAccountingEvent], int, None]:
     ...
 
 
@@ -37,20 +50,33 @@ def _get_reports_or_events_maybe_limit(
 def _get_reports_or_events_maybe_limit(
         entry_type: Literal['reports'],
         entries_found: int,
+        entries_total: int,
         entries: list[dict[str, Any]],
         with_limit: bool,
-) -> tuple[list[dict[str, Any]], int]:
+) -> tuple[list[dict[str, Any]], int, int]:
+    ...
+
+
+@overload
+def _get_reports_or_events_maybe_limit(
+        entry_type: Literal['reports'],
+        entries_found: int,
+        entries_total: None,
+        entries: list[dict[str, Any]],
+        with_limit: bool,
+) -> tuple[list[dict[str, Any]], int, None]:
     ...
 
 
 def _get_reports_or_events_maybe_limit(
         entry_type: Literal['events', 'reports'],
         entries_found: int,
+        entries_total: int | None,
         entries: list[dict[str, Any]] | list[ProcessedAccountingEvent],
         with_limit: bool,
-) -> tuple[list[dict[str, Any]] | list[ProcessedAccountingEvent], int]:
+) -> tuple[list[dict[str, Any]] | list[ProcessedAccountingEvent], int, int | None]:
     if with_limit is False:
-        return entries, entries_found
+        return entries, entries_found, entries_total
 
     if entry_type == 'events':
         limit = FREE_PNL_EVENTS_LIMIT
@@ -58,7 +84,8 @@ def _get_reports_or_events_maybe_limit(
         limit = FREE_REPORTS_LOOKUP_LIMIT
 
     returning_entries_length = min(limit, len(entries))
-    return entries[:returning_entries_length], entries_found
+
+    return entries[:returning_entries_length], entries_found, entries_total
 
 
 class DBAccountingReports:
@@ -194,12 +221,15 @@ class DBAccountingReports:
             else:
                 total_filter_count = len(reports)
 
-        return _get_reports_or_events_maybe_limit(
+        entries, entries_found, _ = _get_reports_or_events_maybe_limit(
             entry_type='reports',
             entries=reports,
             entries_found=total_filter_count,
+            entries_total=None,
             with_limit=with_limit,
         )
+
+        return entries, entries_found
 
     def purge_report_data(self, report_id: int) -> None:
         """Deletes all report data of the given report from the DB
@@ -226,14 +256,30 @@ class DBAccountingReports:
         - InputError if the event can not be written to the DB. Probably report id does not exist.
         """
         data = event.serialize_for_db(ts_converter)
+
+        try:
+            asset_symbol = event.asset.symbol_or_name()
+        except WrongAssetType:
+            asset_symbol = None
+
         query = """
         INSERT INTO pnl_events(
-            report_id, timestamp, data
+            report_id, timestamp, data, pnl_taxable, pnl_free, asset
         )
-        VALUES(?, ?, ?);"""
+        VALUES(?, ?, ?, ?, ?, ?);"""
         with self.db.transient_write() as cursor:
             try:
-                cursor.execute(query, (report_id, time, data))
+                cursor.execute(
+                    query,
+                    (
+                        report_id,
+                        time,
+                        data,
+                        str(event.pnl.taxable),
+                        str(event.pnl.free),
+                        asset_symbol,
+                    ),
+                )
             except sqlcipher.IntegrityError as e:  # pylint: disable=no-member
                 raise InputError(
                     f'Could not write {event} data to the DB due to {e!s}. '
@@ -244,7 +290,7 @@ class DBAccountingReports:
             self,
             filter_: 'ReportDataFilterQuery',
             with_limit: bool,
-    ) -> tuple[list[ProcessedAccountingEvent], int]:
+    ) -> tuple[list[ProcessedAccountingEvent], int, int]:
         """Retrieve the event data of a PnL report depending on the given filter
 
         May raise:
@@ -278,6 +324,7 @@ class DBAccountingReports:
 
             records.append(record)
 
+        entries_found = len(records)
         if filter_.pagination is not None:
             no_pagination_filter = deepcopy(filter_)
             no_pagination_filter.pagination = None
@@ -286,11 +333,12 @@ class DBAccountingReports:
             results = cursor.execute(query, bindings).fetchone()
             total_filter_count = results[0]
         else:
-            total_filter_count = len(records)
+            total_filter_count = entries_found
 
         return _get_reports_or_events_maybe_limit(
             entry_type='events',
-            entries_found=total_filter_count,
+            entries_found=entries_found,
+            entries_total=total_filter_count,
             entries=records,
             with_limit=with_limit,
         )

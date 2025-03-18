@@ -25,14 +25,7 @@ import { Section } from '@/types/status';
 import { TaskType } from '@/types/task-type';
 import { nonEmptyProperties } from '@/utils/data';
 import { logger } from '@/utils/logging';
-import {
-  type BigNumber,
-  Blockchain,
-  type Eth2ValidatorEntry,
-  type Eth2Validators,
-  type EthStakingCombinedFilter,
-  type EthStakingFilter,
-} from '@rotki/common';
+import { type BigNumber, Blockchain, type Eth2ValidatorEntry, type Eth2Validators, type EthStakingCombinedFilter, type EthStakingFilter, Zero } from '@rotki/common';
 import { startPromise } from '@shared/utils';
 import dayjs from 'dayjs';
 import { omit } from 'es-toolkit';
@@ -68,13 +61,13 @@ const enabled = isModuleEnabled(module);
 const { dailyStats, dailyStatsLoading, pagination, refresh: reloadStats, refreshStats } = useEth2DailyStats();
 
 const { isLoading } = useStatusStore();
-const { isTaskRunning } = useTaskStore();
+const { useIsTaskRunning } = useTaskStore();
 
 const { isFirstLoad } = useStatusUpdater(performanceSection);
 
 const performanceRefreshing = isLoading(performanceSection);
 const statsRefreshing = isLoading(statsSection);
-const blockProductionLoading = isTaskRunning(TaskType.QUERY_ONLINE_EVENTS, {
+const blockProductionLoading = useIsTaskRunning(TaskType.QUERY_ONLINE_EVENTS, {
   queryType: OnlineHistoryEventsQueryType.BLOCK_PRODUCTIONS,
 });
 

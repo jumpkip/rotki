@@ -3,7 +3,7 @@ import type { ComputedRef } from 'vue';
 import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
 import { useScramble } from '@/composables/scramble';
 import { uniqueStrings } from '@/utils/data';
-import { type BigNumber, Blockchain } from '@rotki/common';
+import { type BigNumber, bigNumberify, Blockchain, isEvmIdentifier, isValidEthAddress, isValidTxHash } from '@rotki/common';
 
 export const NoteType = {
   ADDRESS: 'address',
@@ -25,7 +25,6 @@ export interface NoteFormat {
   asset?: string;
   url?: string;
   chain?: Blockchain;
-  showIcon?: boolean;
   showHashLink?: boolean;
   countryCode?: string;
 }
@@ -201,7 +200,6 @@ export function useHistoryEventNote(): UseHistoryEventsNoteReturn {
         formats.push({
           address: word,
           showHashLink: true,
-          showIcon: true,
           type: NoteType.ADDRESS,
         });
         return putBackPunctuation();

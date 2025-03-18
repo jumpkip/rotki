@@ -4,7 +4,6 @@ import type {
   KrakenStakingPagination,
 } from '@/types/staking';
 import type { TaskMeta } from '@/types/task';
-import type { AssetBalance } from '@rotki/common';
 import { useKrakenApi } from '@/composables/api/staking/kraken';
 import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
 import { useStatusUpdater } from '@/composables/status';
@@ -15,6 +14,7 @@ import { Section, Status } from '@/types/status';
 import { TaskType } from '@/types/task-type';
 import { balanceSum } from '@/utils/calculation';
 import { logger } from '@/utils/logging';
+import { type AssetBalance, Zero } from '@rotki/common';
 import { omit } from 'es-toolkit';
 
 function defaultPagination(): KrakenStakingPagination {
@@ -95,7 +95,7 @@ export const useKrakenStakingStore = defineStore('staking/kraken', () => {
     const taskType = TaskType.STAKING_KRAKEN;
     try {
       const firstLoad = isFirstLoad();
-      if (get(isTaskRunning(taskType)) || (loading() && refresh))
+      if (isTaskRunning(taskType) || (loading() && refresh))
         return;
 
       setStatus(firstLoad ? Status.LOADING : Status.REFRESHING);
@@ -116,7 +116,7 @@ export const useKrakenStakingStore = defineStore('staking/kraken', () => {
         ...dateFilter,
       }));
 
-      setStatus(get(isTaskRunning(taskType)) ? Status.REFRESHING : Status.LOADED);
+      setStatus(isTaskRunning(taskType) ? Status.REFRESHING : Status.LOADED);
     }
     catch (error: any) {
       logger.error(error);
