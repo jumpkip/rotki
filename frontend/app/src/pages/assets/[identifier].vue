@@ -47,7 +47,7 @@ const route = useRoute();
 
 const { coingeckoAsset, cryptocompareAsset } = externalLinks;
 
-const { ignoreAssetWithConfirmation, isAssetIgnored, unignoreAsset } = useIgnoredAssetsStore();
+const { ignoreAssetWithConfirmation, unignoreAsset, useIsAssetIgnored } = useIgnoredAssetsStore();
 const { isAssetWhitelisted, unWhitelistAsset, whitelistAsset } = useWhitelistedAssetsStore();
 const { markAssetsAsSpam, removeAssetFromSpamList } = useSpamAsset();
 const { assetInfo, assetName, assetSymbol, refetchAssetInfo, tokenAddress } = useAssetInfoRetrieval();
@@ -55,7 +55,9 @@ const { getChain } = useSupportedChains();
 const premium = usePremium();
 const { balances } = useAggregatedBalances();
 
-const isIgnored = isAssetIgnored(identifier);
+const aggregatedBalances = balances();
+
+const isIgnored = useIsAssetIgnored(identifier);
 const isWhitelisted = isAssetWhitelisted(identifier);
 
 const isCollectionParent = computed<boolean>(() => {
@@ -101,7 +103,7 @@ const collectionBalance = computed<AssetBalanceWithPrice[]>(() => {
   if (!get(isCollectionParent))
     return [];
 
-  return get(balances()).find(data => data.asset === get(identifier))?.breakdown || [];
+  return get(aggregatedBalances).find(data => data.asset === get(identifier))?.breakdown || [];
 });
 
 const isSpam = computed(() => get(asset)?.isSpam || false);
@@ -293,7 +295,10 @@ async function toggleWhitelistAsset() {
         {{ t('assets.multi_chain_assets') }}
       </template>
 
-      <AssetBalances :balances="collectionBalance" />
+      <AssetBalances
+        :balances="collectionBalance"
+        all-breakdown
+      />
     </RuiCard>
   </TablePageLayout>
 </template>

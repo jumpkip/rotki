@@ -1,9 +1,11 @@
 import logging
 from typing import TYPE_CHECKING
 
+from rotkehlchen.chain.evm.active_management.manager import ActiveManager
 from rotkehlchen.chain.evm.decoding.curve.curve_cache import (
     query_curve_data,
 )
+from rotkehlchen.chain.evm.types import RemoteDataQueryStatus
 from rotkehlchen.errors.misc import InputError
 from rotkehlchen.fval import FVal
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -37,6 +39,7 @@ class EvmManager:
         self.tokens = tokens
         self.transactions_decoder = transactions_decoder
         self.accounting_aggregator = accounting_aggregator
+        self.active_management = ActiveManager(node_inquirer=node_inquirer)
 
     def get_historical_balance(
             self,
@@ -71,7 +74,7 @@ class CurveManagerMixin:
             query_method=query_curve_data,
             chain_id=node_inquirer.chain_id,
             cache_key_parts=(str(node_inquirer.chain_id.serialize_for_db()),),
-        ) is False:
+        ) != RemoteDataQueryStatus.NEW_DATA:
             return
 
         try:

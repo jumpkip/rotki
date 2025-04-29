@@ -25,6 +25,7 @@ from rotkehlchen.accounting.constants import (
     ACCOUNTING_EVENTS_ICONS,
     EVENT_CATEGORY_DETAILS,
     EVENT_CATEGORY_MAPPINGS,
+    EVENT_GROUPING_ORDER,
     FREE_PNL_EVENTS_LIMIT,
     FREE_REPORTS_LOOKUP_LIMIT,
 )
@@ -39,10 +40,9 @@ from rotkehlchen.accounting.export.csv import (
 from rotkehlchen.accounting.pot import AccountingPot
 from rotkehlchen.accounting.structures.balance import Balance, BalanceSheet, BalanceType
 from rotkehlchen.accounting.structures.processed_event import AccountingEventExportType
-from rotkehlchen.accounting.structures.types import ActionType
+from rotkehlchen.accounting.types import EventAccountingRuleStatus
 from rotkehlchen.api.rest_helpers.history_events import edit_grouped_events_with_optional_fee
 from rotkehlchen.api.rest_helpers.wrap import calculate_wrap_score
-from rotkehlchen.api.v1.schemas import TradeSchema
 from rotkehlchen.api.v1.types import IncludeExcludeFilterData
 from rotkehlchen.api.websockets.typedefs import ProgressUpdateSubType, WSMessageType
 from rotkehlchen.assets.asset import (
@@ -91,14 +91,23 @@ from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
 from rotkehlchen.chain.evm.decoding.velodrome.velodrome_cache import (
     query_velodrome_like_data,
 )
-from rotkehlchen.chain.evm.names import find_ens_mappings, search_for_addresses_names
-from rotkehlchen.chain.evm.types import ChainID, EvmlikeAccount, NodeName, WeightedNode
+from rotkehlchen.chain.evm.names import (
+    find_ens_mappings,
+    maybe_resolve_name,
+    search_for_addresses_names,
+)
+from rotkehlchen.chain.evm.types import (
+    ChainID,
+    EvmlikeAccount,
+    NodeName,
+    RemoteDataQueryStatus,
+    WeightedNode,
+)
 from rotkehlchen.chain.gnosis.modules.gnosis_pay.constants import CPT_GNOSIS_PAY
 from rotkehlchen.chain.zksync_lite.constants import ZKL_IDENTIFIER
 from rotkehlchen.constants import ONE
 from rotkehlchen.constants.limits import (
     FREE_HISTORY_EVENTS_LIMIT,
-    FREE_TRADES_LIMIT,
     FREE_USER_NOTES_LIMIT,
 )
 from rotkehlchen.constants.misc import (
@@ -130,6 +139,7 @@ from rotkehlchen.db.filtering import (
     AccountingRulesFilterQuery,
     AddressbookFilterQuery,
     AssetsFilterQuery,
+    CounterpartyAssetMappingsFilterQuery,
     CustomAssetsFilterQuery,
     DBFilterQuery,
     Eth2DailyStatsFilterQuery,
@@ -140,7 +150,6 @@ from rotkehlchen.db.filtering import (
     LocationAssetMappingsFilterQuery,
     NFTFilterQuery,
     ReportDataFilterQuery,
-    TradesFilterQuery,
     UserNotesFilterQuery,
 )
 from rotkehlchen.db.history_events import DBHistoryEvents
@@ -177,7 +186,6 @@ from rotkehlchen.errors.misc import (
 from rotkehlchen.errors.price import NoPriceForGivenTimestamp, PriceQueryUnsupportedAsset
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.exchanges.constants import ALL_SUPPORTED_EXCHANGES
-from rotkehlchen.exchanges.data_structures import Trade
 from rotkehlchen.exchanges.utils import query_binance_exchange_pairs
 from rotkehlchen.externalapis.github import Github
 from rotkehlchen.externalapis.gnosispay import GNOSIS_PAY_TX_TIMESTAMP_RANGE, init_gnosis_pay
@@ -239,18 +247,18 @@ from rotkehlchen.types import (
     AddressbookType,
     ApiKey,
     ApiSecret,
-    AssetAmount,
     BlockchainAddress,
     BTCAddress,
     CacheType,
     ChainType,
     ChecksumEvmAddress,
+    CounterpartyAssetMappingDeleteEntry,
+    CounterpartyAssetMappingUpdateEntry,
     Eth2PubKey,
     EvmlikeChain,
     EVMTxHash,
     ExternalService,
     ExternalServiceApiCredentials,
-    Fee,
     HexColorCode,
     HistoryEventQueryType,
     ListOfBlockchainAddresses,
@@ -265,7 +273,6 @@ from rotkehlchen.types import (
     SubstrateAddress,
     SupportedBlockchain,
     Timestamp,
-    TradeType,
     UserNote,
 )
 from rotkehlchen.utils.misc import combine_dicts, ts_ms_to_sec, ts_now
@@ -407,7 +414,6 @@ class RestAPI:
         self.login_lock = Semaphore()
         self.task_id = 0
         self.task_results: dict[int, Any] = {}
-        self.trade_schema = TradeSchema()
 
     # - Private functions not exposed to the API
     def _new_task_id(self) -> int:
@@ -916,137 +922,6 @@ class RestAPI:
 
         return {'result': result, 'message': msg, 'status_code': status_code}
 
-    @async_api_call()
-    def get_trades(
-            self,
-            only_cache: bool,
-            filter_query: TradesFilterQuery,
-            include_ignored_trades: bool,
-    ) -> dict[str, Any]:
-        try:
-            trades, filter_total_found = self.rotkehlchen.history_querying_manager.query_trades(
-                filter_query=filter_query,
-                only_cache=only_cache,
-            )
-        except RemoteError as e:
-            return {'result': None, 'message': str(e), 'status_code': HTTPStatus.BAD_GATEWAY}
-
-        with self.rotkehlchen.data.db.conn.read_ctx() as cursor:
-            mapping = self.rotkehlchen.data.db.get_ignored_action_ids(cursor, ActionType.TRADE)
-            total_entries = self.rotkehlchen.data.db.get_entries_count(
-                cursor=cursor,
-                entries_table='trades',
-            )
-
-        ignored_ids = mapping.get(ActionType.TRADE, set())
-        entries_result = []
-        for trade in trades:
-            serialized_trade = self.trade_schema.dump(trade)
-            serialized_trade['trade_id'] = trade.identifier
-            if (
-                (is_trade_ignored := trade.identifier in ignored_ids) and
-                include_ignored_trades is False
-            ):
-                continue
-
-            entries_result.append({
-                'entry': serialized_trade,
-                'ignored_in_accounting': is_trade_ignored,
-            })
-
-        result = {
-            'entries': entries_result,
-            'entries_found': filter_total_found,
-            'entries_total': total_entries,
-            'entries_limit': FREE_TRADES_LIMIT if self.rotkehlchen.premium is None else -1,
-        }
-
-        return {'result': result, 'message': '', 'status_code': HTTPStatus.OK}
-
-    def add_trade(
-            self,
-            timestamp: Timestamp,
-            location: Location,
-            base_asset: Asset,
-            quote_asset: Asset,
-            trade_type: TradeType,
-            amount: AssetAmount,
-            rate: Price,
-            fee: Fee | None,
-            fee_currency: Asset | None,
-            link: str | None,
-            notes: str | None,
-    ) -> Response:
-        trade = Trade(
-            timestamp=timestamp,
-            location=location,
-            base_asset=base_asset,
-            quote_asset=quote_asset,
-            trade_type=trade_type,
-            amount=amount,
-            rate=rate,
-            fee=fee,
-            fee_currency=fee_currency,
-            link=link,
-            notes=notes,
-        )
-        with self.rotkehlchen.data.db.user_write() as cursor:
-            self.rotkehlchen.data.db.add_trades(cursor, [trade])
-        # For the outside world we should also add the trade identifier
-        result_dict = self.trade_schema.dump(trade)
-        result_dict['trade_id'] = trade.identifier
-        result_dict = _wrap_in_ok_result(result_dict)
-        return api_response(result_dict, status_code=HTTPStatus.OK)
-
-    def edit_trade(
-            self,
-            trade_id: str,
-            timestamp: Timestamp,
-            location: Location,
-            base_asset: Asset,
-            quote_asset: Asset,
-            trade_type: TradeType,
-            amount: AssetAmount,
-            rate: Price,
-            fee: Fee | None,
-            fee_currency: Asset | None,
-            link: str | None,
-            notes: str | None,
-    ) -> Response:
-        trade = Trade(
-            timestamp=timestamp,
-            location=location,
-            base_asset=base_asset,
-            quote_asset=quote_asset,
-            trade_type=trade_type,
-            amount=amount,
-            rate=rate,
-            fee=fee,
-            fee_currency=fee_currency,
-            link=link,
-            notes=notes,
-        )
-        with self.rotkehlchen.data.db.user_write() as cursor:
-            result, msg = self.rotkehlchen.data.db.edit_trade(cursor, old_trade_id=trade_id, trade=trade)  # noqa: E501
-
-        if not result:
-            return api_response(wrap_in_fail_result(msg), status_code=HTTPStatus.CONFLICT)
-
-        # For the outside world we should also add the trade identifier
-        result_dict = self.trade_schema.dump(trade)
-        result_dict['trade_id'] = trade.identifier
-        result_dict = _wrap_in_ok_result(result_dict)
-        return api_response(result_dict, status_code=HTTPStatus.OK)
-
-    def delete_trades(self, trades_ids: list[str]) -> Response:
-        try:
-            with self.rotkehlchen.data.db.user_write() as cursor:
-                self.rotkehlchen.data.db.delete_trades(cursor, trades_ids)
-        except InputError as e:
-            return api_response(wrap_in_fail_result(str(e)), status_code=HTTPStatus.CONFLICT)
-
-        return api_response(_wrap_in_ok_result(True), status_code=HTTPStatus.OK)
-
     def add_history_events(self, events: list['HistoryBaseEntry']) -> Response:
         """Add list of history events to DB. Returns identifier of first event.
         The first event is the main event, subsequent events are related (e.g. fees).
@@ -1082,6 +957,7 @@ class RestAPI:
         if (events_type := events[0].entry_type) in {
             HistoryBaseEntryType.ASSET_MOVEMENT_EVENT,
             HistoryBaseEntryType.SWAP_EVENT,
+            HistoryBaseEntryType.EVM_SWAP_EVENT,
         }:
             try:
                 with events_db.db.conn.write_ctx() as write_cursor:
@@ -1732,11 +1608,11 @@ class RestAPI:
         with self.rotkehlchen.data.db.conn.read_ctx() as cursor:
             settings = self.rotkehlchen.get_settings(cursor)
             cache = self.rotkehlchen.data.db.get_cache_for_api(cursor)
-            ignored_ids = self.rotkehlchen.data.db.get_ignored_action_ids(cursor, None)
+            ignored_ids = self.rotkehlchen.data.db.get_ignored_action_ids(cursor)
         debug_info = {
             'events': [entry.serialize_for_debug_import() for entry in events],
             'settings': settings.serialize() | cache,
-            'ignored_events_ids': {k.serialize(): list(v) for k, v in ignored_ids.items()},
+            'ignored_events_ids': list(ignored_ids),
             'pnl_settings': {
                 'from_timestamp': int(from_timestamp),
                 'to_timestamp': int(to_timestamp),
@@ -2224,12 +2100,11 @@ class RestAPI:
         result = {'successful': list(succeeded), 'no_action': list(no_action)}
         return api_response(_wrap_in_ok_result(process_result(result)), status_code=HTTPStatus.OK)
 
-    def add_ignored_action_ids(self, action_type: ActionType, action_ids: list[str]) -> Response:
+    def add_ignored_action_ids(self, action_ids: list[str]) -> Response:
         try:
             with self.rotkehlchen.data.db.user_write() as cursor:
                 self.rotkehlchen.data.db.add_to_ignored_action_ids(
                     write_cursor=cursor,
-                    action_type=action_type,
                     identifiers=action_ids,
                 )
         except InputError as e:
@@ -2239,14 +2114,12 @@ class RestAPI:
 
     def remove_ignored_action_ids(
             self,
-            action_type: ActionType,
             action_ids: list[str],
     ) -> Response:
         try:
             with self.rotkehlchen.data.db.user_write() as cursor:
                 self.rotkehlchen.data.db.remove_from_ignored_action_ids(
                     write_cursor=cursor,
-                    action_type=action_type,
                     identifiers=action_ids,
                 )
         except InputError as e:
@@ -3159,12 +3032,24 @@ class RestAPI:
         }
         return _wrap_in_ok_result(process_result(result))
 
-    def query_location_asset_mappings(self, filter_query: LocationAssetMappingsFilterQuery) -> Response:  # noqa: E501
-        """Query the location asset mappings using the provided filter_query
+    def query_asset_mappings_by_type(
+            self,
+            dict_keys: tuple[str, str, str],
+            mapping_type: Literal['location', 'counterparty'],
+            location_or_counterparty_reader_callback: Callable,
+            filter_query: LocationAssetMappingsFilterQuery | CounterpartyAssetMappingsFilterQuery,
+            query_columns: Literal['local_id, location, exchange_symbol', 'local_id, counterparty, symbol'],  # noqa: E501
+    ) -> Response:
+        """Query the location/counterparty asset mappings using the provided filter_query
         and return them in a paginated format"""
-        mappings, mappings_found, mappings_total = GlobalDBHandler.query_location_asset_mappings(
+        mappings, mappings_found, mappings_total = GlobalDBHandler.query_asset_mappings_by_type(
+            mapping_type=mapping_type,
             filter_query=filter_query,
+            dict_keys=dict_keys,
+            query_columns=query_columns,
+            location_or_counterparty_reader_callback=location_or_counterparty_reader_callback,
         )
+
         result = {
             'entries': mappings,
             'entries_found': mappings_found,
@@ -3172,43 +3057,14 @@ class RestAPI:
         }
         return api_response(_wrap_in_ok_result(result), status_code=HTTPStatus.OK)
 
-    def add_location_asset_mappings(
-            self,
-            entries: list[LocationAssetMappingUpdateEntry],
+    @staticmethod
+    def perform_asset_mapping_operation(
+            mapping_fn: Callable,
+            entries: Sequence[LocationAssetMappingUpdateEntry | LocationAssetMappingDeleteEntry | CounterpartyAssetMappingUpdateEntry | CounterpartyAssetMappingDeleteEntry],  # noqa: E501
     ) -> Response:
-        """Add the location asset mappings in the global DB for the given location"""
+        """Perform an asset mapping database operation based on the given function and entries."""
         try:
-            GlobalDBHandler.add_location_asset_mappings(entries=entries)
-        except InputError as e:
-            return api_response(
-                result=wrap_in_fail_result(str(e)),
-                status_code=HTTPStatus.CONFLICT,
-            )
-        else:
-            return api_response(result=OK_RESULT)
-
-    def update_location_asset_mappings(
-            self,
-            entries: list[LocationAssetMappingUpdateEntry],
-    ) -> Response:
-        """Update the location asset mappings in the global DB for the given location"""
-        try:
-            GlobalDBHandler.update_location_asset_mappings(entries=entries)
-        except InputError as e:
-            return api_response(
-                result=wrap_in_fail_result(str(e)),
-                status_code=HTTPStatus.CONFLICT,
-            )
-        else:
-            return api_response(result=OK_RESULT)
-
-    def delete_location_asset_mappings(
-            self,
-            entries: list[LocationAssetMappingDeleteEntry],
-    ) -> Response:
-        """Delete the location asset mappings from the global DB for the given location"""
-        try:
-            GlobalDBHandler.delete_location_asset_mappings(entries=entries)
+            mapping_fn(entries=entries)
         except InputError as e:
             return api_response(
                 result=wrap_in_fail_result(str(e)),
@@ -3727,6 +3583,77 @@ class RestAPI:
 
         return OK_RESULT
 
+    @staticmethod
+    def _serialize_and_group_history_events(
+            events: list['HistoryBaseEntry'],
+            event_accounting_rule_statuses: list[EventAccountingRuleStatus],
+            grouped_events_nums: list[int | None],
+            customized_event_ids: list[int],
+            ignored_ids: set[str],
+            hidden_event_ids: list[int],
+    ) -> list[dict[str, Any] | list[dict[str, Any]]]:
+        """Serialize and group history events for the api.
+        Groups evm swap and multi trade events into sub-lists. Uses the order defined in
+        EVENT_GROUPING_ORDER to decide which events belong in which group.
+
+        Args:
+        - events: list of events to serialize and group
+        - event_accounting_rule_statuses and grouped_events_nums: lists with each element
+           corresponding to an event.
+        - customized_event_ids, ignored_ids, and hidden_event_ids: arguments applying to all events
+           that are passed directly to serialize_for_api for all events.
+
+        Returns a list of serialized events with grouped events in sub-lists.
+        """
+        entries: list[dict[str, Any] | list[dict[str, Any]]] = []
+        current_group: list[dict[str, Any]] = []
+        last_subtype_index: int | None = None
+        for event, event_accounting_rule_status, grouped_events_num in zip(
+            events,
+            event_accounting_rule_statuses,
+            grouped_events_nums,
+            strict=False,  # guaranteed to have same length. event_accounting_rule_statuses and grouped_events_nums are created directly from the events list.  # noqa: E501
+        ):
+            serialized = event.serialize_for_api(
+                customized_event_ids=customized_event_ids,
+                ignored_ids=ignored_ids,
+                hidden_event_ids=hidden_event_ids,
+                event_accounting_rule_status=event_accounting_rule_status,
+                grouped_events_num=grouped_events_num,
+            )
+            if (
+                event.event_type == HistoryEventType.MULTI_TRADE or
+                event.entry_type == HistoryBaseEntryType.EVM_SWAP_EVENT
+            ):
+                if (event_subtype_index := EVENT_GROUPING_ORDER[event.event_type].get(event.event_subtype)) is None:  # noqa: E501
+                    log.error(
+                        'Unable to determine group order for event type/subtype '
+                        f'{event.event_type}/{event.event_subtype}',
+                    )
+                    event_subtype_index = 0
+
+                if (
+                    len(current_group) == 0 or
+                    (last_subtype_index is not None and event_subtype_index >= last_subtype_index)
+                ):
+                    current_group.append(serialized)
+                else:  # Start a new group because the order is broken
+                    if len(current_group) > 0:
+                        entries.append(current_group)
+                    current_group = [serialized]
+
+                last_subtype_index = event_subtype_index
+            else:  # Non-groupable event
+                if len(current_group) > 0:
+                    entries.append(current_group)
+                    current_group, last_subtype_index = [], None
+                entries.append(serialized)
+
+        if len(current_group) > 0:  # Append any remaining group
+            entries.append(current_group)
+
+        return entries
+
     def get_history_events(
             self,
             filter_query: HistoryBaseEntryFilterQuery,
@@ -3757,10 +3684,7 @@ class RestAPI:
                 location=filter_query.location,
             )
             hidden_event_ids = dbevents.get_hidden_event_ids(cursor)
-            ignored_ids_mapping = self.rotkehlchen.data.db.get_ignored_action_ids(
-                cursor=cursor,
-                action_type=ActionType.HISTORY_EVENT,
-            )
+            ignored_ids = self.rotkehlchen.data.db.get_ignored_action_ids(cursor=cursor)
 
         accountant_pot = AccountingPot(
             database=self.rotkehlchen.data.db,
@@ -3768,41 +3692,28 @@ class RestAPI:
             msg_aggregator=self.rotkehlchen.msg_aggregator,
             is_dummy_pot=True,
         )
-        if group_by_event_ids is True:
-            event_accounting_rule_statuses = query_missing_accounting_rules(
-                db=self.rotkehlchen.data.db,
-                accounting_pot=accountant_pot,
-                evm_accounting_aggregator=accountant_pot.events_accountant.evm_accounting_aggregators,
-                events=[x for _, x in events_result],  # type: ignore
-                accountant=self.rotkehlchen.accountant,
-            )  # length of missing_accounting_rules and events guaranteed by function
-            entries = [  # type: ignore  # mypy doesn't understand significance of boolean check
-                x.serialize_for_api(  # type: ignore
-                    customized_event_ids=customized_event_ids,
-                    ignored_ids_mapping=ignored_ids_mapping,
-                    hidden_event_ids=hidden_event_ids,
-                    event_accounting_rule_status=event_accounting_rule_status,
-                    grouped_events_num=grouped_events_num,  # type: ignore
-                ) for (grouped_events_num, x), event_accounting_rule_status in zip(events_result, event_accounting_rule_statuses, strict=True)  # noqa: E501
-            ]
-        else:
-            event_accounting_rule_statuses = query_missing_accounting_rules(
-                db=self.rotkehlchen.data.db,
-                accounting_pot=accountant_pot,
-                evm_accounting_aggregator=accountant_pot.events_accountant.evm_accounting_aggregators,
-                events=events_result,  # type: ignore
-                accountant=self.rotkehlchen.accountant,
-            )
-            entries = [
-                x.serialize_for_api(  # type: ignore
-                    customized_event_ids=customized_event_ids,
-                    ignored_ids_mapping=ignored_ids_mapping,
-                    hidden_event_ids=hidden_event_ids,
-                    event_accounting_rule_status=event_accounting_rule_status,
-                ) for x, event_accounting_rule_status in zip(events_result, event_accounting_rule_statuses, strict=True)  # noqa: E501
-            ]
+        events: list[HistoryBaseEntry]
+        grouped_events_nums: list[int | None]
+        grouped_events_nums, events = (
+            zip(*events_result, strict=False)  # type: ignore  # mypy doesn't understand significance of boolean check.
+            if group_by_event_ids is True and len(events_result) != 0 else
+            ([None] * len(events_result), events_result)
+        )
         result = {
-            'entries': entries,
+            'entries': self._serialize_and_group_history_events(
+                events=events,
+                event_accounting_rule_statuses=query_missing_accounting_rules(
+                    db=self.rotkehlchen.data.db,
+                    accounting_pot=accountant_pot,
+                    evm_accounting_aggregator=accountant_pot.events_accountant.evm_accounting_aggregators,
+                    events=events,
+                    accountant=self.rotkehlchen.accountant,
+                ),  # length of missing_accounting_rules and events guaranteed by function
+                grouped_events_nums=grouped_events_nums,
+                customized_event_ids=customized_event_ids,
+                ignored_ids=ignored_ids,
+                hidden_event_ids=hidden_event_ids,
+            ),
             'entries_found': entries_with_limit,
             'entries_limit': entries_limit,
             'entries_total': entries_total,
@@ -4011,6 +3922,19 @@ class RestAPI:
             return wrap_in_fail_result(message=str(e), status_code=HTTPStatus.CONFLICT)
 
         return {'result': mappings_to_send, 'message': '', 'status_code': HTTPStatus.OK}
+
+    @async_api_call()
+    def resolve_ens_name(
+            self,
+            name: str,
+            ignore_cache: bool,
+    ) -> dict[str, Any]:
+        address = maybe_resolve_name(
+            ethereum_inquirer=self.rotkehlchen.chains_aggregator.ethereum.node_inquirer,
+            name=name,
+            ignore_cache=ignore_cache,
+        )
+        return {'result': address, 'message': '', 'status_code': HTTPStatus.OK if address else HTTPStatus.NOT_FOUND}  # noqa: E501
 
     def import_user_snapshot(
             self,
@@ -4359,7 +4283,6 @@ class RestAPI:
                     location=location,
                     filter_query=query_filter,
                     only_cache=only_cache,
-                    task_manager=self.rotkehlchen.task_manager,
                 )
             except sqlcipher.OperationalError as e:  # pylint: disable=no-member
                 return wrap_in_fail_result(
@@ -4680,6 +4603,7 @@ class RestAPI:
                         status_code=HTTPStatus.CONFLICT,
                     )
 
+        failed_to_update = []
         for (cache, cache_type, query_method, chain_id, inquirer) in cache_rules:
             if inquirer.ensure_cache_data_is_updated(
                 cache_type=cache_type,
@@ -4687,11 +4611,14 @@ class RestAPI:
                 chain_id=chain_id,
                 cache_key_parts=[] if chain_id is None else (str(chain_id.serialize_for_db()),),
                 force_refresh=True,
-            ) is False:
-                return wrap_in_fail_result(
-                    message=f'Failed to refresh {cache} cache',
-                    status_code=HTTPStatus.CONFLICT,
-                )
+            ) == RemoteDataQueryStatus.FAILED:
+                failed_to_update.append(cache)
+
+        if len(failed_to_update) != 0:
+            return wrap_in_fail_result(
+                message=f'Failed to refresh caches for: {", ".join(failed_to_update)}',
+                status_code=HTTPStatus.CONFLICT,
+            )
 
         return OK_RESULT
 
@@ -5346,3 +5273,124 @@ class RestAPI:
             'no_prices_timestamps': no_prices_ts,
             'rate_limited_prices_timestamps': rate_limited_prices_ts,
         })
+
+    @async_api_call()
+    def force_refetch_evm_transactions(
+            self,
+            from_timestamp: Timestamp,
+            to_timestamp: Timestamp,
+            address: ChecksumEvmAddress | None = None,
+            evm_chain: EVM_CHAIN_IDS_WITH_TRANSACTIONS_TYPE | None = None,
+    ) -> dict[str, Any]:
+        """Re-query EVM transactions for a given time range, adding only missing transactions.
+
+        This function requests a force refetch of transactions for the specified time range,
+        bypassing the normal query range checks. This can be useful in cases where transactions
+        might have been missed due to API issues or other temporary problems.
+        """
+        log.debug(
+            'Force refetching EVM transactions',
+            from_ts=from_timestamp,
+            to_ts=to_timestamp,
+            chain=evm_chain.name if evm_chain else 'all supported chains',
+            address=address or 'all addresses',
+        )
+
+        transaction_count = 0
+        db_evmtx = DBEvmTx(self.rotkehlchen.data.db)
+        chains_to_query: list[EVM_CHAIN_IDS_WITH_TRANSACTIONS_TYPE] = [evm_chain] if evm_chain else list(EVM_CHAIN_IDS_WITH_TRANSACTIONS)  # noqa: E501
+        for chain_id in chains_to_query:
+            chain_manager = self.rotkehlchen.chains_aggregator.get_evm_manager(chain_id)
+            if address:
+                addresses_to_query: tuple[ChecksumEvmAddress, ...] = (address,)
+            else:
+                with self.rotkehlchen.data.db.conn.read_ctx() as cursor:
+                    addresses_to_query = self.rotkehlchen.data.db.get_blockchain_accounts(cursor).get(chain_manager.node_inquirer.blockchain)  # noqa: E501
+
+            if len(addresses_to_query) == 0:
+                continue
+
+            # Get total count before query
+            before_count = db_evmtx.get_transactions_in_range(
+                chain_id=chain_id,
+                from_ts=from_timestamp,
+                to_ts=to_timestamp,
+            )
+            for addr in addresses_to_query:
+                try:
+                    chain_manager.transactions.refetch_transactions_for_address(
+                        address=addr,
+                        start_ts=from_timestamp,
+                        end_ts=to_timestamp,
+                    )
+                except (sqlcipher.OperationalError, RemoteError, DeserializationError) as e:  # pylint: disable=no-member
+                    log.debug(f'Skipping transaction refetching for {addr} on {chain_id} due to: {e!s}')  # noqa: E501
+                    continue
+
+            # Get total count after query and count the difference as addition
+            after_count = db_evmtx.get_transactions_in_range(
+                chain_id=chain_id,
+                from_ts=from_timestamp,
+                to_ts=to_timestamp,
+            )
+            transaction_count += (after_count - before_count)
+
+        return _wrap_in_ok_result({'new_transactions_count': transaction_count})
+
+    def addresses_interacted_before(
+            self,
+            from_address: ChecksumEvmAddress,
+            to_address: ChecksumEvmAddress,
+    ) -> Response:
+        with self.rotkehlchen.data.db.conn.read_ctx() as cursor:
+            cursor.execute(
+                'SELECT COUNT(*) FROM history_events JOIN evm_events_info ON '
+                'history_events.identifier=evm_events_info.identifier WHERE '
+                'location_label=? AND address=?',
+                (from_address, to_address),
+            )
+            return api_response(_wrap_in_ok_result(result=cursor.fetchone()[0] > 0))
+
+    @async_api_call()
+    def prepare_token_transfer(
+            self,
+            from_address: ChecksumEvmAddress,
+            to_address: ChecksumEvmAddress,
+            blockchain: 'SUPPORTED_EVM_CHAINS_TYPE',
+            token: EvmToken,
+            amount: FVal,
+    ) -> dict[str, Any]:
+        manager = self.rotkehlchen.chains_aggregator.get_chain_manager(blockchain=blockchain)
+
+        try:
+            payload = manager.active_management.create_token_transfer(
+                from_address=from_address,
+                to_address=to_address,
+                token=token,
+                amount=amount,
+            )
+        except RemoteError as e:
+            return wrap_in_fail_result(str(e), status_code=HTTPStatus.BAD_REQUEST)
+
+        return _wrap_in_ok_result(result=payload)
+
+    @async_api_call()
+    def prepare_native_transfer(
+            self,
+            from_address: ChecksumEvmAddress,
+            to_address: ChecksumEvmAddress,
+            chain: 'EVM_CHAIN_IDS_WITH_TRANSACTIONS_TYPE',
+            amount: FVal,
+    ) -> dict[str, Any]:
+        manager = self.rotkehlchen.chains_aggregator.get_chain_manager(chain.to_blockchain())  # type: ignore[arg-type]
+
+        try:
+            payload = manager.active_management.transfer_native_token(
+                from_address=from_address,
+                to_address=to_address,
+                amount=amount,
+            )
+        except RemoteError as e:
+            return wrap_in_fail_result(str(e), status_code=HTTPStatus.BAD_REQUEST)
+
+        return _wrap_in_ok_result(result=payload)

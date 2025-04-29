@@ -1,26 +1,25 @@
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple, cast
+from typing import TYPE_CHECKING, NamedTuple, cast
 from unittest.mock import _patch, patch
 
 from rotkehlchen.accounting.mixins.event import AccountingEventMixin
-from rotkehlchen.api.v1.schemas import TradeSchema
 from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
 from rotkehlchen.constants import ONE, ZERO
 from rotkehlchen.constants.assets import A_BTC, A_DAI, A_ETH, A_ETH2, A_USDC, A_USDT
 from rotkehlchen.constants.resolver import strethaddress_to_identifier
 from rotkehlchen.db.dbhandler import DBHandler
 from rotkehlchen.errors.price import NoPriceForGivenTimestamp
-from rotkehlchen.exchanges.data_structures import MarginPosition, Trade
+from rotkehlchen.exchanges.data_structures import MarginPosition
 from rotkehlchen.externalapis.etherscan import Etherscan
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.asset_movement import AssetMovement
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
+from rotkehlchen.history.events.structures.swap import SwapEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.rotkehlchen import Rotkehlchen
 from rotkehlchen.tests.utils.constants import (
     A_EUR,
-    A_RDN,
     ETH_ADDRESS1,
     ETH_ADDRESS2,
     ETH_ADDRESS3,
@@ -558,7 +557,7 @@ def mock_history_processing(
 
         # TODO: terrible way to check. Figure out something better
         limited_range_test = False
-        expected_trades_num = 7
+        expected_swap_events_num = 21
         expected_margin_num = 1
         expected_asset_movements_num = 21
         if not limited_range_test:
@@ -566,14 +565,14 @@ def mock_history_processing(
             expected_asset_movements_num = 21
         if end_ts == 1539713238:
             limited_range_test = True
-            expected_trades_num = 6
+            expected_swap_events_num = 18
             expected_margin_num = 1
             expected_asset_movements_num = 19
         if end_ts == 1601040361:
-            expected_trades_num = 6
+            expected_swap_events_num = 18
 
-        trades = [x for x in events if isinstance(x, Trade)]
-        assert len(trades) == expected_trades_num, f'Expected {len(trades)} during history creation check from {start_ts} to {end_ts}'  # noqa: E501
+        swap_events = [x for x in events if isinstance(x, SwapEvent)]
+        assert len(swap_events) == expected_swap_events_num, f'Expected {expected_swap_events_num} but found {len(swap_events)} during history creation check from {start_ts} to {end_ts}'  # noqa: E501
 
         margin_positions = [x for x in events if isinstance(x, MarginPosition)]
         assert len(margin_positions) == expected_margin_num
@@ -848,121 +847,6 @@ def prepare_rotki_for_history_processing_test(
     )
 
 
-def assert_binance_trades_result(
-        trades: list[dict[str, Any]],
-        trades_to_check: tuple[int, ...] | None = None,
-) -> None:
-    """Convenience function to assert on the trades returned by binance's mock
-
-    'trades_to_check' is a tuple of indexes indicating which trades should be checked.
-    For example (1, 2) would mean that we have given two trades for checking and that
-    they corresponse to the second and third of the normally expected trades.
-    So the first trade is skipped.
-    The mock trade data are set in tests/utils/history.py
-    """
-    if trades_to_check is None:
-        assert len(trades) == 2
-        trades_to_check = (0, 1)
-    else:
-        assert len(trades) == len(trades_to_check)
-
-    for given_idx, idx in enumerate(trades_to_check):
-        raw_trade = trades[given_idx]
-        input_data = {k: v for k, v in raw_trade.items() if k != 'trade_id'}
-        expected_id = Trade(**TradeSchema().load(input_data)).identifier
-        assert raw_trade['trade_id'] == expected_id
-        if idx == 0:
-            assert raw_trade['timestamp'] == 1512561942
-            assert raw_trade['location'] == 'binance'
-            assert raw_trade['base_asset'] == A_RDN.identifier
-            assert raw_trade['quote_asset'] == 'ETH'
-            assert raw_trade['trade_type'] == 'sell'
-            assert raw_trade['amount'] == '5.0'
-            assert raw_trade['rate'] == '0.0063213'
-            assert raw_trade['fee'] == '0.005'
-            assert raw_trade['fee_currency'] == A_RDN.identifier
-            assert raw_trade['link'] == '2'
-            assert raw_trade['notes'] is None
-        elif idx == 1:
-            assert raw_trade['timestamp'] == 1512561941
-            assert raw_trade['location'] == 'binance'
-            assert raw_trade['base_asset'] == 'ETH'
-            assert raw_trade['quote_asset'] == 'BTC'
-            assert raw_trade['trade_type'] == 'buy'
-            assert raw_trade['amount'] == '5.0'
-            assert raw_trade['rate'] == '0.0063213'
-            assert raw_trade['fee'] == '0.005'
-            assert raw_trade['fee_currency'] == 'ETH'
-            assert raw_trade['link'] == '1'
-            assert raw_trade['notes'] is None
-        else:
-            raise AssertionError('index out of range')
-
-
-def assert_poloniex_trades_result(
-        trades: list[dict[str, Any]],
-        trades_to_check: tuple[int, ...] | None = None,
-) -> None:
-    """Convenience function to assert on the trades returned by poloniex's mock
-
-    'trades_to_check' is a tuple of indexes indicating which trades should be checked.
-    For example (1, 2) would mean that we have given two trades for checking and that
-    they corresponse to the second and third of the normally expected trades.
-    So the first trade is skipped.
-
-    The mock trade data are set in tests/utils/history.py
-    """
-    if trades_to_check is None:
-        assert len(trades) == 3
-        trades_to_check = (0, 1, 2)
-    else:
-        assert len(trades) == len(trades_to_check)
-
-    for given_idx, idx in enumerate(trades_to_check):
-        raw_trade = trades[given_idx]
-        input_data = {k: v for k, v in raw_trade.items() if k != 'trade_id'}
-        expected_id = Trade(**TradeSchema().load(input_data)).identifier
-        assert raw_trade['trade_id'] == expected_id
-        if idx == 0:
-            assert raw_trade['timestamp'] == 1539713238
-            assert raw_trade['location'] == 'poloniex'
-            assert raw_trade['base_asset'] == 'XMR'
-            assert raw_trade['quote_asset'] == 'ETH'
-            assert raw_trade['trade_type'] == 'buy'
-            assert FVal(raw_trade['amount']) == FVal('1.40308443')
-            assert FVal(raw_trade['rate']) == FVal('0.06935244')
-            assert FVal(raw_trade['fee']) == FVal('0.00140308443')
-            assert raw_trade['fee_currency'] == 'XMR'
-            assert raw_trade['link'] == '394131415'
-            assert raw_trade['notes'] is None
-        elif idx == 1:
-            assert raw_trade['timestamp'] == 1539713237
-            assert raw_trade['location'] == 'poloniex'
-            assert raw_trade['base_asset'] == 'ETH'
-            assert raw_trade['quote_asset'] == 'BTC'
-            assert raw_trade['trade_type'] == 'buy'
-            assert FVal(raw_trade['amount']) == FVal('1.40308443')
-            assert FVal(raw_trade['rate']) == FVal('0.06935244')
-            assert FVal(raw_trade['fee']) == FVal('0.00140308443')
-            assert raw_trade['fee_currency'] == 'ETH'
-            assert raw_trade['link'] == '394131413'
-            assert raw_trade['notes'] is None
-        elif idx == 2:
-            assert raw_trade['timestamp'] == 1539713117
-            assert raw_trade['location'] == 'poloniex'
-            assert raw_trade['base_asset'] == 'ETH'
-            assert raw_trade['quote_asset'] == 'BTC'
-            assert raw_trade['trade_type'] == 'sell'
-            assert raw_trade['amount'] == '1.40308443'
-            assert FVal(raw_trade['rate']) == FVal('0.06935244')
-            assert FVal(raw_trade['fee']) == FVal('0.0000973073287465092')
-            assert raw_trade['fee_currency'] == 'BTC'
-            assert raw_trade['link'] == '394131412'
-            assert raw_trade['notes'] is None
-        else:
-            raise AssertionError('index out of range')
-
-
 def maybe_mock_historical_price_queries(
         historian,
         should_mock_price_queries: bool,
@@ -1029,19 +913,10 @@ def assert_pnl_debug_import(filepath: Path, database: DBHandler) -> None:
         pnl_debug_json = json.load(f)
 
     settings_from_file = pnl_debug_json['settings']
-    ignored_actions_ids_from_file = {}
-    for action_type, values in pnl_debug_json['ignored_events_ids'].items():
-        ignored_actions_ids_from_file[action_type] = set(values)
-
+    ignored_actions_ids_from_file = pnl_debug_json['ignored_events_ids']
     with database.conn.read_ctx() as cursor:
         settings_from_db = database.get_settings(cursor=cursor).serialize()
-        ignored_actions_ids_from_db = database.get_ignored_action_ids(
-            cursor=cursor,
-            action_type=None,
-        )
-        serialized_ignored_actions_from_db = {
-            k.serialize(): v for k, v in ignored_actions_ids_from_db.items()
-        }
+        ignored_actions_ids_from_db = database.get_ignored_action_ids(cursor=cursor)
 
     # Since following settings change often do not compare here
     assert settings_from_file['last_data_migration'] == 5
@@ -1052,4 +927,4 @@ def assert_pnl_debug_import(filepath: Path, database: DBHandler) -> None:
         settings_from_file.pop(x)
 
     assert settings_from_file == settings_from_db
-    assert serialized_ignored_actions_from_db == ignored_actions_ids_from_file
+    assert list(ignored_actions_ids_from_db) == ignored_actions_ids_from_file

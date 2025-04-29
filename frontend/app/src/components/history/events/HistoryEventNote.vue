@@ -14,7 +14,7 @@ defineOptions({
 const props = withDefaults(
   defineProps<{
     notes?: string;
-    amount?: BigNumber;
+    amount?: BigNumber | BigNumber[];
     asset?: string;
     chain?: string;
     noTxHash?: boolean;
@@ -73,7 +73,7 @@ function isLinkType(t: any): t is keyof ExplorerUrls {
       <HashLink
         v-else-if="note.showHashLink && note.address && isLinkType(note.type)"
         :key="index"
-        class="inline-flex"
+        class="inline-flex pl-2"
         :class="{
           [$style.address]: true,
         }"
@@ -81,16 +81,24 @@ function isLinkType(t: any): t is keyof ExplorerUrls {
         :type="note.type"
         :location="note.chain ?? chain"
       />
-      <AmountDisplay
-        v-else-if="note.type === NoteType.AMOUNT && note.amount"
-        :key="`${index}-amount`"
-        no-truncate
-        :asset="note.asset"
-        :value="note.amount"
-        :resolution-options="{
-          collectionParent: false,
-        }"
-      />
+      <template v-else-if="note.type === NoteType.AMOUNT">
+        <AmountDisplay
+          v-if="note.amount"
+          :key="`${index}-amount`"
+          no-truncate
+          :asset="note.asset"
+          :value="note.amount"
+          :resolution-options="{
+            collectionParent: false,
+          }"
+        />
+        <AmountDisplay
+          v-else
+          :key="`${index}-amount-1`"
+          no-truncate
+          :value="note.amount"
+        />
+      </template>
       <ExternalLink
         v-else-if="note.type === NoteType.URL && note.url"
         :key="`${index}-link`"

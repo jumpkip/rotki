@@ -48,26 +48,30 @@ export default defineConfig({
       '@shared': `${join(PACKAGE_ROOT, 'shared')}/`,
     },
   },
-  optimizeDeps: {
-    include: ['tasklist > csv'],
-  },
   plugins: [binaryDependencyPlugin()],
+  ssr: {
+    noExternal: true,
+  },
   build: {
     sourcemap: isDevelopment ? 'inline' : false,
+    target: 'node22',
     outDir: 'dist',
     assetsDir: '.',
+    ssr: true,
     minify: !isDevelopment,
     lib: {
       entry: 'electron/main/index.ts',
       formats: ['es'],
     },
     rollupOptions: {
-      external: ['csv', 'electron', ...builtinModules.flatMap(p => [p, `node:${p}`])],
+      external: ['electron', ...builtinModules.flatMap(p => [p, `node:${p}`])],
       output: {
         entryFileNames: 'main.js',
         manualChunks(id) {
           if (id.includes('node_modules'))
             return 'background-vendor';
+          if (id.includes('electron-updater'))
+            return 'background-vendor-updater';
           if (id.includes('subprocess-handler'))
             return 'background-subprocess-handler';
           if (id.includes('http'))
@@ -76,5 +80,8 @@ export default defineConfig({
       },
     },
     emptyOutDir: false,
+  },
+  esbuild: {
+    target: 'node22',
   },
 });

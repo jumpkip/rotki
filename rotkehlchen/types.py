@@ -90,6 +90,7 @@ GEARBOX_PROTOCOL = 'gearbox'
 HOP_PROTOCOL_LP = 'hop_lp'
 MORPHO_VAULT_PROTOCOL: Final = 'morpho_vaults'
 CURVE_LENDING_VAULTS_PROTOCOL = 'curve_lending_vaults'
+PENDLE_PROTOCOL = 'pendle'
 
 
 # The protocols for which we know how to calculate their prices
@@ -101,6 +102,7 @@ ProtocolsWithPriceLogic = (
     HOP_PROTOCOL_LP,
     UNISWAPV3_PROTOCOL,
     AERODROME_POOL_PROTOCOL,
+    PENDLE_PROTOCOL,
 )
 
 LP_TOKEN_AS_POOL_PROTOCOLS = (  # In these protocols the LP token of a pool and the pool itself are the same contract  # noqa: E501
@@ -224,17 +226,16 @@ ListOfBlockchainAddresses = list[BTCAddress] | list[ChecksumEvmAddress] | list[S
 TuplesOfBlockchainAddresses = tuple[BTCAddress, ...] | tuple[ChecksumEvmAddress, ...] | tuple[SubstrateAddress, ...]  # noqa: E501
 
 
-T_Fee = FVal
-Fee = NewType('Fee', T_Fee)
-
 T_Price = FVal
 Price = NewType('Price', T_Price)
 
-T_AssetAmount = FVal
-AssetAmount = NewType('AssetAmount', T_AssetAmount)
-
 T_TradeID = str
 TradeID = NewType('TradeID', T_TradeID)
+
+
+class AssetAmount(NamedTuple):
+    asset: 'Asset'
+    amount: FVal
 
 
 class ChainID(Enum):
@@ -733,38 +734,6 @@ CHAINS_WITH_CHAIN_MANAGER = Literal[
 ]
 
 
-class TradeType(DBCharEnumMixIn):
-    BUY = 1
-    SELL = 2
-    SETTLEMENT_BUY = 3
-    SETTLEMENT_SELL = 4
-
-    @classmethod
-    def deserialize(cls: type['TradeType'], symbol: str) -> 'TradeType':
-        """Overriding deserialize here since it can have different wordings for the same type
-        so the automatic deserialization does not work
-        """
-        if not isinstance(symbol, str):
-            raise DeserializationError(
-                f'Failed to deserialize trade type symbol from {type(symbol)} entry',
-            )
-
-        sanitized_symbol = symbol.strip().lower()
-        if sanitized_symbol in {'buy', 'limit_buy'}:
-            return TradeType.BUY
-        if sanitized_symbol in {'sell', 'limit_sell'}:
-            return TradeType.SELL
-        if sanitized_symbol in {'settlement_buy', 'settlement buy'}:
-            return TradeType.SETTLEMENT_BUY
-        if sanitized_symbol in {'settlement_sell', 'settlement sell'}:
-            return TradeType.SETTLEMENT_SELL
-
-        # else
-        raise DeserializationError(
-            f'Failed to deserialize trade type symbol. Unknown symbol {symbol} for trade type',
-        )
-
-
 class Location(DBCharEnumMixIn):
     """Supported Locations"""
     EXTERNAL = 1
@@ -1029,6 +998,12 @@ class LocationAssetMappingDeleteEntry:
         except KeyError as e:
             raise DeserializationError(f'Missing key {e!s}') from e
 
+    def serialize_for_db(self) -> tuple[Any, ...]:
+        return self.location_symbol, None if self.location is None else self.location.serialize_for_db()  # noqa: E501
+
+    def __str__(self) -> str:
+        return f'{self.location_symbol} in {self.location}'
+
 
 @dataclass(init=True, repr=True, eq=True, order=False, unsafe_hash=False, frozen=True)
 class LocationAssetMappingUpdateEntry(LocationAssetMappingDeleteEntry):
@@ -1047,6 +1022,52 @@ class LocationAssetMappingUpdateEntry(LocationAssetMappingDeleteEntry):
             )
         except KeyError as e:
             raise DeserializationError(f'Missing key {e!s}') from e
+
+    def serialize_for_db(self) -> tuple[Any, ...]:
+        return self.asset.serialize(), *super().serialize_for_db()
+
+
+@dataclass(init=True, repr=True, eq=True, order=False, unsafe_hash=False, frozen=True)
+class CounterpartyAssetMappingDeleteEntry:
+    """A counterparty asset mapping delete entry"""
+    counterparty: str
+    counterparty_symbol: str
+
+    @classmethod
+    def deserialize(cls: type['CounterpartyAssetMappingDeleteEntry'], data: dict[str, Any]) -> 'CounterpartyAssetMappingDeleteEntry':  # noqa: E501
+        try:
+            return cls(
+                counterparty=data['counterparty'],
+                counterparty_symbol=data['counterparty_symbol'],
+            )
+        except KeyError as e:
+            raise DeserializationError(f'Missing key {e!s}') from e
+
+    def serialize_for_db(self) -> tuple[str, ...]:
+        return self.counterparty_symbol, self.counterparty
+
+    def __str__(self) -> str:
+        return f'{self.counterparty_symbol} in {self.counterparty}'
+
+
+@dataclass(init=True, repr=True, eq=True, order=False, unsafe_hash=False, frozen=True)
+class CounterpartyAssetMappingUpdateEntry(CounterpartyAssetMappingDeleteEntry):
+    """A counterparty asset mapping update entry"""
+    asset: 'Asset'
+
+    @classmethod
+    def deserialize(cls: type['CounterpartyAssetMappingUpdateEntry'], data: dict[str, Any]) -> 'CounterpartyAssetMappingUpdateEntry':  # noqa: E501
+        try:
+            return cls(
+                asset=data['asset'],
+                counterparty=data['counterparty'],
+                counterparty_symbol=data['counterparty_symbol'],
+            )
+        except KeyError as e:
+            raise DeserializationError(f'Missing key {e!s}') from e
+
+    def serialize_for_db(self) -> tuple[str, ...]:
+        return self.asset.serialize(), *super().serialize_for_db()
 
 
 T = TypeVar('T')
@@ -1176,8 +1197,6 @@ class CacheType(Enum):
     BALANCER_V2_POOLS = auto()
     CURVE_LENDING_VAULTS = auto()
     CURVE_LENDING_VAULT_CONTROLLER = auto()
-    CURVE_LENDING_VAULT_AMM = auto()
-    CURVE_LENDING_VAULT_COLLATERAL_TOKEN = auto()
     CURVE_LENDING_VAULT_BORROWED_TOKEN = auto()
     AURA_POOLS = auto()  # stores count of pools in db + chain_id (stringified)
     BALANCER_GAUGES = auto()  # stores gauges + chain_id + version
@@ -1186,6 +1205,13 @@ class CacheType(Enum):
     AERODROME_GAUGE_FEE_ADDRESS = auto()
     AERODROME_GAUGE_BRIBE_ADDRESS = auto()
     CURVE_LENDING_VAULT_GAUGE = auto()
+    CURVE_CRVUSD_CONTROLLERS = auto()
+    CURVE_CRVUSD_COLLATERAL_TOKEN = auto()
+    CURVE_CRVUSD_AMM = auto()
+    STAKEDAO_GAUGES = auto()
+    PENDLE_POOLS = auto()
+    PENDLE_SY_TOKENS = auto()
+    PENDLE_YIELD_TOKENS = auto()  # store the count of all SYs, PTs, YTs & LP tokens per chain
 
     def serialize(self) -> str:
         # Using custom serialize method instead of SerializableEnumMixin since mixin replaces
@@ -1236,11 +1262,12 @@ UniqueCacheType = Literal[
     CacheType.MORPHO_VAULTS,
     CacheType.CURVE_LENDING_VAULTS,
     CacheType.CURVE_LENDING_VAULT_CONTROLLER,
-    CacheType.CURVE_LENDING_VAULT_AMM,
-    CacheType.CURVE_LENDING_VAULT_COLLATERAL_TOKEN,
     CacheType.CURVE_LENDING_VAULT_BORROWED_TOKEN,
     CacheType.AURA_POOLS,
     CacheType.CURVE_LENDING_VAULT_GAUGE,
+    CacheType.CURVE_CRVUSD_COLLATERAL_TOKEN,
+    CacheType.CURVE_CRVUSD_AMM,
+    CacheType.PENDLE_YIELD_TOKENS,
 ]
 
 UNIQUE_CACHE_KEYS: tuple[UniqueCacheType, ...] = typing.get_args(UniqueCacheType)
@@ -1265,6 +1292,10 @@ GeneralCacheType = Literal[
     CacheType.BALANCER_V2_POOLS,
     CacheType.BALANCER_GAUGES,
     CacheType.MORPHO_REWARD_DISTRIBUTORS,
+    CacheType.CURVE_CRVUSD_CONTROLLERS,
+    CacheType.STAKEDAO_GAUGES,
+    CacheType.PENDLE_POOLS,
+    CacheType.PENDLE_SY_TOKENS,
 ]
 
 

@@ -54,6 +54,7 @@ from rotkehlchen.api.v1.resources import (
     ChainTypeAccountResource,
     ClearCacheResource,
     ConfigurationsResource,
+    CounterpartyAssetMappingsResource,
     CustomAssetsResource,
     CustomAssetsTypesResource,
     DatabaseBackupsResource,
@@ -128,6 +129,8 @@ from rotkehlchen.api.v1.resources import (
     PingResource,
     ProtocolDataRefreshResource,
     QueriedAddressesResource,
+    RefetchEvmTransactionsResource,
+    ResolveEnsResource,
     ReverseEnsResource,
     RpcNodesResource,
     SettingsResource,
@@ -141,7 +144,6 @@ from rotkehlchen.api.v1.resources import (
     SupportedChainsResource,
     TagsResource,
     TimestampHistoricalBalanceResource,
-    TradesResource,
     TypesMappingsResource,
     UserAssetsResource,
     UserNotesResource,
@@ -152,6 +154,11 @@ from rotkehlchen.api.v1.resources import (
     UsersResource,
     WatchersResource,
     create_blueprint,
+)
+from rotkehlchen.api.v1.wallet_resources import (
+    AddressesInteractedResource,
+    PrepareNativeTransferResource,
+    PrepareTokenTransferResource,
 )
 from rotkehlchen.api.websockets.notifier import RotkiNotifier, RotkiWSApp
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -186,7 +193,7 @@ URLS_V1: URLS = [
     ),
     ('/assets/icon/modify', AssetIconsResource),
     ('/assets/locationmappings', LocationAssetMappingsResource),
-    ('/trades', TradesResource),
+    ('/assets/counterpartymappings', CounterpartyAssetMappingsResource),
     ('/tags', TagsResource),
     ('/exchanges/binance/pairs', BinanceAvailableMarkets),
     ('/exchanges/<string:location>/savings', BinanceSavingsResource),  # this can only be Binance/BinanceUS  # noqa: E501
@@ -245,6 +252,7 @@ URLS_V1: URLS = [
     ('/blockchains/transactions', BlockchainTransactionsResource),
     ('blockchains/evm/all', AllEvmChainsResource),
     ('/blockchains/evm/transactions', EvmTransactionsResource),
+    ('/blockchains/evm/transactions/refetch', RefetchEvmTransactionsResource),
     ('/blockchains/evmlike/transactions', EvmlikeTransactionsResource),
     ('/blockchains/evm/transactions/decode', EvmPendingTransactionsDecodingResource),
     ('/blockchains/evmlike/transactions/decode', EvmlikePendingTransactionsDecodingResource),
@@ -302,6 +310,7 @@ URLS_V1: URLS = [
     ('/staking/kraken', StakingResource),
     ('/names', AllNamesResource),
     ('/names/ens/reverse', ReverseEnsResource),
+    ('/names/ens/resolve', ResolveEnsResource),
     ('/avatars/ens/<string:ens_name>', EnsAvatarsResource),
     ('/names/addressbook/<string:book_type>', AddressbookResource),
     ('/snapshots', DBSnapshotsResource),
@@ -321,6 +330,9 @@ URLS_V1: URLS = [
     ('/balances/historical/asset', HistoricalAssetAmountsResource),
     ('/balances/historical/asset/prices', HistoricalPricesPerAssetResource),
     ('/balances/historical/netvalue', HistoricalNetValueResource),
+    ('/wallet/transfer/token', PrepareTokenTransferResource),
+    ('/wallet/transfer/native', PrepareNativeTransferResource),
+    ('/wallet/interacted', AddressesInteractedResource),
 ]
 
 logger = logging.getLogger(__name__)
@@ -432,6 +444,7 @@ class APIServer:
             f'start rotki api {request.method} {request.path}',
             view_args=request.view_args,
             query_string=request.query_string,
+            json_data=request.json if request.is_json else None,
         )
 
     @staticmethod

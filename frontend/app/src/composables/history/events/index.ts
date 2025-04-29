@@ -2,12 +2,12 @@ import type { ActionStatus } from '@/types/action';
 import type { Collection } from '@/types/collection';
 import type { AddressBookSimplePayload } from '@/types/eth-names';
 import type {
-  EditHistoryEventPayload,
-  HistoryEventEntry,
-  HistoryEventEntryWithMeta,
+  AddHistoryEventPayload,
+  HistoryEventCollectionRow,
   HistoryEventRequestPayload,
+  HistoryEventRow,
   HistoryEventsCollectionResponse,
-  NewHistoryEventPayload,
+  ModifyHistoryEventPayload,
 } from '@/types/history/events';
 import type { MaybeRef } from '@vueuse/core';
 import { useHistoryEventsApi } from '@/composables/api/history/events';
@@ -19,12 +19,11 @@ import { defaultCollectionState, mapCollectionResponse } from '@/utils/collectio
 import { getEthAddressesFromText } from '@/utils/history';
 import { logger } from '@/utils/logging';
 import { startPromise } from '@shared/utils';
-import { omit } from 'es-toolkit';
 
 interface UseHistoryEventsReturn {
-  fetchHistoryEvents: (payload: MaybeRef<HistoryEventRequestPayload>) => Promise<Collection<HistoryEventEntry>>;
-  addHistoryEvent: (event: NewHistoryEventPayload) => Promise<ActionStatus<ValidationErrors | string>>;
-  editHistoryEvent: (event: EditHistoryEventPayload) => Promise<ActionStatus<ValidationErrors | string>>;
+  fetchHistoryEvents: (payload: MaybeRef<HistoryEventRequestPayload>) => Promise<Collection<HistoryEventRow>>;
+  addHistoryEvent: (event: AddHistoryEventPayload) => Promise<ActionStatus<ValidationErrors | string>>;
+  editHistoryEvent: (event: ModifyHistoryEventPayload) => Promise<ActionStatus<ValidationErrors | string>>;
   deleteHistoryEvent: (eventIds: number[], forceDelete?: boolean) => Promise<ActionStatus>;
   getEarliestEventTimestamp: () => Promise<number | undefined>;
 }
@@ -44,44 +43,71 @@ export function useHistoryEvents(): UseHistoryEventsReturn {
 
   const { getChain } = useSupportedChains();
 
+  function extractAddresses(
+    notes: string | undefined,
+    addressesNamesPayload: AddressBookSimplePayload[],
+    location: string,
+  ): void {
+    if (!notes) {
+      return;
+    }
+    addressesNamesPayload.push(
+      ...getEthAddressesFromText(notes).map(address => ({
+        address,
+        blockchain: getChain(location),
+      })),
+    );
+  }
+
+  function populateAddressBook(collection: Collection<HistoryEventCollectionRow>): void {
+    const addressesNamesPayload: AddressBookSimplePayload[] = [];
+
+    for (const row of collection.data) {
+      const events = Array.isArray(row) ? row : [row];
+      for (const event of events) {
+        const { autoNotes, location, userNotes } = event.entry;
+        extractAddresses(userNotes, addressesNamesPayload, location);
+        extractAddresses(autoNotes, addressesNamesPayload, location);
+      }
+    }
+
+    if (addressesNamesPayload.length > 0)
+      startPromise(fetchEnsNames(addressesNamesPayload));
+  }
+
   const fetchHistoryEvents = async (
-    payload: MaybeRef<HistoryEventRequestPayload & { accounts?: [] }>,
-  ): Promise<Collection<HistoryEventEntry>> => {
+    payload: MaybeRef<HistoryEventRequestPayload>,
+  ): Promise<Collection<HistoryEventRow>> => {
     try {
-      const formattedPayload = omit(get(payload), ['accounts']);
-      const result = await fetchHistoryEventsCaller(formattedPayload);
+      const requestData = get(payload);
+      const collection = mapCollectionResponse<
+        HistoryEventCollectionRow,
+        HistoryEventsCollectionResponse
+      >(await fetchHistoryEventsCaller(requestData));
 
-      const { data, ...other } = mapCollectionResponse<HistoryEventEntryWithMeta, HistoryEventsCollectionResponse>(
-        result,
-      );
+      if (!requestData.groupByEventIds) {
+        populateAddressBook(collection);
+      }
 
-      const addressesNamesPayload: AddressBookSimplePayload[] = [];
-      const mappedData = data.map((event: HistoryEventEntryWithMeta) => {
-        const { entry, ...entriesMeta } = event;
+      const { data, ...others } = collection;
 
-        if (!get(payload).groupByEventIds && entry.notes) {
-          const addresses = getEthAddressesFromText(entry.notes);
-          addressesNamesPayload.push(
-            ...addresses.map(address => ({
-              address,
-              blockchain: getChain(entry.location),
-            })),
-          );
+      const flatData: HistoryEventRow[] = [];
+
+      for (const row of data) {
+        if (!Array.isArray(row)) {
+          const { entry, ...meta } = row;
+          flatData.push({ ...entry, ...meta });
         }
+        else {
+          const events = row.map((event) => {
+            const { entry, ...meta } = event;
+            return ({ ...entry, ...meta });
+          });
+          flatData.push(events);
+        }
+      }
 
-        return {
-          ...entry,
-          ...entriesMeta,
-        };
-      });
-
-      if (addressesNamesPayload.length > 0)
-        startPromise(fetchEnsNames(addressesNamesPayload));
-
-      return {
-        ...other,
-        data: mappedData,
-      };
+      return { data: flatData, ...others };
     }
     catch (error: any) {
       logger.error(error);
@@ -96,7 +122,7 @@ export function useHistoryEvents(): UseHistoryEventsReturn {
     }
   };
 
-  const addHistoryEvent = async (event: NewHistoryEventPayload): Promise<ActionStatus<ValidationErrors | string>> => {
+  const addHistoryEvent = async (event: AddHistoryEventPayload): Promise<ActionStatus<ValidationErrors | string>> => {
     let success = false;
     let message: ValidationErrors | string = '';
     try {
@@ -112,7 +138,7 @@ export function useHistoryEvents(): UseHistoryEventsReturn {
     return { message, success };
   };
 
-  const editHistoryEvent = async (event: EditHistoryEventPayload): Promise<ActionStatus<ValidationErrors | string>> => {
+  const editHistoryEvent = async (event: ModifyHistoryEventPayload): Promise<ActionStatus<ValidationErrors | string>> => {
     let success = false;
     let message: ValidationErrors | string = '';
     try {
@@ -151,7 +177,9 @@ export function useHistoryEvents(): UseHistoryEventsReturn {
     });
 
     if (response.data.length === 1) {
-      return Math.floor(response.data[0].timestamp / 1000);
+      const firstRow = response.data[0];
+      const timestamp = Array.isArray(firstRow) ? firstRow[0].timestamp : firstRow.timestamp;
+      return Math.floor(timestamp / 1000);
     }
 
     return undefined;

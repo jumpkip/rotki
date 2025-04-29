@@ -3,7 +3,6 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from rotkehlchen.accounting.structures.balance import AssetBalance, Balance
 from rotkehlchen.assets.converters import LOCATION_TO_ASSET_MAPPING, asset_from_common_identifier
 from rotkehlchen.constants import ZERO
 from rotkehlchen.data_import.utils import (
@@ -17,13 +16,14 @@ from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.errors.misc import InputError
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.history.events.structures.base import HistoryEvent
+from rotkehlchen.history.events.structures.swap import create_swap_events
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import (
-    deserialize_asset_amount,
+    deserialize_fval,
     deserialize_timestamp_from_date,
 )
-from rotkehlchen.types import Fee, Location, TimestampMS
+from rotkehlchen.types import AssetAmount, Location, TimestampMS
 from rotkehlchen.utils.misc import ts_sec_to_ms
 
 from .constants import ROTKI_EVENT_PREFIX
@@ -72,9 +72,9 @@ class BitcoinTaxImporter(BaseExchangeImporter):
             timestamp: TimestampMS,
             location: Location,
             action: str,
-            base_asset_balance: AssetBalance,
-            quote_asset_balance: AssetBalance,
-            fee_asset_balance: AssetBalance | None,
+            base_asset_amount: AssetAmount,
+            quote_asset_amount: AssetAmount,
+            fee_asset_amount: AssetAmount | None,
             memo: str,
     ) -> None:
         """
@@ -92,48 +92,24 @@ class BitcoinTaxImporter(BaseExchangeImporter):
             raise SkippedCSVEntry('SWAP action is skipped. Forks and renames are handled by rotki elsewhere.')  # noqa: E501
 
         # BUY action
-        receive_asset_balance = base_asset_balance
-        spend_asset_balance = quote_asset_balance
+        receive_asset_amount = base_asset_amount
+        spend_asset_amount = quote_asset_amount
         if action == 'SELL':
-            receive_asset_balance = quote_asset_balance
-            spend_asset_balance = base_asset_balance
+            receive_asset_amount = quote_asset_amount
+            spend_asset_amount = base_asset_amount
 
-        spend_event = HistoryEvent(
-            event_identifier=event_identifier,
-            sequence_index=0,
-            timestamp=timestamp,
-            location=location,
-            asset=spend_asset_balance.asset,
-            amount=spend_asset_balance.balance.amount,
-            notes=memo,
-            event_type=HistoryEventType.TRADE,
-            event_subtype=HistoryEventSubType.SPEND,
-        )
-        receive_event = HistoryEvent(
-            event_identifier=event_identifier,
-            sequence_index=1,
-            timestamp=timestamp,
-            location=location,
-            asset=receive_asset_balance.asset,
-            amount=receive_asset_balance.balance.amount,
-            notes=memo,
-            event_type=HistoryEventType.TRADE,
-            event_subtype=HistoryEventSubType.RECEIVE,
-        )
-        self.add_history_events(write_cursor, [spend_event, receive_event])
-        if fee_asset_balance is not None:
-            fee_event = HistoryEvent(
+        self.add_history_events(
+            write_cursor=write_cursor,
+            history_events=create_swap_events(
                 event_identifier=event_identifier,
-                sequence_index=2,
                 timestamp=timestamp,
                 location=location,
-                asset=fee_asset_balance.asset,
-                amount=fee_asset_balance.balance.amount,
-                notes=memo,
-                event_type=HistoryEventType.TRADE,
-                event_subtype=HistoryEventSubType.FEE,
-            )
-            self.add_history_events(write_cursor, [fee_event])
+                spend=spend_asset_amount,
+                receive=receive_asset_amount,
+                spend_notes=memo,
+                fee=fee_asset_amount,
+            ),
+        )
 
     def _consume_income_spending_event(
             self,
@@ -143,8 +119,8 @@ class BitcoinTaxImporter(BaseExchangeImporter):
             timestamp: TimestampMS,
             location: Location,
             action: str,
-            asset_balance: AssetBalance,
-            fee_asset_balance: AssetBalance | None,
+            asset_amount: AssetAmount,
+            fee_asset_amount: AssetAmount | None,
             memo: str,
     ) -> None:
         """
@@ -164,21 +140,21 @@ class BitcoinTaxImporter(BaseExchangeImporter):
             sequence_index=0,
             timestamp=timestamp,
             location=location,
-            asset=asset_balance.asset,
-            amount=asset_balance.balance.amount,
+            asset=asset_amount.asset,
+            amount=asset_amount.amount,
             notes=memo,
             event_type=event_type,
             event_subtype=event_subtype,
         )
         self.add_history_events(write_cursor, [event])
-        if fee_asset_balance is not None:
+        if fee_asset_amount is not None:
             fee_event = HistoryEvent(
                 event_identifier=event_identifier,
                 sequence_index=1,
                 timestamp=timestamp,
                 location=location,
-                asset=fee_asset_balance.asset,
-                amount=fee_asset_balance.balance.amount,
+                asset=fee_asset_amount.asset,
+                amount=fee_asset_amount.amount,
                 notes=memo,
                 event_type=HistoryEventType.SPEND,
                 event_subtype=HistoryEventSubType.FEE,
@@ -222,8 +198,8 @@ class BitcoinTaxImporter(BaseExchangeImporter):
 
         asset_resolver = LOCATION_TO_ASSET_MAPPING.get(location, asset_from_common_identifier)
         base_asset = asset_resolver(csv_row['Symbol'])
-        base_asset_amount = deserialize_asset_amount(csv_row['Volume'])
-        fee_amount = Fee(deserialize_asset_amount(csv_row['Fee'])) if csv_row['Fee'] else Fee(ZERO)
+        base_amount = deserialize_fval(csv_row['Volume'])
+        fee_amount = deserialize_fval(csv_row['Fee']) if csv_row['Fee'] else ZERO
         fee_asset = (
             asset_resolver(csv_row['FeeCurrency'])
             if csv_row['FeeCurrency'] and fee_amount is not None else None
@@ -231,15 +207,12 @@ class BitcoinTaxImporter(BaseExchangeImporter):
         action = csv_row['Action']
         memo = f"Imported description from bitcoin tax: {csv_row['Memo']}" if csv_row['Memo'] else ''  # noqa: E501
 
-        base_asset_balance = AssetBalance(base_asset, Balance(base_asset_amount, ZERO))
-        fee_asset_balance = None
+        base_asset_amount = AssetAmount(base_asset, base_amount)
+        fee_asset_amount = None
         if fee_amount != ZERO and fee_asset is not None:
-            fee_asset_balance = AssetBalance(fee_asset, Balance(fee_amount, ZERO))
+            fee_asset_amount = AssetAmount(fee_asset, fee_amount)
 
         if csv_type == 'trades':
-            quote_asset = asset_resolver(csv_row['Currency'])
-            quote_asset_amount = deserialize_asset_amount(csv_row['Cost/Proceeds'])
-            quote_asset_balance = AssetBalance(quote_asset, Balance(quote_asset_amount, ZERO))
             self._consume_trade_event(
                 write_cursor=write_cursor,
                 csv_row=csv_row,
@@ -247,9 +220,12 @@ class BitcoinTaxImporter(BaseExchangeImporter):
                 timestamp=timestamp,
                 location=location,
                 action=action,
-                base_asset_balance=base_asset_balance,
-                quote_asset_balance=quote_asset_balance,
-                fee_asset_balance=fee_asset_balance,
+                base_asset_amount=base_asset_amount,
+                quote_asset_amount=AssetAmount(
+                    asset=asset_resolver(csv_row['Currency']),
+                    amount=deserialize_fval(csv_row['Cost/Proceeds']),
+                ),
+                fee_asset_amount=fee_asset_amount,
                 memo=memo,
             )
             return
@@ -261,8 +237,8 @@ class BitcoinTaxImporter(BaseExchangeImporter):
             timestamp=timestamp,
             location=location,
             action=action,
-            asset_balance=base_asset_balance,
-            fee_asset_balance=fee_asset_balance,
+            asset_amount=base_asset_amount,
+            fee_asset_amount=fee_asset_amount,
             memo=memo,
         )
 

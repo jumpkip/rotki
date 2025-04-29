@@ -1,17 +1,22 @@
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict
 
 from rotkehlchen.accounting.mixins.event import AccountingEventType
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.constants import ZERO
 from rotkehlchen.constants.location_details import get_formatted_location_name
 from rotkehlchen.errors.serialization import DeserializationError
-from rotkehlchen.history.events.structures.base import HistoryBaseEntry, HistoryBaseEntryType
+from rotkehlchen.history.events.structures.base import (
+    HistoryBaseEntry,
+    HistoryBaseEntryData,
+    HistoryBaseEntryType,
+)
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.history.events.utils import create_event_identifier
 from rotkehlchen.serialization.deserialize import deserialize_fval
 from rotkehlchen.types import AssetAmount, Location, TimestampMS
 
 from .base import HISTORY_EVENT_DB_TUPLE_WRITE
+from .evm_event import EVM_EVENT_FIELDS
 
 if TYPE_CHECKING:
     from more_itertools import peekable
@@ -20,6 +25,32 @@ if TYPE_CHECKING:
     from rotkehlchen.accounting.pot import AccountingPot
     from rotkehlchen.fval import FVal
     from rotkehlchen.types import Price
+
+
+class SwapEventExtraData(TypedDict):
+    """Typed dict with all the valid fields used in extra_data for SwapEvents"""
+    # Internal reference used in exchanges.
+    reference: NotRequired[str]
+
+
+class SwapEventEntryData(TypedDict):
+    """Typed dict of attributes common to both SwapEvents and EvmSwapEvents.
+     Used during deserialization.
+     """
+    timestamp: TimestampMS
+    location: Location
+    event_subtype: Literal[
+        HistoryEventSubType.SPEND,
+        HistoryEventSubType.RECEIVE,
+        HistoryEventSubType.FEE,
+    ]
+    asset: Asset
+    amount: 'FVal'
+    location_label: str | None
+    identifier: int | None
+    event_identifier: str | None
+    notes: str | None
+    extra_data: dict[str, Any] | None
 
 
 class SwapEvent(HistoryBaseEntry):
@@ -41,6 +72,7 @@ class SwapEvent(HistoryBaseEntry):
             unique_id: str | None = None,
             location_label: str | None = None,
             notes: str | None = None,
+            extra_data: SwapEventExtraData | None = None,
     ):
         """An event representing part of a swap (spend/receive/fee).
 
@@ -71,13 +103,17 @@ class SwapEvent(HistoryBaseEntry):
             location_label=location_label,
             notes=notes,
             identifier=identifier,
+            extra_data=extra_data,
         )
 
     @property
     def entry_type(self) -> HistoryBaseEntryType:
         return HistoryBaseEntryType.SWAP_EVENT
 
-    def serialize_for_db(self) -> tuple[tuple[str, str, HISTORY_EVENT_DB_TUPLE_WRITE]]:
+    def serialize_for_db(self) -> tuple[tuple[str, str, HISTORY_EVENT_DB_TUPLE_WRITE]] | tuple[
+            tuple[str, str, HISTORY_EVENT_DB_TUPLE_WRITE],
+            tuple[str, str, EVM_EVENT_FIELDS],
+    ]:
         return (self._serialize_base_tuple_for_db(),)
 
     @classmethod
@@ -99,12 +135,12 @@ class SwapEvent(HistoryBaseEntry):
             event_subtype=HistoryEventSubType.deserialize(entry[10]),  # type: ignore  # should always be correct from the DB
             asset=Asset(entry[6]).check_existence(),
             amount=amount,
+            extra_data=cls.deserialize_extra_data(entry=entry, extra_data=entry[11]),
             notes=entry[8] or None,
         )
 
     def serialize(self) -> dict[str, Any]:
-        """Serialize the event for api.
-        Autogenerates the event notes, appending any notes added by the user in a second sentence.
+        """Serialize the event for api, and generate the auto_notes.
         May raise UnknownAsset, but this would be an edge case as the asset should already have
         been checked for existence when it was deserialized from an API or from the database.
         """
@@ -112,21 +148,20 @@ class SwapEvent(HistoryBaseEntry):
         location_name = get_formatted_location_name(self.location)
         asset_symbol = self.asset.symbol_or_name()
         if self.event_subtype == HistoryEventSubType.SPEND:
-            notes = f'Swap {self.amount} {asset_symbol} in {location_name}.'
+            auto_notes = f'Swap {self.amount} {asset_symbol} in {location_name}'
         elif self.event_subtype == HistoryEventSubType.RECEIVE:
-            notes = f'Receive {self.amount} {asset_symbol} after a swap in {location_name}.'
+            auto_notes = f'Receive {self.amount} {asset_symbol} after a swap in {location_name}'
         else:  # Fee
-            notes = f'Spend {self.amount} {asset_symbol} as {location_name} swap fee.'
+            auto_notes = f'Spend {self.amount} {asset_symbol} as {location_name} swap fee'
 
-        if (user_notes := serialized_data['notes']) is not None:
-            notes += f' {user_notes}'
-
-        serialized_data['notes'] = notes
+        serialized_data['auto_notes'] = auto_notes
         return serialized_data
 
     @classmethod
-    def deserialize(cls: type['SwapEvent'], data: dict[str, Any]) -> 'SwapEvent':
-        base_data = cls._deserialize_base_history_data(data)
+    def _deserialize_swap_data(
+            cls: type['SwapEvent'],
+            base_data: HistoryBaseEntryData,
+    ) -> SwapEventEntryData:
         if (event_subtype := base_data['event_subtype']) not in {
             HistoryEventSubType.SPEND,
             HistoryEventSubType.RECEIVE,
@@ -137,16 +172,24 @@ class SwapEvent(HistoryBaseEntry):
                 f'Expected SPEND, RECEIVE or FEE',
             )
 
-        return cls(
+        return SwapEventEntryData(
             identifier=base_data['identifier'],
             event_identifier=base_data['event_identifier'],
             timestamp=base_data['timestamp'],
             location=base_data['location'],
-            location_label=base_data['location_label'],
             event_subtype=event_subtype,  # type: ignore  # just confirmed it's a SPEND, RECEIVE or FEE above
             asset=base_data['asset'],
             amount=base_data['amount'],
+            notes=base_data['notes'],
+            location_label=base_data['location_label'],
+            extra_data=base_data['extra_data'],
         )
+
+    @classmethod
+    def deserialize(cls: type['SwapEvent'], data: dict[str, Any]) -> 'SwapEvent':
+        return cls(**cls._deserialize_swap_data(  # type: ignore[arg-type]  # deserialized extra_data should be valid SwapEventExtraData
+            base_data=cls._deserialize_base_history_data(data),
+        ))
 
     def __repr__(self) -> str:
         return f'SwapEvent({", ".join(self._history_base_entry_repr_fields())})'
@@ -168,12 +211,9 @@ class SwapEvent(HistoryBaseEntry):
 def create_swap_events(
         timestamp: TimestampMS,
         location: Location,
-        spend_asset: Asset,
-        spend_amount: 'FVal',
-        receive_asset: Asset,
-        receive_amount: 'FVal',
-        fee_asset: Asset,
-        fee_amount: 'FVal',
+        spend: AssetAmount,
+        receive: AssetAmount,
+        fee: AssetAmount | None = None,
         location_label: str | None = None,
         unique_id: str | None = None,
         spend_notes: str | None = None,
@@ -183,6 +223,7 @@ def create_swap_events(
         receive_identifier: int | None = None,
         fee_identifier: int | None = None,
         event_identifier: str | None = None,
+        extra_data: SwapEventExtraData | None = None,
 ) -> list[SwapEvent]:
     """Create spend, receive, and optionally fee SwapEvents for a single trade.
     Returns the new SwapEvents in a list.
@@ -191,32 +232,33 @@ def create_swap_events(
         timestamp=timestamp,
         location=location,
         event_subtype=HistoryEventSubType.SPEND,
-        asset=spend_asset,
-        amount=spend_amount,
+        asset=spend.asset,
+        amount=spend.amount,
         unique_id=unique_id,
         location_label=location_label,
         notes=spend_notes,
         identifier=identifier,
         event_identifier=event_identifier,
+        extra_data=extra_data,
     ), SwapEvent(
         timestamp=timestamp,
         location=location,
         event_subtype=HistoryEventSubType.RECEIVE,
-        asset=receive_asset,
-        amount=receive_amount,
+        asset=receive.asset,
+        amount=receive.amount,
         unique_id=unique_id,
         location_label=location_label,
         notes=receive_notes,
         identifier=receive_identifier,
         event_identifier=event_identifier,
     )]
-    if fee_amount != ZERO:
+    if fee is not None and fee.amount != ZERO:
         events.append(SwapEvent(
             timestamp=timestamp,
             location=location,
             event_subtype=HistoryEventSubType.FEE,
-            asset=fee_asset,
-            amount=fee_amount,
+            asset=fee.asset,
+            amount=fee.amount,
             unique_id=unique_id,
             location_label=location_label,
             notes=fee_notes,
@@ -227,20 +269,29 @@ def create_swap_events(
     return events
 
 
+def deserialize_trade_type_is_buy(value: str) -> bool:
+    """Deserialize trade type from raw exchange api or csv value.
+    Returns True if trade is a buy, or False if it's a sell.
+    May raise DeserializationError if an unexpected value is encountered.
+    """
+    if (sanitized_value := value.strip().lower()) in {'buy', 'limit_buy', 'settlement_buy', 'settlement buy'}:  # noqa: E501
+        return True
+    elif sanitized_value in {'sell', 'limit_sell', 'settlement_sell', 'settlement sell'}:
+        return False
+
+    raise DeserializationError(f'Failed to deserialize swap side from {value} entry')
+
+
 def get_swap_spend_receive(
-        raw_trade_type: str,
+        is_buy: bool,
         base_asset: Asset,
         quote_asset: Asset,
-        amount: 'AssetAmount',
+        amount: 'FVal',
         rate: 'Price',
-) -> tuple['Asset', 'AssetAmount', 'Asset', 'AssetAmount']:
-    """Deserialize the trade type and calculate amounts and assets spent and received.
-    Returns spend_asset, spend_amount, receive_asset, and receive_amount in a tuple.
-    May raise DeserializationError if raw_trade_type has an unexpected value.
+) -> tuple[AssetAmount, AssetAmount]:
+    """Calculates amounts and assets spent and received depending on the is_buy flag.
+    Returns the spend asset amount and receive asset amount in a tuple.
     """
-    if (sanitized_symbol := raw_trade_type.strip().lower()) in {'buy', 'limit_buy', 'settlement_buy', 'settlement buy'}:  # noqa: E501
-        return quote_asset, AssetAmount(amount * rate), base_asset, amount
-    elif sanitized_symbol in {'sell', 'limit_sell', 'settlement_sell', 'settlement sell'}:
-        return base_asset, amount, quote_asset, AssetAmount(amount * rate)
-
-    raise DeserializationError(f'Failed to deserialize trade type from {type(raw_trade_type)} entry')  # noqa: E501
+    base = AssetAmount(asset=base_asset, amount=amount)
+    quote = AssetAmount(asset=quote_asset, amount=amount * rate)
+    return (quote, base) if is_buy else (base, quote)

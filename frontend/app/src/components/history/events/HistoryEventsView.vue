@@ -1,12 +1,18 @@
 <script setup lang="ts">
+import type {
+  GroupEventData,
+  HistoryEventEditData,
+  ShowEventHistoryForm,
+  ShowFormData,
+  StandaloneEventData,
+} from '@/modules/history/management/forms/form-types';
 import type { AddressData, BlockchainAccount } from '@/types/blockchain/accounts';
 import type {
   AddTransactionHashPayload,
-  HistoryEvent,
-  HistoryEventEntry,
   HistoryEventRequestPayload,
+  HistoryEventRow,
   PullEvmTransactionPayload,
-  ShowEventHistoryForm,
+  RepullingTransactionPayload,
 } from '@/types/history/events';
 import type { AccountingRuleEntry } from '@/types/settings/accounting';
 import MissingRulesDialog from '@/components/dialogs/MissingRulesDialog.vue';
@@ -19,6 +25,7 @@ import HistoryEventsTable from '@/components/history/events/HistoryEventsTable.v
 import HistoryEventsTableActions from '@/components/history/events/HistoryEventsTableActions.vue';
 import HistoryEventsViewButtons from '@/components/history/events/HistoryEventsViewButtons.vue';
 import HistoryQueryStatus from '@/components/history/events/HistoryQueryStatus.vue';
+import RepullingTransactionFormDialog from '@/components/history/events/tx/RepullingTransactionFormDialog.vue';
 import TransactionFormDialog from '@/components/history/events/tx/TransactionFormDialog.vue';
 import TablePageLayout from '@/components/layout/TablePageLayout.vue';
 import CardTitle from '@/components/typography/CardTitle.vue';
@@ -27,25 +34,19 @@ import { useHistoryEvents } from '@/composables/history/events';
 import { useHistoryEventMappings } from '@/composables/history/events/mapping';
 import { useHistoryTransactions } from '@/composables/history/events/tx';
 import { useHistoryTransactionDecoding } from '@/composables/history/events/tx/decoding';
-import { useCommonTableProps } from '@/composables/use-common-table-props';
 import { usePaginationFilters } from '@/composables/use-pagination-filter';
-import { useBlockchainStore } from '@/store/blockchain';
+import { useBlockchainAccountsStore } from '@/modules/accounts/use-blockchain-accounts-store';
+import { useHistoryEventsAutoFetch } from '@/modules/history/events/use-history-events-auto-fetch';
+import { useHistoryEventsStatus } from '@/modules/history/events/use-history-events-status';
 import { useConfirmStore } from '@/store/confirm';
 import { useHistoryStore } from '@/store/history';
-import { useEventsQueryStatusStore } from '@/store/history/query-status/events-query-status';
-import { useTxQueryStatusStore } from '@/store/history/query-status/tx-query-status';
-import { useStatusStore } from '@/store/status';
-import { useTaskStore } from '@/store/tasks';
 import { RouterAccountsSchema } from '@/types/route';
-import { Section } from '@/types/status';
-import { TaskType } from '@/types/task-type';
 import { getAccountAddress } from '@/utils/blockchain/accounts/utils';
 import { toEvmChainAndTxHash } from '@/utils/history';
 import { isEvmEvent, isEvmEventType, isOnlineHistoryEventType } from '@/utils/history/events';
 import { type Account, type Blockchain, HistoryEventEntryType, toSnakeCase, type Writeable } from '@rotki/common';
 import { startPromise } from '@shared/utils';
-import { not } from '@vueuse/math';
-import { isEqual } from 'es-toolkit';
+import { flatten, isEqual } from 'es-toolkit';
 
 type Period = { fromTimestamp?: string; toTimestamp?: string } | { fromTimestamp?: number; toTimestamp?: number };
 
@@ -96,10 +97,8 @@ const {
   validators,
 } = toRefs(props);
 
-const nextSequence = ref<string>();
-const selectedGroupHeader = ref<HistoryEvent>();
-const selectedGroupEvents = ref<HistoryEvent[]>();
-const eventWithMissingRules = ref<HistoryEventEntry>();
+const formData = ref<GroupEventData | StandaloneEventData>();
+const missingRuleData = ref<HistoryEventEditData>();
 const accounts = ref<BlockchainAccount<AddressData>[]>([]);
 const locationOverview = ref(get(location));
 const toggles = ref<{ customizedEventsOnly: boolean; showIgnoredAssets: boolean }>({
@@ -112,32 +111,18 @@ const protocolCacheStatusDialogOpen = ref<boolean>(false);
 const currentAction = ref<'decode' | 'query'>('query');
 
 const addTransactionModelValue = ref<AddTransactionHashPayload>();
+const repullingTransactionModelValue = ref<RepullingTransactionPayload>();
 
-const { useIsTaskRunning } = useTaskStore();
 const { show } = useConfirmStore();
 const { fetchAssociatedLocations, resetUndecodedTransactionsStatus } = useHistoryStore();
 const { decodingStatus } = storeToRefs(useHistoryStore());
-const { getAccountByAddress } = useBlockchainStore();
-const { isAllFinished: isQueryingTxsFinished } = toRefs(useTxQueryStatusStore());
-const { isAllFinished: isQueryingOnlineEventsFinished } = toRefs(useEventsQueryStatusStore());
-const { isLoading: isSectionLoading } = useStatusStore();
-
+const { getAccountByAddress } = useBlockchainAccountsStore();
 const { fetchHistoryEvents } = useHistoryEvents();
-
 const { refreshTransactions } = useHistoryTransactions();
 const { fetchUndecodedTransactionsStatus, pullAndRedecodeTransactions, redecodeTransactions } = useHistoryTransactionDecoding();
+const { eventTaskLoading, processing, refreshing, sectionLoading, shouldFetchEventsRegularly } = useHistoryEventsStatus();
 const historyEventMappings = useHistoryEventMappings();
-
-const sectionLoading = isSectionLoading(Section.HISTORY_EVENT);
-const eventTaskLoading = useIsTaskRunning(TaskType.TRANSACTIONS_DECODING);
-const protocolCacheUpdatesLoading = useIsTaskRunning(TaskType.REFRESH_GENERAL_CACHE);
-const onlineHistoryEventsLoading = useIsTaskRunning(TaskType.QUERY_ONLINE_EVENTS);
-const isTransactionsLoading = useIsTaskRunning(TaskType.TX);
-
-const refreshing = logicOr(sectionLoading, eventTaskLoading, onlineHistoryEventsLoading, protocolCacheUpdatesLoading);
-const querying = not(logicOr(isQueryingTxsFinished, isQueryingOnlineEventsFinished));
-const shouldFetchEventsRegularly = logicOr(querying, refreshing);
-const processing = logicOr(isTransactionsLoading, querying, refreshing);
+useHistoryEventsAutoFetch(shouldFetchEventsRegularly, fetchDataAndLocations);
 
 const usedTitle = computed<string>(() => get(sectionTitle) || t('transactions.title'));
 
@@ -178,8 +163,6 @@ const highlightedIdentifiers = computed<string[] | undefined>(() => {
   return highlightedIdentifier ? [highlightedIdentifier as string] : undefined;
 });
 
-const { editableItem, openDialog } = useCommonTableProps<HistoryEventEntry>();
-
 const {
   fetchData,
   filters,
@@ -193,7 +176,7 @@ const {
   updateFilter,
   userAction,
 } = usePaginationFilters<
-  HistoryEventEntry,
+  HistoryEventRow,
   HistoryEventRequestPayload,
   Filters,
   Matcher
@@ -209,7 +192,6 @@ const {
     return {};
   }),
   extraParams: computed(() => ({
-    accounts: get(usedAccounts).map(account => `${account.address}#${account.chain}`),
     customizedEventsOnly: get(toggles, 'customizedEventsOnly'),
     eventIdentifiers: get(eventIdentifiers),
     excludeIgnoredAssets: !get(toggles, 'showIgnoredAssets'),
@@ -232,6 +214,9 @@ const {
     else
       set(accounts, accountsParsed.map(({ address, chain }) => getAccountByAddress(address, chain)));
   },
+  queryParamsOnly: computed(() => ({
+    accounts: get(usedAccounts).map(account => `${account.address}#${account.chain}`),
+  })),
   requestParams: computed<Partial<HistoryEventRequestPayload>>(() => {
     const params: Writeable<Partial<HistoryEventRequestPayload>> = {
       counterparties: get(protocols),
@@ -311,29 +296,12 @@ async function forceRedecodeEvmEvents(data: PullEvmTransactionPayload): Promise<
 
 function showForm(payload: ShowEventHistoryForm): void {
   if (payload.type === 'event') {
-    const {
-      event,
-      eventsInGroup,
-      group,
-      nextSequenceId,
-    } = payload.data;
-
-    set(selectedGroupHeader, group);
-    set(editableItem, event);
-    set(nextSequence, nextSequenceId);
-    set(selectedGroupEvents, eventsInGroup);
-    set(openDialog, true);
+    set(formData, payload.data);
   }
   else {
-    const { event, group } = payload.data;
-    set(eventWithMissingRules, event);
-    set(selectedGroupHeader, group);
+    set(missingRuleData, payload.data);
   }
 }
-
-const { isActive, pause, resume } = useIntervalFn(() => {
-  startPromise(fetchDataAndLocations());
-}, 20000);
 
 function onAddMissingRule(data: Pick<AccountingRuleEntry, 'eventType' | 'eventSubtype' | 'counterparty'>): void {
   router.push({
@@ -342,11 +310,9 @@ function onAddMissingRule(data: Pick<AccountingRuleEntry, 'eventType' | 'eventSu
   });
 }
 
-function editMissingRulesEntry(event: HistoryEventEntry): void {
-  const group = get(selectedGroupHeader);
-
+function editMissingRulesEntry(data: ShowFormData): void {
   startPromise(nextTick(() => {
-    showForm({ data: { event, group }, type: 'event' });
+    showForm({ data, type: 'event' });
   }));
 }
 
@@ -377,7 +343,7 @@ function onShowDialog(type: 'decode' | 'protocol-refresh'): void {
 }
 
 async function redecodePageTransactions(): Promise<void> {
-  const evmEvents = get(groups).data.filter(isEvmEvent);
+  const evmEvents = flatten(get(groups).data).filter(isEvmEvent);
   const transactions = evmEvents.map(item => toEvmChainAndTxHash(item));
 
   await pullAndRedecodeTransactions({ transactions });
@@ -406,6 +372,15 @@ function addTxHash() {
   });
 }
 
+function repullingTransactions() {
+  set(repullingTransactionModelValue, {
+    address: '',
+    evmChain: '',
+    fromTimestamp: 0,
+    toTimestamp: 0,
+  });
+}
+
 watchImmediate(route, async (route) => {
   if (route.query.openDecodingStatusDialog) {
     set(decodingStatusDialogOpen, true);
@@ -416,14 +391,6 @@ watchImmediate(route, async (route) => {
 watch(eventTaskLoading, async (isLoading, wasLoading) => {
   if (!isLoading && wasLoading)
     await fetchDataAndLocations();
-});
-
-watch(shouldFetchEventsRegularly, (shouldFetchEventsRegularly) => {
-  const active = get(isActive);
-  if (shouldFetchEventsRegularly && !active)
-    resume();
-  else if (!shouldFetchEventsRegularly && active)
-    pause();
 });
 
 watch([filters, usedAccounts], ([filters, usedAccounts], [oldFilters, oldAccounts]) => {
@@ -447,10 +414,6 @@ watch([filters, usedAccounts], ([filters, usedAccounts], [oldFilters, oldAccount
 onMounted(async () => {
   await refresh();
 });
-
-onUnmounted(() => {
-  pause();
-});
 </script>
 
 <template>
@@ -468,154 +431,159 @@ onUnmounted(() => {
         @refresh="refresh(true)"
         @show:form="showForm($event)"
         @show:add-transaction-form="addTxHash()"
+        @show:repulling-transactions-form="repullingTransactions()"
       />
     </template>
 
-    <RuiCard>
-      <template
-        v-if="!mainPage"
-        #header
-      >
-        <CardTitle>
-          <RefreshButton
-            :disabled="refreshing"
-            :tooltip="t('transactions.refresh_tooltip')"
-            @refresh="refresh(true)"
-          />
-          {{ usedTitle }}
-        </CardTitle>
-      </template>
-
-      <HistoryEventsTableActions
-        v-model:filters="filters"
-        v-model:toggles="toggles"
-        :accounts="accounts"
-        :processing="processing"
-        :matchers="matchers"
-        :export-params="pageParams"
-        :hide-account-selector="useExternalAccountFilter"
-        @update:accounts="onFilterAccountsChanged($event)"
-        @redecode="redecodeAllEvents()"
-        @redecode-page="redecodePageTransactions()"
-      />
-
-      <div
-        v-if="route.query.identifiers"
-        class="mb-4"
-      >
-        <RuiChip
-          closeable
-          color="primary"
-          size="sm"
-          variant="outlined"
-          @click:close="removeIdentifierParam()"
+    <div>
+      <RuiCard>
+        <template
+          v-if="!mainPage"
+          #header
         >
-          {{ t('transactions.events.show_missing_acquisition') }}
-        </RuiChip>
-      </div>
-
-      <div
-        v-if="route.query.eventIdentifiers"
-        class="mb-4"
-      >
-        <RuiChip
-          closeable
-          color="primary"
-          size="sm"
-          variant="outlined"
-          @click:close="removeEventIdentifierParam()"
-        >
-          {{ t('transactions.events.show_negative_balance') }}
-        </RuiChip>
-      </div>
-      <HistoryEventsTable
-        v-model:sort="sort"
-        v-model:pagination="pagination"
-        :group-loading="groupLoading"
-        :groups="groups"
-        :exclude-ignored="!toggles.showIgnoredAssets"
-        :identifiers="identifiers"
-        :highlighted-identifiers="highlightedIdentifiers"
-        @show:form="showForm($event)"
-        @refresh="fetchAndRedecodeEvents($event)"
-        @set-page="setPage($event)"
-      >
-        <template #query-status="{ colspan }">
-          <HistoryQueryStatus
-            v-model:current-action="currentAction"
-            :only-chains="onlyChains"
-            :locations="locations"
-            :decoding-status="decodingStatus"
-            :decoding="eventTaskLoading"
-            :colspan="colspan"
-            :loading="processing"
-            @show:dialog="onShowDialog($event)"
-          />
+          <CardTitle>
+            <RefreshButton
+              :disabled="refreshing"
+              :tooltip="t('transactions.refresh_tooltip')"
+              @refresh="refresh(true)"
+            />
+            {{ usedTitle }}
+          </CardTitle>
         </template>
-      </HistoryEventsTable>
 
-      <HistoryEventFormDialog
-        v-model:open="openDialog"
-        :editable-item="editableItem"
-        :group-header="selectedGroupHeader"
-        :next-sequence="nextSequence"
-        :group-events="selectedGroupEvents"
-        @refresh="fetchAndRedecodeEvents()"
-      />
+        <HistoryEventsTableActions
+          v-model:filters="filters"
+          v-model:toggles="toggles"
+          :accounts="accounts"
+          :processing="processing"
+          :matchers="matchers"
+          :export-params="pageParams"
+          :hide-account-selector="useExternalAccountFilter"
+          @update:accounts="onFilterAccountsChanged($event)"
+          @redecode="redecodeAllEvents()"
+          @redecode-page="redecodePageTransactions()"
+        />
 
-      <TransactionFormDialog
-        v-model="addTransactionModelValue"
-        :loading="sectionLoading"
-        @reload="fetchAndRedecodeEvents({ transactions: [$event] })"
-      />
-
-      <MissingRulesDialog
-        v-model="eventWithMissingRules"
-        @edit-event="editMissingRulesEntry($event)"
-        @redecode="forceRedecodeEvmEvents({ transactions: [$event] })"
-        @add="onAddMissingRule($event)"
-        @dismiss="eventWithMissingRules = undefined"
-      />
-    </RuiCard>
-
-    <RuiDialog
-      v-model="decodingStatusDialogOpen"
-      max-width="600"
-      :persistent="decodingStatusDialogPersistent"
-    >
-      <HistoryEventsDecodingStatus
-        v-if="decodingStatusDialogOpen"
-        :refreshing="refreshing"
-        :decoding-status="decodingStatus"
-        @redecode-all-events="redecodeAllEvents()"
-        @reset-undecoded-transactions="resetUndecodedTransactionsStatus()"
-      >
-        <RuiButton
-          variant="text"
-          icon
-          @click="decodingStatusDialogOpen = false"
+        <div
+          v-if="route.query.identifiers"
+          class="mb-4"
         >
-          <RuiIcon name="lu-x" />
-        </RuiButton>
-      </HistoryEventsDecodingStatus>
-    </RuiDialog>
+          <RuiChip
+            closeable
+            color="primary"
+            size="sm"
+            variant="outlined"
+            @click:close="removeIdentifierParam()"
+          >
+            {{ t('transactions.events.show_missing_acquisition') }}
+          </RuiChip>
+        </div>
 
-    <RuiDialog
-      v-model="protocolCacheStatusDialogOpen"
-      max-width="600"
-    >
-      <HistoryEventsProtocolCacheUpdateStatus
-        v-if="protocolCacheStatusDialogOpen"
-        :refreshing="refreshing"
-      >
-        <RuiButton
-          variant="text"
-          icon
-          @click="protocolCacheStatusDialogOpen = false"
+        <div
+          v-if="route.query.eventIdentifiers"
+          class="mb-4"
         >
-          <RuiIcon name="lu-x" />
-        </RuiButton>
-      </HistoryEventsProtocolCacheUpdateStatus>
-    </RuiDialog>
+          <RuiChip
+            closeable
+            color="primary"
+            size="sm"
+            variant="outlined"
+            @click:close="removeEventIdentifierParam()"
+          >
+            {{ t('transactions.events.show_negative_balance') }}
+          </RuiChip>
+        </div>
+        <HistoryEventsTable
+          v-model:sort="sort"
+          v-model:pagination="pagination"
+          :group-loading="groupLoading"
+          :groups="groups"
+          :exclude-ignored="!toggles.showIgnoredAssets"
+          :identifiers="identifiers"
+          :highlighted-identifiers="highlightedIdentifiers"
+          @show:form="showForm($event)"
+          @refresh="fetchAndRedecodeEvents($event)"
+          @set-page="setPage($event)"
+        >
+          <template #query-status="{ colspan }">
+            <HistoryQueryStatus
+              v-model:current-action="currentAction"
+              :only-chains="onlyChains"
+              :locations="locations"
+              :decoding-status="decodingStatus"
+              :decoding="eventTaskLoading"
+              :colspan="colspan"
+              :loading="processing"
+              @show:dialog="onShowDialog($event)"
+            />
+          </template>
+        </HistoryEventsTable>
+
+        <HistoryEventFormDialog
+          v-model="formData"
+          @refresh="fetchAndRedecodeEvents()"
+        />
+
+        <TransactionFormDialog
+          v-model="addTransactionModelValue"
+          :loading="sectionLoading"
+          @reload="fetchAndRedecodeEvents({ transactions: [$event] })"
+        />
+
+        <RepullingTransactionFormDialog
+          v-model="repullingTransactionModelValue"
+          :loading="sectionLoading"
+          @refresh="fetchAndRedecodeEvents()"
+        />
+
+        <MissingRulesDialog
+          v-model="missingRuleData"
+          @edit-event="editMissingRulesEntry($event)"
+          @redecode="forceRedecodeEvmEvents({ transactions: [$event] })"
+          @add="onAddMissingRule($event)"
+          @dismiss="missingRuleData = undefined"
+        />
+      </RuiCard>
+
+      <RuiDialog
+        v-model="decodingStatusDialogOpen"
+        max-width="600"
+        :persistent="decodingStatusDialogPersistent"
+      >
+        <HistoryEventsDecodingStatus
+          v-if="decodingStatusDialogOpen"
+          :refreshing="refreshing"
+          :decoding-status="decodingStatus"
+          @redecode-all-events="redecodeAllEvents()"
+          @reset-undecoded-transactions="resetUndecodedTransactionsStatus()"
+        >
+          <RuiButton
+            variant="text"
+            icon
+            @click="decodingStatusDialogOpen = false"
+          >
+            <RuiIcon name="lu-x" />
+          </RuiButton>
+        </HistoryEventsDecodingStatus>
+      </RuiDialog>
+
+      <RuiDialog
+        v-model="protocolCacheStatusDialogOpen"
+        max-width="600"
+      >
+        <HistoryEventsProtocolCacheUpdateStatus
+          v-if="protocolCacheStatusDialogOpen"
+          :refreshing="refreshing"
+        >
+          <RuiButton
+            variant="text"
+            icon
+            @click="protocolCacheStatusDialogOpen = false"
+          >
+            <RuiIcon name="lu-x" />
+          </RuiButton>
+        </HistoryEventsProtocolCacheUpdateStatus>
+      </RuiDialog>
+    </div>
   </TablePageLayout>
 </template>

@@ -4,7 +4,7 @@ import { usePriceApi } from '@/composables/api/balances/price';
 import { useStatisticsApi } from '@/composables/api/statistics/statistics-api';
 import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
 import { useAggregatedBalances } from '@/composables/balances/aggregated';
-import { useBalancesBreakdown } from '@/composables/balances/breakdown';
+import { useLocationBalancesBreakdown } from '@/modules/balances/use-location-balances-breakdown';
 import { useIgnoredAssetsStore } from '@/store/assets/ignored';
 import { useBalancePricesStore } from '@/store/balances/prices';
 import { useHistoricCachePriceStore } from '@/store/prices/historic';
@@ -47,10 +47,10 @@ export function assetsApi(): AssetsApi {
 }
 
 export function statisticsApi(): StatisticsApi {
-  const { isAssetIgnored } = useIgnoredAssetsStore();
+  const { useIsAssetIgnored } = useIgnoredAssetsStore();
 
   const { fetchHistoricalAssetPrice, fetchNetValue, getNetValue } = useStatisticsStore();
-  const { historicalDailyPriceStatus, historicalPriceStatus } = storeToRefs(useHistoricCachePriceStore());
+  const { failedDailyPrices, historicalDailyPriceStatus } = storeToRefs(useHistoricCachePriceStore());
   const {
     queryLatestAssetValueDistribution,
     queryLatestLocationValueDistribution,
@@ -71,9 +71,9 @@ export function statisticsApi(): StatisticsApi {
     async cancelHistoricPriceTask(): Promise<void> {
       await cancelTaskByTaskType(TaskType.FETCH_HISTORIC_PRICE);
     },
+    failedDailyPrices,
     fetchNetValue,
     historicalDailyPriceStatus,
-    historicalPriceStatus,
     isQueryingDailyPrices: useIsTaskRunning(TaskType.FETCH_DAILY_HISTORIC_PRICE),
     async locationValueDistribution(): Promise<LocationData> {
       return queryLatestLocationValueDistribution();
@@ -81,7 +81,7 @@ export function statisticsApi(): StatisticsApi {
     netValue: startingDate => getNetValue(startingDate),
     async ownedAssets(): Promise<OwnedAssets> {
       const owned = await queryOwnedAssets();
-      return owned.filter(asset => !get(isAssetIgnored(asset)));
+      return owned.filter(asset => !get(useIsAssetIgnored(asset)));
     },
     queryHistoricalAssetPrices: fetchHistoricalAssetPrice,
     async timedBalances(asset: string, start: number, end: number, collectionId?: number): Promise<TimedBalances> {
@@ -134,7 +134,7 @@ export function userSettings(): UserSettingsApi {
 
 export function balancesApi(): BalancesApi {
   const { assetPrice, exchangeRate } = useBalancePricesStore();
-  const { balancesByLocation } = useBalancesBreakdown();
+  const { balancesByLocation } = useLocationBalancesBreakdown();
   const { balances } = useAggregatedBalances();
   const { createKey, isPending } = useHistoricCachePriceStore();
   const { queryOnlyCacheHistoricalRates } = usePriceApi();

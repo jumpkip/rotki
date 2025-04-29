@@ -11,12 +11,12 @@ import MenuTooltipButton from '@/components/helper/MenuTooltipButton.vue';
 import LocationIcon from '@/components/history/LocationIcon.vue';
 import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
 import { useAggregatedBalances } from '@/composables/balances/aggregated';
-import { useBalancesBreakdown } from '@/composables/balances/breakdown';
 import { useInterop } from '@/composables/electron-interop';
 import { useLocations } from '@/composables/locations';
+import { useLocationBalancesBreakdown } from '@/modules/balances/use-location-balances-breakdown';
 import { useAppRoutes } from '@/router/routes';
-import { useExchangesStore } from '@/store/exchanges';
 import { useGeneralSettingsStore } from '@/store/settings/general';
+import { useSessionSettingsStore } from '@/store/settings/session';
 import { startPromise } from '@shared/utils';
 
 interface SearchItem {
@@ -54,9 +54,9 @@ const key = '/';
 const router = useRouter();
 
 const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
-const { connectedExchanges } = storeToRefs(useExchangesStore());
+const { connectedExchanges } = storeToRefs(useSessionSettingsStore());
 const { balances } = useAggregatedBalances();
-const { balancesByLocation } = useBalancesBreakdown();
+const { balancesByLocation } = useLocationBalancesBreakdown();
 const { getLocationData } = useLocations();
 const { assetSearch } = useAssetInfoRetrieval();
 
@@ -118,15 +118,12 @@ function getRoutes(keyword: string): SearchItemWithoutValue[] {
       ...Routes.BALANCES_NON_FUNGIBLE,
       texts: [Routes.BALANCES.text, Routes.BALANCES_NON_FUNGIBLE.text],
     },
+    {
+      ...Routes.ONCHAIN_SEND,
+      texts: [Routes.ONCHAIN.text, Routes.ONCHAIN_SEND.text],
+    },
     { ...Routes.NFTS },
-    {
-      ...Routes.HISTORY_TRADES,
-      texts: [Routes.HISTORY.text, Routes.HISTORY_TRADES.text],
-    },
-    {
-      ...Routes.HISTORY_EVENTS,
-      texts: [Routes.HISTORY.text, Routes.HISTORY_EVENTS.text],
-    },
+    { ...Routes.HISTORY },
     { ...Routes.AIRDROPS },
     { ...Routes.STATISTICS },
     { ...Routes.STAKING },
@@ -239,10 +236,6 @@ function getActions(keyword: string): SearchItemWithoutValue[] {
     {
       route: `${Routes.BALANCES_MANUAL.route}?add=true`,
       text: t('manual_balances.dialog.add.title'),
-    },
-    {
-      route: `${Routes.HISTORY_TRADES.route}?add=true`,
-      text: t('closed_trades.dialog.add.title'),
     },
     {
       route: `${Routes.ASSET_MANAGER.route}?add=true`,

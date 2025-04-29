@@ -10,9 +10,10 @@ import LocationDisplay from '@/components/history/LocationDisplay.vue';
 import TagFilter from '@/components/inputs/TagFilter.vue';
 import TagDisplay from '@/components/tags/TagDisplay.vue';
 import { useAggregatedBalances } from '@/composables/balances/aggregated';
-import { useBalancesBreakdown } from '@/composables/balances/breakdown';
 import { useSupportedChains } from '@/composables/info/chains';
-import { useBlockchainStore } from '@/store/blockchain';
+import { useBlockchainAccountsStore } from '@/modules/accounts/use-blockchain-accounts-store';
+import { useAssetBalancesBreakdown } from '@/modules/balances/use-asset-balances-breakdown';
+import { TableId, useRememberTableSorting } from '@/modules/table/use-remember-table-sorting';
 import { useAddressesNamesStore } from '@/store/blockchain/accounts/addresses-names';
 import { useGeneralSettingsStore } from '@/store/settings/general';
 import { useStatusStore } from '@/store/status';
@@ -49,17 +50,17 @@ const locationFilter = ref<string>('');
 const selectedAccounts = ref<BlockchainAccount<AddressData>[]>([]);
 
 const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
-const { getAccountByAddress } = useBlockchainStore();
+const { getAccountByAddress } = useBlockchainAccountsStore();
 const { detailsLoading } = storeToRefs(useStatusStore());
 const { assetPriceInfo } = useAggregatedBalances();
-const { assetBreakdown } = useBalancesBreakdown();
+const { useAssetBreakdown } = useAssetBalancesBreakdown();
 const { addressNameSelector } = useAddressesNamesStore();
 const { getChainName, matchChain } = useSupportedChains();
 
 const totalUsdValue = computed<BigNumber>(() => get(assetPriceInfo(identifier)).usdValue);
 
 const assetLocations = computed<AssetLocations>(() => {
-  const breakdowns = get(assetBreakdown(get(identifier)));
+  const breakdowns = get(useAssetBreakdown(get(identifier)));
   return breakdowns.map((item: AssetBreakdown) => {
     const account = item.address ? getAccountByAddress(item.address, item.location) : undefined;
     return {
@@ -164,6 +165,8 @@ const headers = computed<DataTableColumn<AssetLocation>[]>(() => {
     sortable: false,
   }];
 });
+
+useRememberTableSorting<AssetLocation>(TableId.ASSET_LOCATION, sort, headers);
 
 watch(locationFilter, (location) => {
   if (location && !matchChain(location)) {

@@ -21,7 +21,7 @@ from rotkehlchen.data_import.utils import maybe_set_transaction_extra_data
 from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.errors.serialization import DeserializationError
-from rotkehlchen.exchanges.data_structures import Location, MarginPosition, Trade
+from rotkehlchen.exchanges.data_structures import Location, MarginPosition
 from rotkehlchen.exchanges.exchange import ExchangeInterface, ExchangeQueryBalances
 from rotkehlchen.exchanges.utils import deserialize_asset_movement_address, get_key_if_has_val
 from rotkehlchen.fval import FVal
@@ -30,16 +30,12 @@ from rotkehlchen.history.events.structures.asset_movement import create_asset_mo
 from rotkehlchen.history.events.structures.types import HistoryEventType
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.serialization.deserialize import (
-    deserialize_fee,
-    deserialize_fval,
-)
+from rotkehlchen.serialization.deserialize import deserialize_fval, deserialize_fval_or_zero
 from rotkehlchen.types import (
     ApiKey,
     ApiSecret,
     AssetAmount,
     ExchangeAuthCredentials,
-    Fee,
     Timestamp,
 )
 from rotkehlchen.user_messages import MessagesAggregator
@@ -87,16 +83,16 @@ def margin_trade_from_bitmex(bitmex_trade: dict, decimals: dict[str, int]) -> Ma
     """
     close_time = iso8601ts_to_timestamp(bitmex_trade['transactTime'])
     currency = bitmex_to_world(bitmex_trade['currency'])
-    profit_loss = AssetAmount(normalized_fval_value_decimals(
+    profit_loss = normalized_fval_value_decimals(
         amount=deserialize_fval(
             value=bitmex_trade['amount'],
             location='bitmex margin trade',
             name='profit loss',
         ),
         decimals=decimals[bitmex_trade['currency']],
-    ))
+    )
 
-    fee = deserialize_fee(bitmex_trade['fee'])
+    fee = deserialize_fval_or_zero(bitmex_trade['fee'])
     notes = bitmex_trade['address']
 
     log.debug(
@@ -351,7 +347,7 @@ class Bitmex(ExchangeInterface):
             self,
             start_ts: Timestamp,
             end_ts: Timestamp,
-    ) -> Sequence['HistoryBaseEntry']:
+    ) -> tuple[Sequence['HistoryBaseEntry'], Timestamp]:
         self.first_connection()
         resp = self._api_query('user/walletHistory', {'currency': 'all'})
 
@@ -382,14 +378,6 @@ class Bitmex(ExchangeInterface):
                     log.error(f'Found non valid amount in asset movement {movement} at bitmex. Skipping')  # noqa: E501
                     continue
 
-                if (fee_str := movement.get('fee', 0)) is None:
-                    fee = Fee(ZERO)
-                else:  # deposit has no fees
-                    fee = Fee(normalized_fval_value_decimals(
-                        amount=deserialize_fval(fee_str, location='btimex asset movements', name='fee'),  # noqa: E501
-                        decimals=decimals,
-                    ))
-
                 if (raw_amount := deserialize_fval(
                     value=amount_str,
                     location='btimex asset movements',
@@ -397,20 +385,20 @@ class Bitmex(ExchangeInterface):
                 )) < ZERO:
                     raw_amount = -raw_amount
 
-                amount = AssetAmount(normalized_fval_value_decimals(
-                    amount=raw_amount,
-                    decimals=decimals,
-                ))
-
                 movements.extend(create_asset_movement_with_fee(
                     location=self.location,
                     location_label=self.name,
                     event_type=event_type,
                     timestamp=ts_sec_to_ms(timestamp),
                     asset=asset,
-                    amount=amount,
-                    fee_asset=asset,
-                    fee=fee,
+                    amount=normalized_fval_value_decimals(amount=raw_amount, decimals=decimals),
+                    fee=None if (fee_str := movement.get('fee')) is None else AssetAmount(
+                        asset=asset,
+                        amount=normalized_fval_value_decimals(
+                            amount=deserialize_fval(fee_str, location='bitmex asset movements', name='fee'),  # noqa: E501
+                            decimals=decimals,
+                        ),
+                    ),
                     unique_id=str(movement['transactID']),
                     extra_data=maybe_set_transaction_extra_data(
                         address=deserialize_asset_movement_address(movement, 'address', asset),
@@ -436,11 +424,4 @@ class Bitmex(ExchangeInterface):
                     f'asset_movement {movement}. Error was: {msg}',
                 )
                 continue
-        return movements
-
-    def query_online_trade_history(
-            self,
-            start_ts: Timestamp,
-            end_ts: Timestamp,
-    ) -> tuple[list[Trade], tuple[Timestamp, Timestamp]]:
-        return [], (start_ts, end_ts)  # noop for bitmex
+        return movements, end_ts

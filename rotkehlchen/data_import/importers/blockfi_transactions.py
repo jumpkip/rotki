@@ -20,10 +20,10 @@ from rotkehlchen.history.events.structures.base import HistoryEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import (
-    deserialize_asset_amount,
+    deserialize_fval,
     deserialize_timestamp_from_date,
 )
-from rotkehlchen.types import AssetAmount, Location
+from rotkehlchen.types import Location
 from rotkehlchen.utils.misc import ts_sec_to_ms
 
 if TYPE_CHECKING:
@@ -65,8 +65,8 @@ class BlockfiTransactionsImporter(BaseExchangeImporter):
             raise SkippedCSVEntry('Entry is unconfirmed.')
 
         asset = asset_from_blockfi(csv_row['Cryptocurrency'])
-        raw_amount = deserialize_asset_amount(csv_row['Amount'])
-        abs_amount = AssetAmount(abs(raw_amount))
+        raw_amount = deserialize_fval(csv_row['Amount'])
+        abs_amount = abs(raw_amount)
         entry_type = csv_row['Transaction Type']
 
         if entry_type in {'Deposit', 'Wire Deposit', 'ACH Deposit'}:

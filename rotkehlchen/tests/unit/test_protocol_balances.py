@@ -31,11 +31,14 @@ from rotkehlchen.chain.ethereum.modules.blur.balances import BlurBalances
 from rotkehlchen.chain.ethereum.modules.blur.constants import BLUR_IDENTIFIER
 from rotkehlchen.chain.ethereum.modules.convex.balances import CPT_CONVEX, ConvexBalances
 from rotkehlchen.chain.ethereum.modules.curve.balances import CurveBalances
+from rotkehlchen.chain.ethereum.modules.curve.crvusd.balances import CurveCrvusdBalances
 from rotkehlchen.chain.ethereum.modules.eigenlayer.balances import EigenlayerBalances
 from rotkehlchen.chain.ethereum.modules.gearbox.balances import GearboxBalances
 from rotkehlchen.chain.ethereum.modules.gearbox.constants import GEAR_IDENTIFIER
 from rotkehlchen.chain.ethereum.modules.hedgey.balances import HedgeyBalances
 from rotkehlchen.chain.ethereum.modules.octant.balances import OctantBalances
+from rotkehlchen.chain.ethereum.modules.pendle.balances import PendleBalances
+from rotkehlchen.chain.ethereum.modules.pendle.constants import PENDLE_TOKEN
 from rotkehlchen.chain.ethereum.modules.safe.balances import SafeBalances
 from rotkehlchen.chain.ethereum.modules.safe.constants import SAFE_TOKEN_ID
 from rotkehlchen.chain.ethereum.modules.thegraph.balances import ThegraphBalances
@@ -43,7 +46,7 @@ from rotkehlchen.chain.ethereum.utils import should_update_protocol_cache
 from rotkehlchen.chain.evm.decoding.aave.constants import CPT_AAVE_V3
 from rotkehlchen.chain.evm.decoding.compound.v3.balances import Compoundv3Balances
 from rotkehlchen.chain.evm.decoding.curve.constants import CPT_CURVE
-from rotkehlchen.chain.evm.decoding.curve_lend.balances import CurveLendBalances
+from rotkehlchen.chain.evm.decoding.curve.lend.balances import CurveLendBalances
 from rotkehlchen.chain.evm.decoding.extrafi.cache import (
     get_existing_reward_pools,
     query_extrafi_data,
@@ -73,6 +76,7 @@ from rotkehlchen.constants.assets import (
     A_GRT_ARB,
     A_STETH,
     A_USDC,
+    A_WBTC,
     A_WETH_ARB,
 )
 from rotkehlchen.constants.misc import ONE
@@ -82,6 +86,9 @@ from rotkehlchen.globaldb.cache import (
     globaldb_get_unique_cache_last_queried_ts_by_key,
 )
 from rotkehlchen.globaldb.handler import GlobalDBHandler
+from rotkehlchen.tests.unit.decoders.test_curve_crvusd import (
+    fixture_crvusd_controller,  # noqa: F401
+)
 from rotkehlchen.tests.unit.decoders.test_curve_lend import (
     fixture_arbitrum_vault_token,  # noqa: F401
     fixture_arbitrum_vault_underlying_token,  # noqa: F401
@@ -698,7 +705,17 @@ def test_compound_v3_token_balances_liabilities(
             target='rotkehlchen.chain.evm.decoding.morpho.decoder.should_update_protocol_cache',
         ),
         patch(
-            target='rotkehlchen.chain.evm.decoding.curve_lend.decoder.should_update_protocol_cache',
+            target='rotkehlchen.chain.evm.decoding.stakedao.decoder.should_update_protocol_cache',
+        ),
+        patch(
+            target='rotkehlchen.chain.evm.decoding.curve.lend.decoder.should_update_protocol_cache',
+        ),
+        patch(
+            target='rotkehlchen.chain.ethereum.modules.curve.crvusd.decoder.should_update_protocol_cache',
+        ),
+        patch(
+            target='rotkehlchen.chain.evm.decoding.pendle.decoder.should_update_protocol_cache',
+            return_value=False,
         ),
     ):
         blockchain.ethereum.transactions_decoder.decode_transaction_hashes(
@@ -1142,6 +1159,38 @@ def test_curve_lend_balances(
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
+@pytest.mark.parametrize('ethereum_accounts', [['0x494FBCf6AB69609732B4c97462FAc7f7cb717015']])
+@pytest.mark.parametrize('crvusd_controller', ['0x4e59541306910aD6dC1daC0AC9dFB29bD9F15c67'], indirect=True)  # noqa: E501
+def test_curve_crvusd_balances(
+        ethereum_inquirer: 'EthereumInquirer',
+        ethereum_accounts: list[ChecksumEvmAddress],
+        inquirer: 'Inquirer',  # pylint: disable=unused-argument
+        crvusd_controller: 'ChecksumEvmAddress',
+) -> None:
+    """Check that Curve lending collateral and debt balances are properly detected."""
+    _, tx_decoder = get_decoded_events_of_transaction(
+        evm_inquirer=ethereum_inquirer,
+        tx_hash=deserialize_evm_tx_hash('0x7acdf5d10091405762dc3f2658e6da0fdd9cb42a74c55b944c2e88b089eb15cc'),
+    )
+    protocol_balances_inquirer = CurveCrvusdBalances(
+        evm_inquirer=ethereum_inquirer,
+        tx_decoder=tx_decoder,
+    )
+    protocol_balances = protocol_balances_inquirer.query_balances()
+    user_balance = protocol_balances[ethereum_accounts[0]]
+
+    assert user_balance.assets[A_WBTC] == Balance(
+        amount=FVal('0.04999999'),
+        usd_value=FVal('4251.14914977'),
+    )
+    assert user_balance.liabilities[Asset('eip155:1/erc20:0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E')] == Balance(  # noqa: E501
+        amount=FVal('3591.07534296748961703'),
+        usd_value=FVal('3591.04302328940290962344673'),
+    )
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
 @pytest.mark.parametrize('gnosis_accounts', [['0x839395e20bbB182fa440d08F850E6c7A8f6F0780']])
 def test_gnosis_giveth_staked_balances(
         gnosis_inquirer: 'GnosisInquirer',
@@ -1424,3 +1473,27 @@ def test_hyperliquid(
         Asset('HYPE'): Balance(amount=FVal(14.79852012), usd_value=FVal(232.9287066888)),
         arb_usdc: Balance(amount=FVal(27.20794226), usd_value=FVal(27.20437801956394)),
     }
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
+@pytest.mark.parametrize('ethereum_accounts', [['0xFd83CCCecef02a334e6A86e7eA8D0aa0F61f1Faf']])
+def test_pendle_locked_balances(
+        ethereum_inquirer: 'EthereumInquirer',
+        ethereum_accounts: list[ChecksumEvmAddress],
+        inquirer_defi: 'Inquirer',  # pylint: disable=unused-argument
+) -> None:
+    _, tx_decoder = get_decoded_events_of_transaction(
+        evm_inquirer=ethereum_inquirer,
+        tx_hash=deserialize_evm_tx_hash('0xc8b252de1a62daa57d4fe294f371e67550e087fdeffe972261e1acc890d84bd5'),
+    )
+    protocol_balances_inquirer = PendleBalances(
+        evm_inquirer=ethereum_inquirer,
+        tx_decoder=tx_decoder,
+    )
+    protocol_balances = protocol_balances_inquirer.query_balances()
+    user_balance = protocol_balances[ethereum_accounts[0]]
+    assert user_balance.assets[PENDLE_TOKEN] == Balance(
+        amount=FVal('135.60210839446895642'),
+        usd_value=FVal('329.5131233985595641006'),
+    )

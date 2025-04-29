@@ -7,15 +7,20 @@ from rotkehlchen.data_import.utils import BaseExchangeImporter
 from rotkehlchen.db.drivers.gevent import DBCursor
 from rotkehlchen.errors.misc import InputError
 from rotkehlchen.errors.serialization import DeserializationError
-from rotkehlchen.exchanges.data_structures import Trade
 from rotkehlchen.exchanges.utils import get_key_if_has_val
 from rotkehlchen.history.deserialization import deserialize_price
+from rotkehlchen.history.events.structures.swap import (
+    create_swap_events,
+    deserialize_trade_type_is_buy,
+    get_swap_spend_receive,
+)
 from rotkehlchen.serialization.deserialize import (
-    deserialize_asset_amount,
-    deserialize_fee,
+    deserialize_fval,
+    deserialize_fval_or_zero,
     deserialize_timestamp_from_date,
 )
-from rotkehlchen.types import Location, TradeType
+from rotkehlchen.types import AssetAmount, Location
+from rotkehlchen.utils.misc import ts_sec_to_ms
 
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
@@ -69,22 +74,28 @@ class KucoinImporter(BaseExchangeImporter):
                     self.total_entries += 1
                     base, quote = row[tokens_key].split(splitter)
                     fee_currency = get_key_if_has_val(row, fee_currency_key)
-                    self.add_trade(
+                    spend, receive = get_swap_spend_receive(
+                        is_buy=deserialize_trade_type_is_buy(row[trade_type_key]),
+                        base_asset=asset_from_kucoin(base),
+                        quote_asset=asset_from_kucoin(quote),
+                        amount=deserialize_fval(row[amount_key]),
+                        rate=deserialize_price(row[rate_key]),
+                    )
+                    self.add_history_events(
                         write_cursor=write_cursor,
-                        trade=Trade(
-                            timestamp=deserialize_timestamp_from_date(
+                        history_events=create_swap_events(
+                            timestamp=ts_sec_to_ms(deserialize_timestamp_from_date(
                                 date=row[date_key],
                                 formatstr=kwargs.get('timestamp_format', '%Y-%m-%d %H:%M:%S'),
                                 location='Kucoin order history import',
-                            ),
+                            )),
                             location=Location.KUCOIN,
-                            base_asset=asset_from_kucoin(base),
-                            quote_asset=asset_from_kucoin(quote),
-                            trade_type=TradeType.BUY if row[trade_type_key].lower() == 'buy' else TradeType.SELL,  # noqa: E501
-                            amount=deserialize_asset_amount(row[amount_key]),
-                            rate=deserialize_price(row[rate_key]),
-                            fee=deserialize_fee(get_key_if_has_val(row, fee_key)),
-                            fee_currency=asset_from_kucoin(fee_currency) if fee_currency else None,
+                            spend=spend,
+                            receive=receive,
+                            fee=AssetAmount(
+                                asset=asset_from_kucoin(fee_currency),
+                                amount=deserialize_fval_or_zero(get_key_if_has_val(row, fee_key)),
+                            ) if fee_currency is not None else None,
                         ),
                     )
                     self.imported_entries += 1

@@ -14,16 +14,16 @@ from rotkehlchen.db.drivers.gevent import DBCursor
 from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.errors.misc import InputError
 from rotkehlchen.errors.serialization import DeserializationError
-from rotkehlchen.exchanges.data_structures import Trade
 from rotkehlchen.history.events.structures.asset_movement import AssetMovement
 from rotkehlchen.history.events.structures.base import HistoryEvent
+from rotkehlchen.history.events.structures.swap import create_swap_events
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.serialization.deserialize import (
-    deserialize_asset_amount,
-    deserialize_fee,
+    deserialize_fval,
+    deserialize_fval_or_zero,
     deserialize_timestamp_from_date,
 )
-from rotkehlchen.types import Fee, Location, Price, TradeType
+from rotkehlchen.types import AssetAmount, Location
 from rotkehlchen.utils.misc import ts_sec_to_ms
 
 if TYPE_CHECKING:
@@ -81,31 +81,36 @@ class BlockpitImporter(BaseExchangeImporter):
             symbol_to_asset_or_token,
         )
 
-        fee_amount = Fee(ZERO)
+        fee_amount = ZERO
         if csv_row['Fee Asset'] != '':
-            fee_amount = deserialize_fee(csv_row['Fee Amount'])
+            fee_amount = deserialize_fval_or_zero(csv_row['Fee Amount'])
             fee_currency = asset_resolver(csv_row['Fee Asset'])
         notes = csv_row['Note']
 
         if transaction_type == 'Trade':
-            if (amount_in := deserialize_asset_amount(csv_row['Incoming Amount'])) == ZERO:
+            if (amount_in := deserialize_fval(csv_row['Incoming Amount'])) == ZERO:
                 raise DeserializationError('Incoming amount in trade is zero.')
 
-            rate = Price(deserialize_asset_amount(csv_row['Outgoing Amount']) / amount_in)
-            trade = Trade(
-                timestamp=timestamp,
-                location=location,
-                base_asset=asset_resolver(csv_row['Incoming Asset']),
-                quote_asset=asset_resolver(csv_row['Outgoing Asset']),
-                trade_type=TradeType.BUY,  # Always considered a buy here
-                amount=amount_in,
-                rate=rate,
-                fee=fee_amount,
-                fee_currency=fee_currency,
-                notes=notes,
+            self.add_history_events(
+                write_cursor=write_cursor,
+                history_events=create_swap_events(
+                    timestamp=ts_sec_to_ms(timestamp),
+                    location=location,
+                    spend=AssetAmount(
+                        asset=asset_resolver(csv_row['Outgoing Asset']),
+                        amount=deserialize_fval(csv_row['Outgoing Amount']),
+                    ),
+                    receive=AssetAmount(
+                        asset=asset_resolver(csv_row['Incoming Asset']),
+                        amount=amount_in,
+                    ),
+                    fee=AssetAmount(
+                        asset=fee_currency,
+                        amount=fee_amount,
+                    ),
+                    spend_notes=notes,
+                ),
             )
-            self.add_trade(write_cursor, trade)
-
         elif transaction_type in {'Deposit', 'Withdrawal', 'NonTaxableIn', 'NonTaxableOut'}:
             if transaction_type in {'Deposit', 'NonTaxableIn'}:
                 direction = 'Incoming'
@@ -119,7 +124,7 @@ class BlockpitImporter(BaseExchangeImporter):
                 event_type=movement_type,
                 timestamp=ts_sec_to_ms(timestamp),
                 asset=asset_resolver(csv_row[f'{direction} Asset']),
-                amount=deserialize_asset_amount(csv_row[f'{direction} Amount']),
+                amount=deserialize_fval(csv_row[f'{direction} Amount']),
             )]
             if fee_amount != ZERO:
                 events.append(AssetMovement(
@@ -147,13 +152,13 @@ class BlockpitImporter(BaseExchangeImporter):
 
             if transaction_type in {'Fee', 'Gift', 'Margin_trading_loss'}:
                 asset = asset_resolver(csv_row['Outgoing Asset'])
-                amount = deserialize_asset_amount(csv_row['Outgoing Amount'])
+                amount = deserialize_fval(csv_row['Outgoing Amount'])
                 event_type = HistoryEventType.SPEND
                 event_subtype = HistoryEventSubType.NONE
                 event_description = 'Spend'
             else:
                 asset = asset_resolver(csv_row['Incoming Asset'])
-                amount = deserialize_asset_amount(csv_row['Incoming Amount'])
+                amount = deserialize_fval(csv_row['Incoming Amount'])
                 event_type = HistoryEventType.RECEIVE
                 event_subtype = HistoryEventSubType.NONE
                 event_description = 'Receive'

@@ -18,8 +18,9 @@ import LatestPriceFormDialog from '@/components/price-manager/latest/LatestPrice
 import NftImageRenderingSettingMenu from '@/components/settings/general/nft/NftImageRenderingSettingMenu.vue';
 import { useAssetPricesApi } from '@/composables/api/assets/prices';
 import { usePaginationFilters } from '@/composables/use-pagination-filter';
+import { useNftBalances } from '@/modules/balances/nft/use-nft-balances';
+import { TableId, useRememberTableSorting } from '@/modules/table/use-remember-table-sorting';
 import { useIgnoredAssetsStore } from '@/store/assets/ignored';
-import { useNonFungibleBalancesStore } from '@/store/balances/non-fungible';
 import { useConfirmStore } from '@/store/confirm';
 import { useMessageStore } from '@/store/message';
 import { useNotificationsStore } from '@/store/notifications';
@@ -30,7 +31,7 @@ import { uniqueStrings } from '@/utils/data';
 
 defineProps<{ modules: Module[] }>();
 
-const { fetchNonFungibleBalances, refreshNonFungibleBalances } = useNonFungibleBalancesStore();
+const { fetchNonFungibleBalances, refreshNonFungibleBalances } = useNftBalances();
 const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
 
 const { t } = useI18n();
@@ -58,14 +59,12 @@ const tableHeaders = computed<DataTableColumn<NonFungibleBalance>[]>(() => [
     align: 'center',
     key: 'ignored',
     label: t('non_fungible_balances.ignore'),
-    sortable: false,
   },
   {
     align: 'end',
     class: 'text-no-wrap',
     key: 'priceInAsset',
     label: t('non_fungible_balances.column.price_in_asset'),
-    sortable: false,
     width: '75%',
   },
   {
@@ -79,13 +78,11 @@ const tableHeaders = computed<DataTableColumn<NonFungibleBalance>[]>(() => [
     class: 'text-no-wrap',
     key: 'manuallyInput',
     label: t('non_fungible_balances.column.custom_price'),
-    sortable: false,
   },
   {
     align: 'center',
     key: 'actions',
     label: t('common.actions_text'),
-    sortable: false,
     width: '50',
   },
 ]);
@@ -94,7 +91,7 @@ const { isLoading: isSectionLoading } = useStatusStore();
 const loading = isSectionLoading(Section.NON_FUNGIBLE_BALANCES);
 
 const { setMessage } = useMessageStore();
-const { ignoreAsset, ignoreAssetWithConfirmation, isAssetIgnored, unignoreAsset } = useIgnoredAssetsStore();
+const { ignoreAsset, ignoreAssetWithConfirmation, unignoreAsset, useIsAssetIgnored } = useIgnoredAssetsStore();
 
 const {
   fetchData,
@@ -118,9 +115,11 @@ const {
   },
 });
 
+useRememberTableSorting<NonFungibleBalance>(TableId.NON_FUNGIBLE_BALANCES, sort, tableHeaders);
+
 const { show } = useConfirmStore();
 
-const isIgnored = (identifier: string) => isAssetIgnored(identifier);
+const isIgnored = (identifier: string) => useIsAssetIgnored(identifier);
 
 function refreshCallback() {
   if (get(ignoredAssetsHandling) !== 'none') {
@@ -301,7 +300,7 @@ watch(loading, async (isLoading, wasLoading) => {
                 :price-asset="row.priceAsset"
                 :amount="row.priceInAsset"
                 :value="row.usdPrice"
-                no-scramble
+                is-asset-price
                 show-currency="symbol"
                 fiat-currency="USD"
               />

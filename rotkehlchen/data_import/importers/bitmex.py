@@ -16,17 +16,19 @@ from rotkehlchen.errors.misc import InputError
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.exchanges.data_structures import MarginPosition
 from rotkehlchen.exchanges.utils import deserialize_asset_movement_address, get_key_if_has_val
-from rotkehlchen.history.events.structures.asset_movement import AssetMovement
+from rotkehlchen.history.events.structures.asset_movement import (
+    AssetMovement,
+    create_asset_movement_with_fee,
+)
 from rotkehlchen.history.events.structures.types import HistoryEventType
 from rotkehlchen.history.price import PriceHistorian
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import (
-    deserialize_asset_amount,
-    deserialize_asset_amount_force_positive,
-    deserialize_fee,
+    deserialize_fval,
+    deserialize_fval_force_positive,
     deserialize_timestamp_from_date,
 )
-from rotkehlchen.types import AssetAmount, Fee, Location
+from rotkehlchen.types import AssetAmount, Location
 from rotkehlchen.utils.misc import satoshis_to_btc, ts_sec_to_ms
 
 if TYPE_CHECKING:
@@ -57,8 +59,8 @@ class BitMEXImporter(BaseExchangeImporter):
             formatstr=timestamp_format,
             location='Bitmex Wallet History Import',
         )
-        realised_pnl = AssetAmount(satoshis_to_btc(deserialize_asset_amount(csv_row['amount'])))
-        fee = deserialize_fee(csv_row['fee']) if csv_row['fee'] != 'null' else Fee(ZERO)
+        realised_pnl = satoshis_to_btc(deserialize_fval(csv_row['amount']))
+        fee = deserialize_fval(csv_row['fee']) if csv_row['fee'] != 'null' else ZERO
         notes = f"PnL from trade on {csv_row['address']}"
         log.debug(
             'Processing Bitmex Realised PnL',
@@ -94,21 +96,18 @@ class BitMEXImporter(BaseExchangeImporter):
         - DeserializationError
         """
         asset = A_BTC.resolve_to_asset_with_oracles()
-        amount = deserialize_asset_amount_force_positive(csv_row['amount'])
-        fee = deserialize_fee(csv_row['fee']) if csv_row['fee'] != 'null' else Fee(ZERO)
+        amount = deserialize_fval_force_positive(csv_row['amount'])
         transact_type = csv_row['transactType']
         event_type: Final = HistoryEventType.DEPOSIT if transact_type == 'Deposit' else HistoryEventType.WITHDRAWAL  # noqa: E501
-        amount = AssetAmount(satoshis_to_btc(amount))  # bitmex stores amounts in satoshis
-        fee = Fee(satoshis_to_btc(fee))
+        amount = satoshis_to_btc(amount)  # bitmex stores amounts in satoshis
         ts = deserialize_timestamp_from_date(
             date=csv_row['transactTime'],
             formatstr=timestamp_format,
             location='Bitmex Wallet History Import',
         )
-        events = [AssetMovement(
+        return create_asset_movement_with_fee(
             timestamp=ts_sec_to_ms(ts),
             location=Location.BITMEX,
-            event_type=event_type,
             asset=asset,
             amount=amount,
             unique_id=(transaction_id := get_key_if_has_val(csv_row, 'tx')),
@@ -116,18 +115,12 @@ class BitMEXImporter(BaseExchangeImporter):
                 address=deserialize_asset_movement_address(csv_row, 'address', asset),
                 transaction_id=transaction_id,
             ),
-        )]
-        if fee != ZERO:
-            events.append(AssetMovement(
-                timestamp=ts_sec_to_ms(ts),
-                location=Location.BITMEX,
-                event_type=event_type,
+            event_type=event_type,
+            fee=AssetAmount(
                 asset=asset,
-                amount=fee,
-                unique_id=transaction_id,
-                is_fee=True,
-            ))
-        return events
+                amount=satoshis_to_btc(deserialize_fval(csv_row['fee'])),
+            ) if csv_row['fee'] != 'null' else None,
+        )
 
     def _import_csv(self, write_cursor: DBCursor, filepath: Path, **kwargs: Any) -> None:
         """

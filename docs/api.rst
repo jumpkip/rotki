@@ -4261,6 +4261,192 @@ Delete asset location mappings for a location
     :statuscode 500: Internal rotki error.
 
 
+Get asset mappings for a counterparty
+======================================
+
+.. http:post:: /api/(version)/assets/counterpartymappings
+
+    Doing a POST on the counterparty asset mappings endpoint will return all the paginated counterparty assets mappings for the given filter.
+
+    **Example Request**
+
+    .. http:example:: curl wget httpie python-requests
+
+        POST /api/1/assets/counterpartymappings/ HTTP/1.1
+        Host: localhost:5042
+        Content-Type: application/json;charset=UTF-8
+
+        {
+          "offset": 20,
+          "limit": 2
+        }
+
+    :reqjson str counterparty[optional]: If given, filter the returned mappings only for the counterparty. Possible values can be any supported counterparty, or omitting it to get all the mappings.
+    :reqjson str counterparty_symbol[optional]: Filter the counterparty symbols using the provided string.
+    :reqjson int limit: This signifies the limit of records to return as per the `sql spec <https://www.sqlite.org/lang_select.html#limitoffset>`__.
+    :reqjson int offset: This signifies the offset from which to start the return of records per the `sql spec <https://www.sqlite.org/lang_select.html#limitoffset>`__.
+
+    **Example Response**
+
+    .. sourcecode:: http
+
+        HTTP/1.1 200 OK
+        Content-Type: application/json
+
+        {
+            "result": {
+              "entries": [
+                { "asset": "eip155:1/erc20:0x6810e776880C02933D47DB1b9fc05908e5386b96", "counterparty_symbol": "GNO", "counterparty": "hyperliquid"},
+                { "asset": "eip155:1/erc20:0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE", "counterparty_symbol": "SHIB", "counterparty": "hyperliquid"}
+              ],
+              "entries_found": 1500,
+              "entries_total": 1500
+            },
+            "message": ""
+        }
+
+    :resjson object entries: An array of mapping objects. Each entry is composed of the asset identifier under the ``"asset"`` key, its ticker symbol used in the counterparty under the ``"counterparty_symbol"`` key, and its counterparty under the ``"counterparty"`` key.
+    :resjson int entries_found: The number of entries found for the current filter. Ignores pagination.
+    :resjson int entries_total: The number of total entries ignoring all filters.
+    :resjson str message: Error message if any errors occurred.
+    :statuscode 200: Mappings were returned successfully.
+    :statuscode 400: Provided JSON is in some way malformed.
+    :statuscode 500: Internal rotki error.
+
+
+Insert asset mappings for a counterparty
+=============================================
+
+.. http:put:: /api/(version)/assets/counterpartymappings
+
+    Doing a PUT on the counterparty asset mappings endpoint with a list of entries, and each entry containing an asset's identifier, its counterparty and its counterparty symbol will save these mappings in the DB.
+
+    **Example Request**
+
+    .. http:example:: curl wget httpie python-requests
+
+        PUT /api/1/assets/counterpartymappings HTTP/1.1
+        Host: localhost:5042
+        Content-Type: application/json;charset=UTF-8
+
+        {
+          "entries": [
+            { "asset": "eip155:1/erc20:0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984", "counterparty_symbol": "UNI", "counterparty": "hyperliquid"},
+            { "asset": "eip155:1/erc20:0xF57e7e7C23978C3cAEC3C3548E3D615c346e79fF", "counterparty_symbol": "IMX", "counterparty": "hyperliquid"}
+          ]
+        }
+
+    :reqjson object entries: A list of mappings containing ``"asset"``, ``"counterparty_symbol"``, and ``"counterparty"`` to be saved in the database
+
+    **Example Response**
+
+    .. sourcecode:: http
+
+        HTTP/1.1 200 OK
+        Content-Type: application/json
+
+        {
+            "result": true,
+            "message": ""
+        }
+
+    :resjson bool result: A boolean which is true in the case the mappings were added successfully.
+    :resjson str message: Error message if any errors occurred.
+    :statuscode 200: Mappings were added successfully.
+    :statuscode 400: Provided JSON is in some way malformed.
+    :statuscode 409: Some of the provided mappings already exist in the database or assets have incorrect format.
+    :statuscode 500: Internal rotki error.
+
+
+Update asset mappings for a counterparty
+=============================================
+
+.. http:patch:: /api/(version)/assets/counterpartymappings
+
+    Doing a PATCH on the counterparty asset mappings endpoint with a list of entries, and each entry containing an asset's identifier, its counterparty, and its counterparty symbol will updates these mappings in the DB.
+
+    **Example Request**
+
+    .. http:example:: curl wget httpie python-requests
+
+        PATCH /api/1/assets/counterpartymappings HTTP/1.1
+        Host: localhost:5042
+        Content-Type: application/json;charset=UTF-8
+
+        {
+          "location": "kucoin",
+          "entries": [
+            { "asset": "eip155:1/erc20:0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984", "counterparty_symbol": "UNI", "counterparty": "hyperliquid"},
+            { "asset": "eip155:1/erc20:0xF57e7e7C23978C3cAEC3C3548E3D615c346e79fF", "counterparty_symbol": "IMX", "counterparty": "hyperliquid"}
+          ]
+        }
+
+    :reqjson object entries: A list of mappings containing ``"asset"``, ``"counterparty_symbol"``, and ``"counterparty"`` to be updated in the database.
+
+    **Example Response**
+
+    .. sourcecode:: http
+
+        HTTP/1.1 200 OK
+        Content-Type: application/json
+
+        {
+            "result": true,
+            "message": ""
+        }
+
+    :resjson bool result: A boolean which is true in case the mappings were updated successfully.
+    :resjson str message: Error message if any errors occurred.
+    :statuscode 200: Mappings were updated successfully.
+    :statuscode 400: Provided JSON is in some way malformed.
+    :statuscode 409: Some of the provided mappings don't exist in the database or assets have incorrect format.
+    :statuscode 500: Internal rotki error.
+
+
+Delete asset mappings for a counterparty
+=============================================
+
+.. http:delete:: /api/(version)/assets/counterpartymappings
+
+    Doing a DELETE on the counterparty asset mappings endpoint with a list of entries, and each entry containing an asset's counterparty, and its counterparty symbol will delete these mappings from the DB.
+
+    **Example Request**
+
+    .. http:example:: curl wget httpie python-requests
+
+        DELETE /api/1/assets/counterpartymappings HTTP/1.1
+        Host: localhost:5042
+        Content-Type: application/json;charset=UTF-8
+
+        {
+          "entries": [
+            {"counterparty_symbol": "UNI", "counterparty": "hyperliquid"},
+            {"counterparty_symbol": "IMX", "counterparty": "hyperliquid"}
+          ]
+        }
+
+    :reqjson object entries: A list of objects containing ``"counterparty_symbol"`` and ``"counterparty"`` whose mappings should be deleted from the database.
+
+    **Example Response**
+
+    .. sourcecode:: http
+
+        HTTP/1.1 200 OK
+        Content-Type: application/json
+
+        {
+            "result": true,
+            "message": ""
+        }
+
+    :resjson bool result: A boolean which is true in case the mappings were deleted successfully.
+    :resjson str message: Error message if any errors occurred.
+    :statuscode 200: Mappings were deleted successfully.
+    :statuscode 400: Provided JSON is in some way malformed.
+    :statuscode 409: Some of the provided asset identifiers don't exist in the database for the given counterparty or their format is incorrect.
+    :statuscode 500: Internal rotki error.
+
+
 Statistics for netvalue over time
 ====================================
 
@@ -4508,273 +4694,6 @@ Statistics rendering code
    :statuscode 409: There is a problem reaching the rotki server.
    :statuscode 500: Internal rotki error.
 
-Dealing with trades
-===================
-
-.. http:get:: /api/(version)/trades
-
-   .. note::
-      This endpoint can also be queried asynchronously by using ``"async_query": true``
-
-   .. note::
-      This endpoint also accepts parameters as query arguments.
-
-   Doing a GET on this endpoint will return all trades of the current user. They can be further filtered by time range and/or location. If the user is not premium and has more than 250 trades then the returned trades will be limited to that number. Any filtering will also be limited to those first 250 trades. Trades are returned most recent first.
-
-   **Example Request**:
-
-   .. http:example:: curl wget httpie python-requests
-
-      GET /api/1/trades HTTP/1.1
-      Host: localhost:5042
-      Content-Type: application/json;charset=UTF-8
-
-      {"from_timestamp": 1451606400, "to_timestamp": 1571663098, "location": "external", "only_cache": false}
-
-   :reqjson int limit: Optional. This signifies the limit of records to return as per the `sql spec <https://www.sqlite.org/lang_select.html#limitoffset>`__.
-   :reqjson int offset: This signifies the offset from which to start the return of records per the `sql spec <https://www.sqlite.org/lang_select.html#limitoffset>`__.
-   :reqjson list[string] order_by_attributes: Optional. This is the list of attributes of the trade table by which to order the results. If none is given 'time' is assumed. Valid values are: ['time', 'location', 'type', 'amount', 'rate', 'fee'].
-   :reqjson list[bool] ascending: Optional. False by default. Defines the order by which results are returned depending on the chosen order by attribute.
-   :reqjson int from_timestamp: The timestamp from which to query. Can be missing in which case we query from 0.
-   :reqjson int to_timestamp: The timestamp until which to query. Can be missing in which case we query until now.
-   :reqjson string location: Optionally filter trades by location. A valid location name has to be provided. If missing location filtering does not happen.
-   :reqjson string base_asset: Optionally filter trades by base_asset. A valid asset identifier has to be provided. If missing trades are not filtered by base asset.
-   :reqjson string quote_asset: Optionally filter trades by quote_asset. A valid asset identifier has to be provided. If missing trades are not filtered by quote asset.
-   :reqjson string trade_type: Optionally filter trades by type. A valid trade type (buy, sell) has to be provided. If missing trades are not filtered by type.
-   :reqjson bool include_ignored_trades: Determines whether ignored trades should be included in the result returned. Defaults to ``"true"``.
-   :reqjson bool exclude_ignored_assets: Determines whether the trades with ignored assets should be included in the result returned. Defaults to ``"true"``.
-   :reqjson bool only_cache: Optional.If this is true then the equivalent exchange/location is not queried, but only what is already in the DB is returned.
-
-   .. _trades_schema_section:
-
-   **Example Response**:
-
-   .. sourcecode:: http
-
-      HTTP/1.1 200 OK
-      Content-Type: application/json
-
-      {
-          "result": {
-              "entries": [{
-                  "entry": {
-                      "trade_id": "dsadfasdsad",
-                      "timestamp": 1491606401,
-                      "location": "external",
-                      "base_asset": "BTC",
-                      "quote_asset": "EUR",
-                      "trade_type": "buy",
-                      "amount": "0.5541",
-                      "rate": "8422.1",
-                      "fee": "0.55",
-                      "fee_currency": "USD",
-                      "link": "Optional unique trade identifier",
-                      "notes": "Optional notes"
-                  },
-                  "ignored_in_accounting": false
-              }],
-              "entries_found": 95,
-              "entries_total": 155,
-              "entries_limit": 250,
-          "message": ""
-      }
-
-   :resjson object entries: An array of trade objects and their metadata. Each entry is composed of the main trade entry under the ``"entry"`` key and other metadata like ``"ignored_in_accounting"`` for each trade.
-   :resjsonarr string trade_id: The uniquely identifying identifier for this trade. The trade id depends on the data of the trade. If the trade is edited so will the trade id.
-   :resjsonarr int timestamp: The timestamp at which the trade occurred
-   :resjsonarr string location: A valid location at which the trade happened
-   :resjsonarr string base_asset: The base_asset of the trade.
-   :resjsonarr string quote_asset: The quote_asset of the trade.
-   :resjsonarr string trade_type: The type of the trade. e.g. ``"buy"`` or ``"sell"``
-   :resjsonarr string amount: The amount that was bought or sold
-   :resjsonarr string rate: The rate at which 1 unit of ``base_asset`` was exchanges for 1 unit of ``quote_asset``
-   :resjsonarr string fee: Optional. The fee that was paid, if anything, for this trade
-   :resjsonarr string fee_currency: Optional. The currency in which ``fee`` is denominated in.
-   :resjsonarr string link: Optional unique trade identifier or link to the trade.
-   :resjsonarr string notes: Optional notes about the trade.
-   :resjson int entries_found: The number of entries found for the current filter. Ignores pagination.
-   :resjson int entries_limit: The limit of entries if free version. -1 for premium.
-   :resjson int entries_total: The number of total entries ignoring all filters.
-   :statuscode 200: Trades are successfully returned
-   :statuscode 400: Provided JSON is in some way malformed
-   :statuscode 409: No user is logged in.
-   :statuscode 500: Internal rotki error
-   :statuscode 502: Error reaching the remote from which the trades got requested
-
-.. http:put:: /api/(version)/trades
-
-   Doing a PUT on this endpoint adds a new trade to rotki's currently logged in user.
-
-   **Example Request**:
-
-   .. http:example:: curl wget httpie python-requests
-
-      PUT /api/1/trades HTTP/1.1
-      Host: localhost:5042
-      Content-Type: application/json;charset=UTF-8
-
-      {
-          "timestamp": 1491606401,
-          "location": "external",
-          "base_asset": "BTC",
-          "quote_asset": "EUR",
-          "trade_type": "buy",
-          "amount": "0.5541",
-          "rate": "8422.1",
-          "fee": "0.55",
-          "fee_currency": "USD",
-          "link": "Optional unique trade identifier",
-          "notes": "Optional notes"
-      }
-
-   :reqjson int timestamp: The timestamp at which the trade occurred
-   :reqjson string location: A valid location at which the trade happened
-   :resjsonarr string base_asset: The base_asset of the trade.
-   :resjsonarr string quote_asset: The quote_asset of the trade.
-   :reqjson string trade_type: The type of the trade. e.g. ``"buy"`` or ``"sell"``
-   :reqjson string amount: The amount that was bought or sold
-   :reqjson string rate: The rate at which 1 unit of ``base_asset`` was exchanges for 1 unit of ``quote_asset``
-   :reqjson string fee: Optional. The fee that was paid, if anything, for this trade
-   :reqjson string fee_currency: Optional. The currency in which ``fee`` is denominated in
-   :reqjson string link: Optional unique trade identifier or link to the trade.
-   :reqjson string notes: Optional notes about the trade.
-
-   **Example Response**:
-
-   .. sourcecode:: http
-
-      HTTP/1.1 200 OK
-      Content-Type: application/json
-
-      {
-          "result": [{
-                  "trade_id": "dsadfasdsad",
-                  "timestamp": 1491606401,
-                  "location": "external",
-                  "base_asset": "BTC",
-                  "quote_asset": "EUR",
-                  "trade_type": "buy",
-                  "amount": "0.5541",
-                  "rate": "8422.1",
-                  "fee": "0.55",
-                  "fee_currency": "USD",
-                  "link": "Optional unique trade identifier",
-                  "notes": "Optional notes"
-          }],
-          "message": ""
-      }
-
-   :resjson object result: Array of trade entries with the same schema as seen in `this <trades_schema_section_>`_ section.
-   :statuscode 200: Trades was successfully added.
-   :statuscode 400: Provided JSON is in some way malformed
-   :statuscode 409: No user is currently logged in.
-   :statuscode 500: Internal rotki error
-
-.. http:patch:: /api/(version)/trades
-
-   Doing a PATCH on this endpoint edits an existing trade in rotki's currently logged in user using the ``trade_id``.
-   The edited trade's trade id is returned and will be different.
-
-   **Example Request**:
-
-   .. http:example:: curl wget httpie python-requests
-
-      PATCH /api/1/trades HTTP/1.1
-      Host: localhost:5042
-      Content-Type: application/json;charset=UTF-8
-
-      {
-          "trade_id" : "dsadfasdsad",
-          "timestamp": 1491606401,
-          "location": "external",
-          "base_asset": "BTC",
-          "quote_asset": "EUR",
-          "trade_type": "buy",
-          "amount": "1.5541",
-          "rate": "8422.1",
-          "fee": "0.55",
-          "fee_currency": "USD",
-          "link": "Optional unique trade identifier",
-          "notes": "Optional notes"
-      }
-
-   :reqjson string trade_id: The ``trade_id`` of the trade to edit. Note: the returned trade id will be different.
-   :reqjson int timestamp: The new timestamp
-   :reqjson string location: The new location
-   :reqjson string base_asset: The new base_asset
-   :reqjson string quote_asset: The new quote_asset
-   :reqjson string trade_type: The new trade type
-   :reqjson string rate: The new trade rate
-   :reqjson string fee: The new fee. Can be set to null.
-   :reqjson string fee_currency: The new fee currency. Can be set to null.
-   :reqjson string link: The new link attribute. Can be set to null.
-   :reqjson string notes: The new notes attribute. Can be set to null.
-
-   **Example Response**:
-
-   .. sourcecode:: http
-
-      HTTP/1.1 200 OK
-      Content-Type: application/json
-
-      {
-          "result": {
-              "trade_id": "sdfhdjskfha",
-              "timestamp": 1491606401,
-              "location": "external",
-              "base_asset": "BTC",
-              "quote_asset": "EUR",
-              "trade_type": "buy",
-              "amount": "1.5541",
-              "rate": "8422.1",
-              "fee": "0.55",
-              "fee_currency": "USD",
-              "link": "Optional unique trade identifier"
-              "notes": "Optional notes"
-          }
-          "message": ""
-      }
-
-   :resjson object result: A trade with the same schema as seen in `this <trades_schema_section_>`_ section. The trade id will be different if the trade was successfully edited.
-   :statuscode 200: Trades was successfully edited.
-   :statuscode 400: Provided JSON is in some way malformed.
-   :statuscode 409: No user is logged in. The given trade identifier to edit does not exist.
-   :statuscode 500: Internal rotki error.
-
-.. http:delete:: /api/(version)/trades
-
-   Doing a DELETE on this endpoint deletes an existing trade in rotki's currently logged in user using the ``trade_id``.
-
-   **Example Request**:
-
-   .. http:example:: curl wget httpie python-requests
-
-      DELETE /api/1/trades HTTP/1.1
-      Host: localhost:5042
-      Content-Type: application/json;charset=UTF-8
-
-      { "trades_ids" : ["dsadfasdsad"]}
-
-   :reqjson string trades_ids: The list of identifiers for trades to delete.
-
-   **Example Response**:
-
-   .. sourcecode:: http
-
-      HTTP/1.1 200 OK
-      Content-Type: application/json
-
-      {
-          "result": true,
-          "message": ""
-      }
-
-   :resjson bool result: Returns ``true`` if all identifiers were found and deleted, otherwise returns ``false``.
-   :resjson string message: Returns ``""`` if ``result`` is ``True`` else returns the error message.
-   :statuscode 200: Trades was successfully deleted.
-   :statuscode 400: Provided JSON is in some way malformed.
-   :statuscode 409: No user is logged in. The given trade identifier to delete does not exist.
-   :statuscode 500: Internal rotki error.
 
 Querying asset movements
 ===========================
@@ -5016,6 +4935,81 @@ Dealing with History Events
                   "ignored_in_accounting": false,
                   "has_details": false,
                   "grouped_events_num": 3
+              }, {
+                  "entry": {
+                      "identifier": 6,
+                      "entry_type": "asset movement event",
+                      "timestamp": 1739575021000,
+                      "event_type": "deposit",
+                      "event_subtype": "deposit asset",
+                      "location": "binanceus",
+                      "location_label": "Binance US 1",
+                      "asset": "eip155:1/erc20:0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                      "amount": "200",
+                      "event_identifier": "269b64de6a51caa372a3b455341a41a9da2ae743794e81011b5da1c3b6e1195b",
+                      "sequence_index": 0,
+                      "extra_data": {
+                          "address": "0x29aE5D9A1f28f82c358f8DF5A029bC0D5452b66E",
+                          "transaction_id": "0x94a0c141c92b5acbad63aad1edea819a4aba2a39c01203eadd537436b3dd6a63"
+                      },
+                      "user_notes": "From my metamask wallet",
+                      "auto_notes": "Deposit 200 USDC to Binance US"
+                  },
+                  "event_accounting_rule_status": "has rule"
+              }, {
+                  "entry": {
+                      "identifier": 7,
+                      "entry_type": "swap event",
+                      "timestamp": 1732150909806,
+                      "event_type": "trade",
+                      "event_subtype": "spend",
+                      "location": "kraken",
+                      "location_label": null,
+                      "asset": "USD",
+                      "amount": "32.2400",
+                      "event_identifier": "9e0bfb56dbe8c3d4d3a71584740826df3f901cb0c55a11ee33887afefc7a99d7",
+                      "sequence_index": 0,
+                      "extra_data": null,
+                      "auto_notes": "Swap 32.2400 USD in Kraken"
+                  },
+                  "grouped_events_num": 3,
+                  "event_accounting_rule_status": "has rule"
+              }, {
+                  "entry": {
+                      "identifier": 8,
+                      "entry_type": "swap event",
+                      "timestamp": 1732150909806,
+                      "event_type": "trade",
+                      "event_subtype": "receive",
+                      "location": "kraken",
+                      "location_label": null,
+                      "asset": "XMR",
+                      "amount": "0.2000496400",
+                      "event_identifier": "9e0bfb56dbe8c3d4d3a71584740826df3f901cb0c55a11ee33887afefc7a99d7",
+                      "sequence_index": 1,
+                      "extra_data": null,
+                      "auto_notes": "Receive 0.2000496400 XMR after a swap in Kraken"
+                  },
+                  "grouped_events_num": 3,
+                  "event_accounting_rule_status": "processed"
+              }, {
+                  "entry": {
+                      "identifier": 9,
+                      "entry_type": "swap event",
+                      "timestamp": 1732150909806,
+                      "event_type": "trade",
+                      "event_subtype": "fee",
+                      "location": "kraken",
+                      "location_label": null,
+                      "asset": "USD",
+                      "amount": "0.1290",
+                      "event_identifier": "9e0bfb56dbe8c3d4d3a71584740826df3f901cb0c55a11ee33887afefc7a99d7",
+                      "sequence_index": 2,
+                      "extra_data": null,
+                      "auto_notes": "Spend 0.1290 USD as Kraken swap fee"
+                  },
+                  "grouped_events_num": 3,
+                  "event_accounting_rule_status": "processed"
               }],
              "entries_found": 95,
              "entries_limit": 500,
@@ -5024,7 +5018,7 @@ Dealing with History Events
           "message": ""
       }
 
-   :resjson list decoded_events: A list of history events. Each event is an object comprised of the event entry and a boolean denoting if the event has been customized by the user or not. Each entry may also have a `has_details` flag if true. If `has_details` is true, then it is possible to call /history/events/details endpoint to retrieve some extra information about the event. Also each entry may have a `customized` flag set to true. If it does, it means the event has been customized/added by the user. Each entry may also have a `hidden` flag if set to true. If it does then that means it should be hidden in the UI due to consolidation of events. Also if `group_by_event_ids` exist and is true, each entry contains `grouped_events_num` which is an integer with the amount of events under the common event identifier. The consumer has to query this endpoint again with `group_by_event_ids` set to false and with the `event_identifiers` filter set to the identifier of the events having more than 1 event. If the event has a ``"notes"`` field that is auto-generated by default and not edited then the key ``"default_notes"`` will exit and be true. Finally `ignored_in_accounting` is set to `true` when the user has marked this event as ignored. Following are all possible entries depending on entry type.
+   :resjson list decoded_events: A list of history events. Each event is an object comprised of the event entry and a boolean denoting if the event has been customized by the user or not. Each entry may also have a `has_details` flag if true. If `has_details` is true, then it is possible to call /history/events/details endpoint to retrieve some extra information about the event. Also each entry may have a `customized` flag set to true. If it does, it means the event has been customized/added by the user. Each entry may also have a `hidden` flag if set to true. If it does then that means it should be hidden in the UI due to consolidation of events. Also if `group_by_event_ids` exist and is true, each entry contains `grouped_events_num` which is an integer with the amount of events under the common event identifier. The consumer has to query this endpoint again with `group_by_event_ids` set to false and with the `event_identifiers` filter set to the identifier of the events having more than 1 event. Finally `ignored_in_accounting` is set to `true` when the user has marked this event as ignored. Following are all possible entries depending on entry type.
    :resjson string identifier: Common key. This is the identifier of a single event.
    :resjson string entry_type: Common key. This identifies the category of the event and determines the schema. Possible values are: ``"history event"``, ``"evm event"``, ``"eth withdrawal event"``, ``"eth block event"``, ``"eth deposit event"``.
    :resjson string event_identifier: Common key. An event identifier grouping multiple events under a common group. This is how we group transaction events under a transaction, staking related events under block production etc.
@@ -5037,7 +5031,8 @@ Dealing with History Events
    :resjson string event_type: Common key. The type of the event. Valid values are retrieved from the backend.
    :resjson string event_subtype: Common key. The subtype of the event. Valid values are retrieved from the backend.
    :resjson string location_label: Common key. The location_label of the event. This means different things depending on event category. For evm events it's the initiating address. For withdrawal events the recipient address. For block production events the fee recipient.
-   :resjson string notes: Common key. String description of the event.
+   :resjson string user_notes: Common key. Custom notes for the event set by the user. Can be missing.
+   :resjson string auto_notes: Common key. Autogenerated string description of the event. Can be missing.
    :resjson string tx_hash: Evm event & eth deposit key. The transaction hash of the event as a hex string.
    :resjson string counterparty: Evm event & eth deposit key. The counterparty of the event. This is most of the times a protocol such as uniswap, but can also be an exchange name such as kraken. Possible values are requested by the backend.
    :resjson string product: Evm event & eth deposit key. This is the product type with which the event interacts. Such as pool, staking contract etc. Possible values are requested by the backend.
@@ -5083,7 +5078,7 @@ Dealing with History Events
                "event_subtype": "approve",
                "asset": "eip155:1/erc20:0x89d24A6b4CcB1B6fAA2625fE562bDD9a23260359",
                "location_label": "0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12",
-               "notes": "Approve 1 SAI of 0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12 for spending by 0xdf869FAD6dB91f437B59F1EdEFab319493D4C4cE"
+               "user_notes": "Approve 1 SAI of 0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12 for spending by 0xdf869FAD6dB91f437B59F1EdEFab319493D4C4cE"
             }
 
          :reqjson int sequence_index: This is an index that tries to provide the order of history entries for a single event_identifier.
@@ -5093,7 +5088,7 @@ Dealing with History Events
          :reqjson string event_type: The main event type of the entry. Possible event types can be seen in the `HistoryEventType enum <https://github.com/rotki/rotki/blob/59aa288dacd1776e62682e711a916f32a14c04c2/rotkehlchen/accounting/structures/types.py#L54>`_.
          :reqjson string event_subtype: The subtype for the entry. Possible event types can be seen in the `HistoryEventSubType enum <https://github.com/rotki/rotki/blob/59aa288dacd1776e62682e711a916f32a14c04c2/rotkehlchen/accounting/structures/types.py#L72>`_.
          :reqjson string[optional] location_label: location_label is a string field that allows to provide more information about the location. For example when we use this structure in blockchains can be used to specify the source address.
-         :reqjson string[optional] notes: This is a description of the event entry in plain text explaining what is being done. This is supposed to be shown to the user.
+         :reqjson string[optional] user_notes: This is the user editable part of the description of the event entry in plain text explaining what is being done.
 
    .. tab:: Evm Event
 
@@ -5118,7 +5113,7 @@ Dealing with History Events
                "asset": "eip155:1/erc20:0x89d24A6b4CcB1B6fAA2625fE562bDD9a23260359",
                "amount": "1.542",
                "location_label": "0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12",
-               "notes": "Approve 1 SAI of 0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12 for spending by 0xdf869FAD6dB91f437B59F1EdEFab319493D4C4cE",
+               "user_notes": "Approve 1 SAI of 0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12 for spending by 0xdf869FAD6dB91f437B59F1EdEFab319493D4C4cE",
                "event_subtype": "approve",
                "counterparty": "0xdf869FAD6dB91f437B59F1EdEFab319493D4C4cE",
                "extra_data": {}
@@ -5132,8 +5127,9 @@ Dealing with History Events
          :reqjson string event_type: The main event type of the entry. Possible event types can be seen in the `HistoryEventType enum <https://github.com/rotki/rotki/blob/59aa288dacd1776e62682e711a916f32a14c04c2/rotkehlchen/accounting/structures/types.py#L54>`_.
          :reqjson string event_subtype: The subtype for the entry. Possible event types can be seen in the `HistoryEventSubType enum <https://github.com/rotki/rotki/blob/59aa288dacd1776e62682e711a916f32a14c04c2/rotkehlchen/accounting/structures/types.py#L72>`_.
          :reqjson string[optional] location_label: location_label is a string field that allows to provide more information about the location. For example when we use this structure in blockchains can be used to specify the source address.
-         :reqjson string[optional] notes: This is a description of the event entry in plain text explaining what is being done. This is supposed to be shown to the user.
+         :reqjson string[optional] user_notes: This is the user editable part of the description of the event entry in plain text explaining what is being done.
          :reqjson string[optional] counterparty: An identifier for a potential counterparty of the event entry. For a send it's the target. For a receive it's the sender. For bridged transfer it's the bridge's network identifier. For a protocol interaction it's the protocol.
+         :reqjson string[optional] product: A defi product that this event is associated with (pool, gauge, etc).
          :reqjson string[optional] address: Any relevant address that this event interacted with.
          :reqjson object[optional] extra_data: An object containing any other data to be stored.
 
@@ -5247,7 +5243,7 @@ Dealing with History Events
                 "fee_asset": "ETH",
                 "address": "0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12",
                 "transaction_id": "0x64f1982504ab714037467fdd45d3ecf5a6356361403fc97dd325101d8c038c4e",
-                "notes": ["Example note", ""],
+                "user_notes": ["Example note", ""],
                 "event_identifier": "AM_xxxxxxxxxx"
             }
 
@@ -5259,7 +5255,7 @@ Dealing with History Events
          :reqjson string[optional] address: The address involved in the movement
          :reqjson string[optional] transaction_id: The transaction hash of the movement.
          :reqjson string[optional] unique_id: A unique identifier for this asset movement used in conjunction with the location to generate the event_identifier. It's generally the uuid of the event in the exchange.
-         :resjson list notes[optional]: Custom notes for each of the underlying events. Each note will be appended after the autogenerated event description.
+         :resjson list user_notes[optional]: Custom notes for each of the underlying events. Each note will be appended after the autogenerated event description.
          :reqjson string[optional] event_identifier: Custom identifier for the event (overrides the value generated from unique_id and location)
 
    .. tab:: Swap Event
@@ -5285,7 +5281,7 @@ Dealing with History Events
                 "fee_amount": "0.000004",
                 "fee_asset": "ETH",
                 "unique_id": "xxxxxxxxx",
-                "notes": ["Example note", "", ""]
+                "user_notes": ["Example note", "", ""]
             }
 
          :reqjson string location: The location/exchange where the swap occurred
@@ -5293,11 +5289,59 @@ Dealing with History Events
          :reqjson string spend_asset: The identifier of the asset being spent (e.g. "USD", "BTC")
          :reqjson string receive_amount: The amount being received
          :reqjson string receive_asset: The identifier of the asset being received (e.g. "USD", "BTC")
-         :reqjson string[optional] fee: The fee amount charged for the swap. If provided, fee_asset must also be provided
+         :reqjson string[optional] fee_amount: The fee amount charged for the swap. If provided, fee_asset must also be provided
          :reqjson string[optional] fee_asset: The identifier of the asset in which the fee was paid. If provided, fee must also be provided
          :reqjson string[optional] unique_id: A unique identifier for this swap used in conjunction with the location to generate the event_identifier. It's generally the uuid of the event in the exchange if its an exchange event.
-         :resjson list notes[optional]: Custom notes for each of the underlying events. Each note will be appended after the autogenerated event description.
+         :resjson list user_notes[optional]: Custom notes for each of the underlying events. Each note will be appended after the autogenerated event description.
          :reqjson string[optional] event_identifier: Custom identifier for the event (overrides the value generated from unique_id and location)
+         :reqjson string[optional] location_label: A string field that provides more information about the location. For swaps this is the name of the specific exchange where the swap occurred (for instance "Kraken 1")
+
+   .. tab:: Evm Swap Event
+
+      **Example Request**:
+
+      .. http:put:: /api/(version)/history/events
+
+         .. http:example:: curl wget httpie python-requests
+
+            PUT /api/1/history/events HTTP/1.1
+            Host: localhost:5042
+            Content-Type: application/json;charset=UTF-8
+
+            {
+                "entry_type": "evm swap event",
+                "timestamp": 1569924575000,
+                "location": "ethereum",
+                "location_label": "0x6e15887E2CEC81434C16D587709f64603b39b545",
+                "spend_amount": "0.16",
+                "spend_asset": "ETH",
+                "receive_amount": "0.003",
+                "receive_asset": "eip155:1/erc20:0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+                "fee_amount": "0.0002",
+                "fee_asset": "ETH",
+                "user_notes": ["Example note", "", ""],
+                "sequence_index": 0,
+                "tx_hash": "0x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
+                "counterparty": "some counterparty",
+                "address": "0xA090e606E30bD747d4E6245a1517EbE430F0057e"
+            }
+
+         :reqjson string tx_hash: This is the transaction hash of the evm event
+         :reqjson int sequence_index: This is an index that tries to provide the order of history entries for a single event_identifier. This value will be the index of the first event in the swap event group, and other events in the group will be given consecutive indexes after this value.
+         :reqjson string location: The location/exchange where the swap occurred
+         :reqjson string spend_amount: The amount being spent
+         :reqjson string spend_asset: The identifier of the asset being spent (e.g. "USD", "BTC")
+         :reqjson string receive_amount: The amount being received
+         :reqjson string receive_asset: The identifier of the asset being received (e.g. "USD", "BTC")
+         :reqjson string[optional] fee_amount: The fee amount charged for the swap. If provided, fee_asset must also be provided
+         :reqjson string[optional] fee_asset: The identifier of the asset in which the fee was paid. If provided, fee must also be provided
+         :resjson list user_notes[optional]: Custom notes for each of the underlying events. Each note will be appended after the autogenerated event description.
+         :reqjson string[optional] event_identifier: Custom identifier for the event.
+         :reqjson string[optional] location_label: A string field that provides more information about the location. For evm swaps this is the user address that performed the swap.
+         :reqjson string[optional] counterparty: An identifier for a potential counterparty of the event entry. For evm swaps this is the protocol that the swap interacted with.
+         :reqjson string[optional] product: A defi product that this event is associated with (pool, gauge, etc).
+         :reqjson string[optional] address: Any relevant address that this event interacted with.
+         :reqjson object[optional] extra_data: An object containing any other data to be stored.
 
    :reqjson string entry_type: The type of the event that will be processed. Different validation is used based on the value for this field. Possible values are: ``"history event"``, ``"evm event"``, ``"eth withdrawal event"``, ``"eth block event"``, ``"eth deposit event"``.
    :reqjson int timestamp: The timestamp of the entry **in milliseconds**.
@@ -5344,12 +5388,13 @@ Dealing with History Events
           "asset": "eip155:1/erc20:0x89d24A6b4CcB1B6fAA2625fE562bDD9a23260359",
           "amount": "1.542",
           "location_label": "0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12",
-          "notes": "Approve 1 SAI of 0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12 for spending by 0xdf869FAD6dB91f437B59F1EdEFab319493D4C4cE",
+          "user_notes": "Approve 1 SAI of 0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12 for spending by 0xdf869FAD6dB91f437B59F1EdEFab319493D4C4cE",
           "event_subtype": "approve",
           "counterparty": "0xdf869FAD6dB91f437B59F1EdEFab319493D4C4cE"
       }
 
    The request object uses all the same arguments for each entry type as the `add event endpoint <add_event_args_label_>`_, with the addition of the identifier which signifies which entry will be edited.
+   When dealing with event types where multiple events are added/edited as a unit (such as swap events and asset movements), use the identifier of the primary event in the group, i.e. for asset movements, the identifier of the deposit/withdrawal event, and for swap events, the identifier of the spend event.
 
    **Example Response**:
 
@@ -5846,10 +5891,7 @@ Export PnL report debug data
                 "non_syncing_exchanges": []
                 "evmchains_to_skip_detection": []
             },
-            "ignored_events_ids": {
-                "trade": ["X124-JYI", "2325"],
-                "ethereum transaction": ["0xfoo", "0xboo"]
-            }
+            "ignored_events_ids": ["0xfoo", "0xboo"],
             "pnl_settings": {
                 "from_timestamp": 0,
                 "to_timestamp": 1656608820
@@ -6410,8 +6452,8 @@ Get saved events of a PnL Report
    :resjson int timestamp: The timestamp this event took place in.
    :resjson str type: The type of event. Can be any of the possible accounting event types.
    :resjson str group_id: Optional. Can be missing. An id signifying events that should be grouped together in the frontend. If missing no grouping needs to happen.
-   :resjson int entries_found: The number of entries found in the current query. This limited by the "limit" field and for free this is limited by FREE_PNL_EVENTS_LIMIT.
-   :resjson int entries_total: The total number of entries in the database for the requested report id, ignoring any filters.
+   :resjson int entries_found: The number of entries matching the requested report id and any supplied filters. Additionally, for free users this is limited by FREE_PNL_EVENTS_LIMIT.
+   :resjson int entries_total: The total number of entries in the database, ignoring any filters or pagination.
    :resjson int entries_limit: The limit of entries that can be returned.
 
    :statuscode 200: Report event data was successfully queried.
@@ -9874,7 +9916,7 @@ Dealing with ignored actions
 
 .. http:put:: /api/(version)/actions/ignored
 
-   Doing a PUT on the ignored actions endpoint will add action identifiers for ignoring of a given action type during accounting. Returns the list of all ignored action identifiers of the given type after the addition.
+   Doing a PUT on the ignored actions endpoint will add action identifiers for ignoring of history event type during accounting. Returns the list of all ignored action identifiers of history events after the addition.
 
 
    **Example Request**:
@@ -9885,9 +9927,8 @@ Dealing with ignored actions
       Host: localhost:5042
       Content-Type: application/json;charset=UTF-8
 
-      {"action_type": "history event", "data": ["Z231-XH23K"]}
+      {"data": ["Z231-XH23K"]}
 
-   :reqjson str action_type: A type of actions whose ignored ids to add. Defined above. Depending on the type, the data field is different.
    :reqjson list data: The data to ignore. For type "evm_transaction" it's an object with the following keys: ``"evm_chain"`` with the name of the evm chain the transaction happened in and ``"tx_hash"`` the string of the transaction hash to ignore. For all other types it's a list of strings representing the identifier of the action to ignore.
 
    **Example Response**:
@@ -9911,7 +9952,7 @@ Dealing with ignored actions
 
 .. http:delete:: /api/(version)/actions/ignored/
 
-   Doing a DELETE on the ignored actions endpoint removes action ids from the list of actions of the given type to be ignored during accounting.
+   Doing a DELETE on the ignored actions endpoint removes action ids from the list of actions of history event to be ignored during accounting.
 
 
    **Example Request**:
@@ -9923,17 +9964,9 @@ Dealing with ignored actions
       Content-Type: application/json;charset=UTF-8
 
       {
-          "action_type": "evm transaction",
-          "data": [{
-              "evm_chain": "ethereum",
-              "tx_hash": "0x34d9887286d8c427e5bf18004c464d150190780e83e89a47906cc63a07267780"
-          }, {
-              "evm_chain": "optimism",
-              "tx_hash": "0x14d9887286d3c427e5bf18004c464d150190780e83e89a47906cc63a07267780"
-          }]
+          "data": ["ethereum-0x34d9887286d8c427e5bf18004c464d150190780e83e89a47906cc63a07267780", "jwonowifewe"]
       }
 
-   :reqjson str action_type: As defined in ``PUT`` above.
    :reqjson list data: As defined in ``PUT`` above.
 
    **Example Response**:
@@ -11053,6 +11086,55 @@ Get ENS names
    :statuscode 400: Provided JSON is in some way malformed.
    :statuscode 401: No user is currently logged in.
    :statuscode 409: Failed to query names or addresses have incorrect format.
+   :statuscode 500: Internal rotki error.
+
+
+Get address from ENS name
+=============================================
+
+.. http:post:: /api/(version)/names/ens/resolve
+
+   Doing a POST on the ENS resolution endpoint will return the address for the given ENS name
+   if it exists. And null if it does not.
+
+   .. note::
+      This endpoint can also be queried asynchronously by using ``"async_query": true``.
+
+   **Example Request**:
+
+    .. http:example:: curl wget httpie python-requests
+
+          POST /api/1/naminens/reverse HTTP/1.1
+          Host: localhost:5042
+          Content-Type: application/json;charset=UTF-8
+
+          {
+              "name": "lefteris.eth",
+              "ignore_cache": true
+          }
+
+   :reqjson str name: The name to resolve to an address
+   :reqjson bool[optional] ignore_cache: If true, then cache checking will be skipped. Off by default.
+
+   **Example Response**:
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      {
+          "result": "0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12",
+          "message": "",
+      }
+
+   :resjson str result: An evm address if resolution succeeds or null if not.
+   :resjson str message: Error message if any errors occurred.
+   :statuscode 200: Name was resolved successfully
+   :statuscode 400: Provided JSON is in some way malformed.
+   :statuscode 401: No user is currently logged in.
+   :statuscode 404: Name not found.
+   :statuscode 409: Failed to resolve name or addresses have incorrect format.
    :statuscode 500: Internal rotki error.
 
 
@@ -13512,7 +13594,7 @@ Historical Balance Queries
         }
 
         :resjson list[integer] times: Timestamps of balance changes.
-        :resjson list last_event_identifier: (Optional) A list containing [identifier, group_identifier] of the event that caused the negative balance amount. For trades, returns [trade_identifier, null].
+        :resjson list last_event_identifier: (Optional) A list containing [identifier, group_identifier] of the event that caused the negative balance amount.
         :resjson list[string] values: Net asset balance amount at each corresponding timestamp.
         :statuscode 200: Historical balances returned
         :statuscode 400: Malformed query
@@ -13569,7 +13651,7 @@ Historical Balance Queries
 
         :resjson list[integer] times: Timestamps at which net worth was calculated
         :resjson list[string] values: Net worth value at each corresponding timestamp in user's profit currency
-        :resjson list last_event_identifier: (Optional) A list containing [identifier, group_identifier] of the event that caused the negative balance. For trades, returns [trade_identifier, null].
+        :resjson list last_event_identifier: (Optional) A list containing [identifier, group_identifier] of the event that caused the negative balance.
         :resjson list[list] missing_prices: List of [asset_identifier, timestamp] pairs where price data was missing
         :statuscode 200: Historical net worth values returned
         :statuscode 400: Malformed query
@@ -13639,3 +13721,198 @@ Historical Balance Queries
       :statuscode 400: Malformed query
       :statuscode 401: User is not logged in
       :statuscode 500: Internal Rotki error
+
+
+Refetch EVM transactions for a specific time period
+===================================================
+
+.. http:post:: /api/(version)/blockchains/evm/transactions/refetch
+
+   Doing a POST on the transactions refetch endpoint will force a re-query of transactions for the
+   specified time period. This is useful to recover potentially missed transactions due to API
+   issues or other temporary failures. Unlike normal transaction queries, this ignores query
+   range checks.
+
+   .. note::
+      This endpoint can also be queried asynchronously by using ``"async_query": true``
+
+   **Example Request**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      POST /api/1/blockchains/evm/transactions/refetch HTTP/1.1
+      Host: localhost:5042
+      Content-Type: application/json;charset=UTF-8
+
+      {
+          "async_query": false,
+          "from_timestamp": 1640995200,
+          "to_timestamp": 1672531200,
+          "evm_chain": "ethereum",
+          "address": "0xb8553D9ee35dd23BB96fbd679E651B929821969B"
+      }
+
+   :reqjson bool async_query: If true, the query will be processed asynchronously.
+   :reqjson int from_timestamp: Start of the time period to refetch transactions for.
+   :reqjson int to_timestamp: End of the time period to refetch transactions for.
+   :reqjson string evm_chain: Optional. The EVM chain to query (e.g., "ethereum", "optimism"). If not provided, all supported chains will be queried.
+   :reqjson string address: Optional. The address to query transactions for. If not provided, all tracked addresses will be queried.
+
+   **Example Response**:
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      { "result": {"new_transactions_count": 12}, "message": "" }
+
+   :resjson int new_transactions_count: The number of new transactions found and added to the database.
+   :statuscode 200: Transactions successfully refetched.
+   :statuscode 401: User is not logged in.
+   :statuscode 400: Invalid parameters such as from_timestamp > to_timestamp. Address not tracked by rotki.
+   :statuscode 500: Internal rotki error
+
+
+Active management
+==================
+
+  .. http:post:: /api/(version)/wallet/transfer/token
+
+    Prepares a token transfer transaction without submitting it to the blockchain. This endpoint returns the transaction data needed to perform an ERC20 token transfer.
+
+    **Example Request:**
+
+      .. http:example:: curl wget httpie python-requests
+
+        POST /api/1/wallet/transfer/token HTTP/1.1
+        Host: localhost:5042
+        Content-Type: application/json;charset=UTF-8
+
+        {
+          "from_address": "0xc37b40ABdB939635068d3c5f13E7faF686F03B65",
+          "to_address": "0x9531C059098e3d194fF87FebB587aB07B30B1306",
+          "token": "eip155:1/erc20:0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84",
+          "amount": "0.000000000000000001"
+        }
+
+    :reqjson string from_address: The address from which the tokens will be sent
+    :reqjson string to_address: The address to which the tokens will be sent
+    :reqjson string token: The token identifier in the format eip155:{chain_id}/erc20:{contract_address}
+    :reqjson string amount: The amount of tokens to transfer as a string
+
+    **Example Response:**
+
+      .. sourcecode:: http
+
+        HTTP/1.1 200 OK
+        Content-Type: application/json
+
+        {
+          "message": "",
+          "result": {
+            "chainId": 1,
+            "from": "0xc37b40ABdB939635068d3c5f13E7faF686F03B65",
+            "to": "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84",
+            "data": "0xa9059cbb0000000000000000000000009531c059098e3d194ff87febb587ab07b30b13060000000000000000000000000000000000000000000000000000000000000001"
+          },
+          "status_code": 200
+        }
+
+    :resjson object result: The transaction data needed for the token transfer
+    :resjson integer chainId: The chain ID of the blockchain network
+    :resjson string from: The sender's address
+    :resjson string to: The token contract address
+    :resjson string data: The encoded transaction data for the token transfer
+    :statuscode 200: Transaction data successfully prepared
+    :statuscode 400: Malformed request
+    :statuscode 409: Error preparing the payload
+    :statuscode 500: Internal Rotki error
+
+  .. http:post:: /api/(version)/wallet/transfer/native
+
+    Prepares a native cryptocurrency transfer transaction without submitting it to the blockchain. This endpoint returns the transaction data needed to perform a transfer of the blockchain's native asset (e.g., ETH).
+
+    **Example Request:**
+
+      .. http:example:: curl wget httpie python-requests
+
+        POST /api/1/wallet/transfer/native HTTP/1.1
+        Host: localhost:5042
+        Content-Type: application/json;charset=UTF-8
+
+        {
+          "from_address": "0xc37b40ABdB939635068d3c5f13E7faF686F03B65",
+          "to_address": "0x9531C059098e3d194fF87FebB587aB07B30B1306",
+          "amount": "0.0003",
+          "chain": "ethereum"
+        }
+
+    :reqjson string from_address: The address from which the native cryptocurrency will be sent
+    :reqjson string to_address: The address to which the native cryptocurrency will be sent
+    :reqjson string amount: The amount of native cryptocurrency to transfer as a string
+    :reqjson string chain: The EVM chain name (e.g., "ethereum" for Ethereum)
+
+    **Example Response:**
+
+      .. sourcecode:: http
+
+        HTTP/1.1 200 OK
+        Content-Type: application/json
+
+        {
+          "message": "",
+          "result": {
+            "from": "0xc37b40ABdB939635068d3c5f13E7faF686F03B65",
+            "to": "0x9531C059098e3d194fF87FebB587aB07B30B1306",
+            "value": 300000000000000,
+            "nonce": 55
+          },
+          "status_code": 200
+        }
+
+    :resjson object result: The transaction data needed for the native transfer
+    :resjson string from: The sender's address
+    :resjson string to: The recipient's address
+    :resjson integer value: The amount to transfer in the smallest unit of the native cryptocurrency
+    :resjson integer nonce: The transaction nonce
+    :statuscode 200: Transaction data successfully prepared
+    :statuscode 400: Malformed request
+    :statuscode 409: Error preparing the payload
+    :statuscode 500: Internal Rotki error
+
+
+  .. http:post:: /api/(version)/wallet/interacted
+
+    Checks if the address in the `from` interacted with the address in the `to`. This interaction check is unidirectional, meaning it only verifies if `from_address` has interacted with `to_address`, not the other way around.
+
+    **Example Request:**
+        .. http:example:: curl wget httpie python-requests
+
+          POST /api/1/wallet/interacted HTTP/1.1
+          Host: localhost:5042
+          Content-Type: application/json;charset=UTF-8
+
+          {
+              "from_address": "0xc37b40ABdB939635068d3c5f13E7faF686F03B65",
+              "to_address": "0x9531C059098e3d194fF87FebB587aB07B30B1306"
+          }
+
+      :reqjson string from_address: The address from which the interaction is being checked.
+      :reqjson string to_address: The address with which the interaction is being checked.
+
+    **Example Response:**
+
+      .. sourcecode:: http
+
+        HTTP/1.1 200 OK
+        Content-Type: application/json
+
+        {
+            "result": true
+        }
+
+    :resjson boolean result: Indicates whether the `from_address` has interacted with the `to_address`.
+    :statuscode 200: Interaction check successful.
+    :statuscode 400: Malformed request.
+    :statuscode 500: Internal Rotki error.

@@ -3,10 +3,11 @@ import type { BlockchainAssetBalances } from '@/types/blockchain/balances';
 import type { TaskMeta } from '@/types/task';
 import type { MaybeRef } from '@vueuse/core';
 import { useBlockchainBalancesApi } from '@/composables/api/balances/blockchain';
-import { useBlockchainBalances } from '@/composables/blockchain/balances';
 import { useSupportedChains } from '@/composables/info/chains';
+import { useAccountAddresses } from '@/modules/balances/blockchain/use-account-addresses';
+import { useBalancesStore } from '@/modules/balances/use-balances-store';
+import { useBlockchainBalances } from '@/modules/balances/use-blockchain-balances';
 import { useIgnoredAssetsStore } from '@/store/assets/ignored';
-import { useBlockchainStore } from '@/store/blockchain/index';
 import { useNotificationsStore } from '@/store/notifications';
 import { useTaskStore } from '@/store/tasks';
 import { TaskType } from '@/types/task-type';
@@ -30,9 +31,10 @@ export const useBlockchainTokensStore = defineStore('blockchain/tokens', () => {
 
   const massDetecting = ref<string>();
 
-  const { isAssetIgnored } = useIgnoredAssetsStore();
+  const { useIsAssetIgnored } = useIgnoredAssetsStore();
   const { t } = useI18n();
-  const { addresses, balances } = storeToRefs(useBlockchainStore());
+  const { balances } = storeToRefs(useBalancesStore());
+  const { addresses } = useAccountAddresses();
   const { fetchDetectedTokens: fetchDetectedTokensCaller, fetchDetectedTokensTask } = useBlockchainBalancesApi();
   const { getChainName, supportsTransactions, txEvmChains } = useSupportedChains();
   const { notify } = useNotificationsStore();
@@ -108,7 +110,7 @@ export const useBlockchainTokensStore = defineStore('blockchain/tokens', () => {
 
   const getTokens = (balances: BlockchainAssetBalances, address: string): string[] => {
     const assets = balances?.[address]?.assets ?? [];
-    return Object.keys(assets).filter(id => !get(isAssetIgnored(id)));
+    return Object.keys(assets).filter(id => !get(useIsAssetIgnored(id)));
   };
 
   const getEthDetectedTokensInfo = (

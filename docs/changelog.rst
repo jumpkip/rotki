@@ -2,10 +2,50 @@
 Changelog
 =========
 
+* :feature:`-` Aave v3 ETH deposit transactions in arbitrum using the new v3 gateway will now be decoded correctly.
+* :feature:`-` Users will now see Umami protocol fees as separate entries when depositing or withdrawing on Arbitrum.
+* :bug:`-` rotki will now exclude Superfluid's Constant Inflow and Outflow NFTs from your balances, fixing misleading balance summaries.
+* :bug:`-` rotki will no longer incorrectly count previously owned NFTs from a collection as part of current balance.
+* :feature:`-` Monerium transactions on Arbitrum and Scroll blockchains are now properly decoded.
+* :feature:`-` Users can see the compact view of swap events in the history events section.
+* :feature:`-` GG23 arbitrum OSS rounds and impact donation minting will now be properly recognized by rotki
+* :feature:`-` Users can now manually link assets on any counterparty to assets recognized by rotki, without having to wait for a new release.
+* :feature:`-` rotki will show the oracle used to display the asset price.
+* :feature:`8928` Users will now have the option to keep the table sorting preference.
+* :feature:`9495` rotki now supports Stake DAO across all supported EVM chains, including balance tracking.
+* :feature:`-` Now free users can change the theme to dark mode too.
+* :feature:`8012` rotki will now support Pendle Finance, with related historical events properly decoded and correct prices and balances shown.
+* :feature:`9570` rotki will now support Curve loans from crvUSD markets, correctly decoding associated events and detecting balances. CrvUSD peg keeper updates will also be decoded correctly.
+* :feature:`-` Users will be able to send tokens on-chain through rotki.
+* :feature:`9592` Users will now be able to re-pull missed transactions.
+* :feature:`9600` rotki will now correctly decode swaps going through the rainbow router on all supported chains.
+* :feature:`-` Some more gitcoin rounds are added to rotki. Especially the new retro funding rounds.
+* :feature:`9571` rotki will now correctly decode Curve Savings transactions.
+* :feature:`-` rotki will now support optimized Curve pools like the USDC-EURe pool in Arbitrum.
+* :feature:`9592` Users can now force a query of EVM transactions for specific time periods to recover missed transactions.
 * :feature:`9239` Users will now be able to sort the PnL events table.
 * :feature:`9496` rotki will now correctly decode Curve Lend staking deposits, withdrawals and reward claims in all supported EVM chains.
 * :feature:`9267` rotki now supports decoding of Aerodrome and Velodrome lock transactions, tracking locked balances, and automatic reminders for lock expirations.
 * :feature:`9145` Deposits and withdrawals from Hyperliquid will be decoded. Balances will also be queried.
+* :bug:`-` rotki will now correctly decode mints of CRV as result of claiming from Curve gauges in L2.
+* :bug:`9772` Backups of big DBs for premium users should no longer freeze the app.
+* :bug:`9730` Fix the issue where the app breaks when the user clicks on "Ethereum Staking" in the blockchain balance summary on the dashboard.
+* :bug:`-` Fix a rare issue where the manual balance page becomes empty.
+* :bug:`-` Fix a rare issue calling RPC nodes when there is an error connecting to them.
+* :bug:`-` Users will now be able to see exchange locations when expanding the ETH entry under Multi Chain Assets.
+* :bug:`-` Updating a protocol cache when no changes happened on a chain will now work properly.
+
+* :release:`1.38.2 <2025-03-26>`
+* :bug:`-` Fix the issue where the "Add new event here" button is missing from the "more" menu in the event group.
+* :bug:`-` Fix the issue where pressing Enter while focused on autocomplete doesn't submit the form.
+* :feature:`-` Add the option to refresh profiles if they are somehow not loaded.
+* :bug:`-` Getting historical prices for an asset graph should not fail with RemoteError anymore.
+* :bug:`-` Editing an AssetMovement with a reference should now work fine again.
+* :bug:`-` Users will be able to see the address of each account within an xpub.
+* :bug:`-` An exception in the last decoding step will no longer stop transaction decoding in rotki.
+* :bug:`-` Failed paraswap v6 swaps will no longer fail to decode in rotki.
+* :bug:`-` DXDAO orders will no longer fail to decode in rotki.
+* :bug:`-` Users should now be again able to edit the underlying tokens for any pool tokens.
 
 * :release:`1.38.1 <2025-03-14>`
 * :feature:`9385` Users will see the default label using the validator index when exporting validators.

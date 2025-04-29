@@ -17,14 +17,15 @@ from rotkehlchen.errors.misc import InputError
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.history.events.structures.asset_movement import AssetMovement
 from rotkehlchen.history.events.structures.base import HistoryEvent
+from rotkehlchen.history.events.structures.swap import create_swap_events
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import (
-    deserialize_asset_amount,
-    deserialize_asset_amount_force_positive,
+    deserialize_fval,
+    deserialize_fval_force_positive,
     deserialize_timestamp_from_date,
 )
-from rotkehlchen.types import Location
+from rotkehlchen.types import AssetAmount, Location
 from rotkehlchen.utils.misc import ts_sec_to_ms
 
 if TYPE_CHECKING:
@@ -84,7 +85,7 @@ class NexoImporter(BaseExchangeImporter):
 
         entry_type = csv_row['Type']
         transaction = csv_row['Transaction']
-        amount = deserialize_asset_amount_force_positive(csv_row['Output Amount'])
+        amount = deserialize_fval_force_positive(csv_row['Output Amount'])
 
         # from a user's csv, we found that interest and referral bonus entries
         # can have empty output currency, so we fall back to input currency
@@ -126,14 +127,14 @@ class NexoImporter(BaseExchangeImporter):
             # by nexo but they appear like a trade from asset -> nexo in order to gain interest
             # in nexo. There seems to always be another entry with the amount that the user
             # received so we'll ignore interest rows with negative amounts.
-            if deserialize_asset_amount(csv_row['Output Amount']) < 0:
+            if deserialize_fval(csv_row['Output Amount']) < 0:
                 log.debug(f'Ignoring nexo entry {csv_row} with negative interest')
                 return
 
             # from a user's csv, we found that interest and referral bonus entries
             # can have zero output amount, so we fall back to input amount
             if entry_type in {'Interest', 'Referral Bonus'} and amount == ZERO:
-                amount = deserialize_asset_amount_force_positive(csv_row['Input Amount'])
+                amount = deserialize_fval_force_positive(csv_row['Input Amount'])
 
             event = HistoryEvent(
                 event_identifier=f'{NEXO_PREFIX}{hash_csv_row(csv_row)}',
@@ -150,7 +151,7 @@ class NexoImporter(BaseExchangeImporter):
             self.add_history_events(write_cursor, [event])
         elif entry_type == 'Liquidation':
             input_asset = asset_from_nexo(csv_row['Input Currency'])
-            input_amount = deserialize_asset_amount_force_positive(csv_row['Input Amount'])
+            input_amount = deserialize_fval_force_positive(csv_row['Input Amount'])
             event = HistoryEvent(
                 event_identifier=f'{NEXO_PREFIX}{hash_csv_row(csv_row)}',
                 sequence_index=0,
@@ -179,34 +180,21 @@ class NexoImporter(BaseExchangeImporter):
             )
             self.add_history_events(write_cursor, [event])
         elif entry_type == 'Exchange':
-            input_asset = asset_from_nexo(csv_row['Input Currency'])
-            input_amount = deserialize_asset_amount_force_positive(csv_row['Input Amount'])
-            out_event = HistoryEvent(
-                event_identifier=(event_identifier := f'{NEXO_PREFIX}{hash_csv_row(csv_row)}'),
-                sequence_index=0,
-                timestamp=(timestamp_ms := ts_sec_to_ms(timestamp)),
-                location=Location.NEXO,
-                amount=input_amount,
-                event_type=HistoryEventType.TRADE,
-                event_subtype=HistoryEventSubType.SPEND,
-                asset=input_asset,
-                location_label=transaction,
-                notes=f'{entry_type} from Nexo',
+            self.add_history_events(
+                write_cursor=write_cursor,
+                history_events=create_swap_events(
+                    event_identifier=f'{NEXO_PREFIX}{hash_csv_row(csv_row)}',
+                    timestamp=ts_sec_to_ms(timestamp),
+                    location=Location.NEXO,
+                    spend=AssetAmount(
+                        asset=asset_from_nexo(csv_row['Input Currency']),
+                        amount=deserialize_fval_force_positive(csv_row['Input Amount']),
+                    ),
+                    receive=AssetAmount(asset=asset, amount=amount),
+                    unique_id=transaction,
+                    spend_notes=f'{entry_type} from Nexo',
+                ),
             )
-            in_event = HistoryEvent(
-                event_identifier=event_identifier,
-                sequence_index=1,
-                event_type=HistoryEventType.TRADE,
-                timestamp=timestamp_ms,
-                location=Location.NEXO,
-                event_subtype=HistoryEventSubType.RECEIVE,
-                amount=amount,
-                location_label=transaction,
-                asset=asset,
-                notes=f'{entry_type} from Nexo',
-            )
-            self.add_history_events(write_cursor, [out_event, in_event])
-
         elif entry_type in ignored_entries:
             pass
         else:

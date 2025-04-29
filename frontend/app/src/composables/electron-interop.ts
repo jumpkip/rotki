@@ -1,7 +1,7 @@
 import type { WebVersion } from '@/types';
 import type { BackendOptions, Listeners, SystemVersion, TrayUpdate } from '@shared/ipc';
 import { getBackendUrl } from '@/utils/account-management';
-import { assert } from '@rotki/common';
+import { assert, type Theme } from '@rotki/common';
 import { externalLinks } from '@shared/external-links';
 
 interface UseInteropReturn {
@@ -17,6 +17,7 @@ interface UseInteropReturn {
   premiumUserLoggedIn: (premiumUser: boolean) => void;
   closeApp: () => Promise<void>;
   metamaskImport: () => Promise<string[]>;
+  openWalletConnectBridge: () => Promise<void>;
   restartBackend: (options: Partial<BackendOptions>) => Promise<boolean>;
   config: (defaults: boolean) => Promise<Partial<BackendOptions>>;
   version: () => Promise<SystemVersion | WebVersion>;
@@ -37,6 +38,7 @@ interface UseInteropReturn {
    * @param file The file we want to get the path.
    */
   getPath: (file: File) => string | undefined;
+  setSelectedTheme: (selectedTheme: Theme) => Promise<void>;
 }
 
 const electronApp = !!window.interop;
@@ -139,6 +141,10 @@ const interop: UseInteropReturn = {
     }
   },
 
+  openWalletConnectBridge: async (): Promise<void> => {
+    await window.interop?.openWalletConnectBridge();
+  },
+
   premiumUserLoggedIn: (premiumUser: boolean): void => {
     window.interop?.premiumUserLoggedIn(premiumUser);
   },
@@ -150,6 +156,10 @@ const interop: UseInteropReturn = {
   restartBackend: async (options: Partial<BackendOptions>): Promise<boolean> => {
     assert(window.interop);
     return window.interop.restartBackend(options);
+  },
+
+  setSelectedTheme: async (selectedTheme: Theme): Promise<void> => {
+    await window.interop?.setSelectedTheme(selectedTheme);
   },
 
   setupListeners: (listeners: Listeners): void => {
@@ -164,7 +174,6 @@ const interop: UseInteropReturn = {
   updateTray: (update: TrayUpdate): void => {
     window.interop?.updateTray(update);
   },
-
   version: async (): Promise<SystemVersion | WebVersion> => {
     if (!window.interop) {
       return Promise.resolve({

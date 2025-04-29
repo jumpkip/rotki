@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import type { HistoryEvent } from '@/types/history/events';
-import AssetMovementEventForm from '@/components/history/events/forms/AssetMovementEventForm.vue';
-import EthBlockEventForm from '@/components/history/events/forms/EthBlockEventForm.vue';
-import EthDepositEventForm from '@/components/history/events/forms/EthDepositEventForm.vue';
-import EthWithdrawalEventForm from '@/components/history/events/forms/EthWithdrawalEventForm.vue';
-import EvmEventForm from '@/components/history/events/forms/EvmEventForm.vue';
-import OnlineHistoryEventForm from '@/components/history/events/forms/OnlineHistoryEventForm.vue';
-import { isOfEventType } from '@/utils/history/events';
+import type { GroupEventData, StandaloneEventData } from '@/modules/history/management/forms/form-types';
+import AssetMovementEventForm from '@/modules/history/management/forms/AssetMovementEventForm.vue';
+import EthBlockEventForm from '@/modules/history/management/forms/EthBlockEventForm.vue';
+import EthDepositEventForm from '@/modules/history/management/forms/EthDepositEventForm.vue';
+import EthWithdrawalEventForm from '@/modules/history/management/forms/EthWithdrawalEventForm.vue';
+import EvmEventForm from '@/modules/history/management/forms/EvmEventForm.vue';
+import EvmSwapEventForm from '@/modules/history/management/forms/EvmSwapEventForm.vue';
+import { EVM_EVENTS, isEvmTypeEvent } from '@/modules/history/management/forms/form-guards';
+import OnlineHistoryEventForm from '@/modules/history/management/forms/OnlineHistoryEventForm.vue';
+import SwapEventForm from '@/modules/history/management/forms/SwapEventForm.vue';
 import { HistoryEventEntryType } from '@rotki/common';
 import { kebabCase } from 'es-toolkit';
 import { useTemplateRef } from 'vue';
@@ -16,27 +18,33 @@ interface FormComponent {
 }
 
 interface HistoryEventFormProps {
-  editableItem?: HistoryEvent;
-  nextSequence?: string;
-  groupHeader?: HistoryEvent;
-  groupEvents?: HistoryEvent[];
+  data: GroupEventData | StandaloneEventData;
 }
 
 const stateUpdated = defineModel<boolean>('stateUpdated', { default: false, required: false });
 
-const props = withDefaults(defineProps<HistoryEventFormProps>(), {
-  editableItem: undefined,
-  groupEvents: undefined,
-  groupHeader: undefined,
-  nextSequence: undefined,
-});
+const props = defineProps<HistoryEventFormProps>();
 
 const { t } = useI18n();
-const { editableItem, groupHeader } = toRefs(props);
+const { data } = toRefs(props);
 
 const entryType = ref<HistoryEventEntryType>(HistoryEventEntryType.HISTORY_EVENT);
 const form = useTemplateRef<ComponentPublicInstance<FormComponent>>('form');
-const historyEventEntryTypes = Object.values(HistoryEventEntryType);
+
+const isEvmGroupAdd = computed<boolean>(() => {
+  const data = props.data;
+  if (data.type !== 'group-add') {
+    return false;
+  }
+  return isEvmTypeEvent(data.group.entryType);
+});
+
+const historyEventEntryTypes = computed<HistoryEventEntryType[]>(() => {
+  if (get(isEvmGroupAdd)) {
+    return [...EVM_EVENTS];
+  }
+  return Object.values(HistoryEventEntryType).filter(value => !isEvmTypeEvent(value));
+});
 
 const formComponents: Record<HistoryEventEntryType, Component> = {
   [HistoryEventEntryType.ASSET_MOVEMENT_EVENT]: AssetMovementEventForm,
@@ -44,22 +52,10 @@ const formComponents: Record<HistoryEventEntryType, Component> = {
   [HistoryEventEntryType.ETH_DEPOSIT_EVENT]: EthDepositEventForm,
   [HistoryEventEntryType.ETH_WITHDRAWAL_EVENT]: EthWithdrawalEventForm,
   [HistoryEventEntryType.EVM_EVENT]: EvmEventForm,
+  [HistoryEventEntryType.EVM_SWAP_EVENT]: EvmSwapEventForm,
   [HistoryEventEntryType.HISTORY_EVENT]: OnlineHistoryEventForm,
+  [HistoryEventEntryType.SWAP_EVENT]: SwapEventForm,
 };
-
-function getEvent<T extends HistoryEvent>(event: HistoryEvent | undefined, type: HistoryEventEntryType): T | undefined {
-  if (event && isOfEventType<T>(event, type))
-    return event;
-
-  return undefined;
-}
-
-function getEvents<T extends HistoryEvent>(events: HistoryEvent[] | undefined, type: HistoryEventEntryType): T[] | undefined {
-  if (!events)
-    return undefined;
-
-  return events.filter((event): event is T => isOfEventType<T>(event, type));
-}
 
 async function save() {
   if (!isDefined(form))
@@ -68,11 +64,16 @@ async function save() {
   return await get(form).save();
 }
 
-watchImmediate([groupHeader, editableItem], ([groupHeader, editableItem]) => {
-  if (editableItem)
-    set(entryType, editableItem.entryType);
-  else if (groupHeader)
-    set(entryType, groupHeader.entryType);
+watchImmediate(data, (data) => {
+  if (!data) {
+    return;
+  }
+  if (data.type === 'edit')
+    set(entryType, data.event.entryType);
+  else if (data.type === 'edit-group')
+    set(entryType, data.eventsInGroup[0].entryType);
+  else if (data.type === 'group-add')
+    set(entryType, data.group.entryType);
 });
 
 defineExpose({
@@ -86,7 +87,7 @@ defineExpose({
       v-model="entryType"
       data-cy="entry-type"
       :options="historyEventEntryTypes"
-      :disabled="!!groupHeader"
+      :disabled="data.type !== 'add' && !isEvmGroupAdd"
       :label="t('common.entry_type')"
       hide-details
       variant="outlined"
@@ -110,12 +111,7 @@ defineExpose({
       ref="form"
       v-model:state-updated="stateUpdated"
       :data-cy="`${kebabCase(entryType)}-form`"
-      :next-sequence="nextSequence"
-      :group-header="getEvent(groupHeader, entryType)"
-      :editable-item="getEvent(editableItem, entryType)"
-      :group-events="entryType === HistoryEventEntryType.ASSET_MOVEMENT_EVENT
-        ? getEvents(groupEvents, entryType)
-        : undefined"
+      :data="data"
     />
   </form>
 </template>

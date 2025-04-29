@@ -8,20 +8,19 @@ from tempfile import NamedTemporaryFile, TemporaryDirectory
 from typing import TYPE_CHECKING, Any, Literal, Optional
 
 from flask import Blueprint, Request, Response, request as flask_request
-from flask.views import MethodView
 from marshmallow import Schema, ValidationError
 from marshmallow.utils import missing
 from webargs.flaskparser import parser, use_kwargs
 from webargs.multidictproxy import MultiDictProxy
 from werkzeug.datastructures import FileStorage
 
-from rotkehlchen.accounting.structures.types import ActionType
 from rotkehlchen.api.rest import (
     RestAPI,
     api_response,
     make_response_from_dict,
     wrap_in_fail_result,
 )
+from rotkehlchen.api.v1.common_resources import BaseMethodView
 from rotkehlchen.api.v1.parser import ignore_kwarg_parser, resource_parser
 from rotkehlchen.api.v1.schemas import (
     AccountingReportDataSchema,
@@ -63,6 +62,9 @@ from rotkehlchen.api.v1.schemas import (
     ClearCacheSchema,
     ClearIconsCacheSchema,
     ConnectToRPCNodes,
+    CounterpartyAssetMappingDeleteEntrySchema,
+    CounterpartyAssetMappingsPostSchema,
+    CounterpartyAssetMappingUpdateEntrySchema,
     CreateAccountingRuleSchema,
     CreateHistoryEventSchema,
     CurrentAssetsPriceSchema,
@@ -141,7 +143,9 @@ from rotkehlchen.api.v1.schemas import (
     QueriedAddressesSchema,
     QueryAddressbookSchema,
     QueryCalendarSchema,
+    RefetchEvmTransactionsSchema,
     RefreshProtocolDataSchema,
+    ResolveEnsSchema,
     ReverseEnsSchema,
     RpcAddNodeSchema,
     RpcNodeEditSchema,
@@ -165,10 +169,6 @@ from rotkehlchen.api.v1.schemas import (
     TagSchema,
     TimedManualPriceSchema,
     TimestampRangeSchema,
-    TradeDeleteSchema,
-    TradePatchSchema,
-    TradeSchema,
-    TradesQuerySchema,
     UpdateCalendarReminderSchema,
     UpdateCalendarSchema,
     UserActionLoginSchema,
@@ -183,6 +183,7 @@ from rotkehlchen.api.v1.schemas import (
     WatchersEditSchema,
     XpubAddSchema,
     XpubPatchSchema,
+    create_counterparty_asset_mappings_schema,
 )
 from rotkehlchen.assets.asset import (
     Asset,
@@ -209,6 +210,7 @@ from rotkehlchen.db.filtering import (
     AccountingRulesFilterQuery,
     AddressbookFilterQuery,
     AssetsFilterQuery,
+    CounterpartyAssetMappingsFilterQuery,
     CustomAssetsFilterQuery,
     DBFilterQuery,
     Eth2DailyStatsFilterQuery,
@@ -218,12 +220,12 @@ from rotkehlchen.db.filtering import (
     LocationAssetMappingsFilterQuery,
     NFTFilterQuery,
     ReportDataFilterQuery,
-    TradesFilterQuery,
     UserNotesFilterQuery,
 )
 from rotkehlchen.db.settings import ModifiableDBSettings
 from rotkehlchen.db.utils import DBAssetBalance, LocationData
 from rotkehlchen.fval import FVal
+from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.history.types import HistoricalPriceOracle
 from rotkehlchen.serialization.schemas import (
@@ -241,15 +243,15 @@ from rotkehlchen.types import (
     AddressbookType,
     ApiKey,
     ApiSecret,
-    AssetAmount,
     ChainType,
     ChecksumEvmAddress,
+    CounterpartyAssetMappingDeleteEntry,
+    CounterpartyAssetMappingUpdateEntry,
     Eth2PubKey,
     EvmlikeChain,
     EVMTxHash,
     ExternalService,
     ExternalServiceApiCredentials,
-    Fee,
     HexColorCode,
     HistoryEventQueryType,
     ListOfBlockchainAddresses,
@@ -262,7 +264,6 @@ from rotkehlchen.types import (
     ProtocolsWithCache,
     SupportedBlockchain,
     Timestamp,
-    TradeType,
     UserNote,
 )
 
@@ -479,12 +480,6 @@ def get_match_header() -> str | None:
         match_header = match_header[1:-1]  # remove enclosing quotes
 
     return match_header
-
-
-class BaseMethodView(MethodView):
-    def __init__(self, rest_api_object: RestAPI, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self.rest_api = rest_api_object
 
 
 class SettingsResource(BaseMethodView):
@@ -1129,101 +1124,6 @@ class ManuallyTrackedBalancesResource(BaseMethodView):
         )
 
 
-class TradesResource(BaseMethodView):
-
-    def make_get_schema(self) -> TradesQuerySchema:
-        return TradesQuerySchema(
-            db=self.rest_api.rotkehlchen.data.db,
-        )
-
-    put_schema = TradeSchema()
-    patch_schema = TradePatchSchema()
-    delete_schema = TradeDeleteSchema()
-
-    @require_loggedin_user()
-    @resource_parser.use_kwargs(make_get_schema, location='json_and_query')
-    def get(
-            self,
-            async_query: bool,
-            only_cache: bool,
-            filter_query: TradesFilterQuery,
-            include_ignored_trades: bool,
-    ) -> Response:
-        return self.rest_api.get_trades(
-            async_query=async_query,
-            only_cache=only_cache,
-            filter_query=filter_query,
-            include_ignored_trades=include_ignored_trades,
-        )
-
-    @require_loggedin_user()
-    @use_kwargs(put_schema, location='json')
-    def put(
-            self,
-            timestamp: Timestamp,
-            location: Location,
-            base_asset: Asset,
-            quote_asset: Asset,
-            trade_type: TradeType,
-            amount: AssetAmount,
-            rate: Price,
-            fee: Fee | None,
-            fee_currency: Asset | None,
-            link: str | None,
-            notes: str | None,
-    ) -> Response:
-        return self.rest_api.add_trade(
-            timestamp=timestamp,
-            location=location,
-            base_asset=base_asset,
-            quote_asset=quote_asset,
-            trade_type=trade_type,
-            amount=amount,
-            rate=rate,
-            fee=fee,
-            fee_currency=fee_currency,
-            link=link,
-            notes=notes,
-        )
-
-    @require_loggedin_user()
-    @use_kwargs(patch_schema, location='json')
-    def patch(
-            self,
-            trade_id: str,
-            timestamp: Timestamp,
-            location: Location,
-            base_asset: Asset,
-            quote_asset: Asset,
-            trade_type: TradeType,
-            amount: AssetAmount,
-            rate: Price,
-            fee: Fee | None,
-            fee_currency: Asset | None,
-            link: str | None,
-            notes: str | None,
-    ) -> Response:
-        return self.rest_api.edit_trade(
-            trade_id=trade_id,
-            timestamp=timestamp,
-            location=location,
-            base_asset=base_asset,
-            quote_asset=quote_asset,
-            trade_type=trade_type,
-            amount=amount,
-            rate=rate,
-            fee=fee,
-            fee_currency=fee_currency,
-            link=link,
-            notes=notes,
-        )
-
-    @require_loggedin_user()
-    @use_kwargs(delete_schema, location='json')
-    def delete(self, trades_ids: list[str]) -> Response:
-        return self.rest_api.delete_trades(trades_ids=trades_ids)
-
-
 class TagsResource(BaseMethodView):
 
     put_schema = TagSchema(color_required=True)
@@ -1295,7 +1195,7 @@ class ExchangeEventsQueryResource(BaseMethodView):
             self,
             location: Location,
             async_query: bool,
-            name: str | None,
+            name: str | None = None,
     ) -> Response:
         return self.rest_api.query_exchange_history_events(
             name=name,
@@ -1920,16 +1820,13 @@ class IgnoredActionsResource(BaseMethodView):
 
     @require_loggedin_user()
     @use_kwargs(modify_schema, location='json')
-    def put(self, action_type: ActionType, data: list[str]) -> Response:
-        return self.rest_api.add_ignored_action_ids(action_type=action_type, action_ids=data)
+    def put(self, data: list[str]) -> Response:
+        return self.rest_api.add_ignored_action_ids(action_ids=data)
 
     @require_loggedin_user()
     @use_kwargs(modify_schema, location='json')
-    def delete(self, action_type: ActionType, data: list[str]) -> Response:
-        return self.rest_api.remove_ignored_action_ids(
-            action_type=action_type,
-            action_ids=data,
-        )
+    def delete(self, data: list[str]) -> Response:
+        return self.rest_api.remove_ignored_action_ids(action_ids=data)
 
 
 class QueriedAddressesResource(BaseMethodView):
@@ -2323,28 +2220,109 @@ class LocationAssetMappingsResource(BaseMethodView):
 
     @use_kwargs(post_schema, location='json')
     def post(self, filter_query: LocationAssetMappingsFilterQuery) -> Response:
-        return self.rest_api.query_location_asset_mappings(filter_query=filter_query)
+        return self.rest_api.query_asset_mappings_by_type(
+            mapping_type='location',
+            filter_query=filter_query,
+            dict_keys=('asset', 'location', 'location_symbol'),
+            query_columns='local_id, location, exchange_symbol',
+            location_or_counterparty_reader_callback=self._location_mapping_reader,
+        )
+
+    @staticmethod
+    def _location_mapping_reader(entry: dict[str, Any]) -> dict[str, Any]:
+        if (loc := entry['location']) is not None:
+            entry['location'] = str(Location.deserialize_from_db(loc))
+
+        return entry
 
     @use_kwargs(put_and_patch_schema, location='json')
     def put(
             self,
             entries: list[LocationAssetMappingUpdateEntry],
     ) -> Response:
-        return self.rest_api.add_location_asset_mappings(entries=entries)
+        return self.rest_api.perform_asset_mapping_operation(
+            mapping_fn=GlobalDBHandler.add_location_asset_mappings,
+            entries=entries,
+        )
 
     @use_kwargs(put_and_patch_schema, location='json')
     def patch(
             self,
             entries: list[LocationAssetMappingUpdateEntry],
     ) -> Response:
-        return self.rest_api.update_location_asset_mappings(entries=entries)
+        return self.rest_api.perform_asset_mapping_operation(
+            mapping_fn=GlobalDBHandler.update_location_asset_mappings,
+            entries=entries,
+        )
 
     @use_kwargs(delete_schema, location='json')
     def delete(
             self,
             entries: list[LocationAssetMappingDeleteEntry],
     ) -> Response:
-        return self.rest_api.delete_location_asset_mappings(entries=entries)
+        return self.rest_api.perform_asset_mapping_operation(
+            mapping_fn=GlobalDBHandler.delete_location_asset_mappings,
+            entries=entries,
+        )
+
+
+class CounterpartyAssetMappingsResource(BaseMethodView):
+    def make_delete_schema(self) -> Any:
+        return create_counterparty_asset_mappings_schema(
+            entry_schema_class=CounterpartyAssetMappingDeleteEntrySchema,
+            chain_aggregator=self.rest_api.rotkehlchen.chains_aggregator,
+        )
+
+    def make_put_patch_schema(self) -> Any:
+        return create_counterparty_asset_mappings_schema(
+            entry_schema_class=CounterpartyAssetMappingUpdateEntrySchema,
+            chain_aggregator=self.rest_api.rotkehlchen.chains_aggregator,
+        )
+
+    def make_post_schema(self) -> CounterpartyAssetMappingsPostSchema:
+        return CounterpartyAssetMappingsPostSchema(
+            chain_aggregator=self.rest_api.rotkehlchen.chains_aggregator,
+        )
+
+    @resource_parser.use_kwargs(make_post_schema, location='json')
+    def post(self, filter_query: CounterpartyAssetMappingsFilterQuery) -> Response:
+        return self.rest_api.query_asset_mappings_by_type(
+            filter_query=filter_query,
+            mapping_type='counterparty',
+            query_columns='local_id, counterparty, symbol',
+            location_or_counterparty_reader_callback=lambda x: x,
+            dict_keys=('asset', 'counterparty', 'counterparty_symbol'),
+        )
+
+    @resource_parser.use_kwargs(make_put_patch_schema, location='json')
+    def put(
+            self,
+            entries: list[CounterpartyAssetMappingUpdateEntry],
+    ) -> Response:
+        return self.rest_api.perform_asset_mapping_operation(
+            mapping_fn=GlobalDBHandler.add_counterparty_asset_mappings,
+            entries=entries,
+        )
+
+    @resource_parser.use_kwargs(make_put_patch_schema, location='json')
+    def patch(
+            self,
+            entries: list[CounterpartyAssetMappingUpdateEntry],
+    ) -> Response:
+        return self.rest_api.perform_asset_mapping_operation(
+            mapping_fn=GlobalDBHandler.update_counterparty_asset_mappings,
+            entries=entries,
+        )
+
+    @resource_parser.use_kwargs(make_delete_schema, location='json')
+    def delete(
+            self,
+            entries: list[CounterpartyAssetMappingDeleteEntry],
+    ) -> Response:
+        return self.rest_api.perform_asset_mapping_operation(
+            mapping_fn=GlobalDBHandler.delete_counterparty_asset_mappings,
+            entries=entries,
+        )
 
 
 class AllLatestAssetsPriceResource(BaseMethodView):
@@ -2762,6 +2740,24 @@ class ReverseEnsResource(BaseMethodView):
     ) -> Response:
         return self.rest_api.get_ens_mappings(
             addresses=ethereum_addresses,
+            ignore_cache=ignore_cache,
+            async_query=async_query,
+        )
+
+
+class ResolveEnsResource(BaseMethodView):
+    post_schema = ResolveEnsSchema()
+
+    @require_loggedin_user()
+    @use_kwargs(post_schema, location='json')
+    def post(
+            self,
+            name: str,
+            ignore_cache: bool,
+            async_query: bool,
+    ) -> Response:
+        return self.rest_api.resolve_ens_name(
+            name=name,
             ignore_cache=ignore_cache,
             async_query=async_query,
         )
@@ -3356,4 +3352,28 @@ class HistoricalPricesPerAssetResource(BaseMethodView):
             from_timestamp=from_timestamp,
             only_cache_period=only_cache_period,
             exclude_timestamps=exclude_timestamps,
+        )
+
+
+class RefetchEvmTransactionsResource(BaseMethodView):
+
+    def make_post_schema(self) -> RefetchEvmTransactionsSchema:
+        return RefetchEvmTransactionsSchema(db=self.rest_api.rotkehlchen.data.db)
+
+    @require_loggedin_user()
+    @resource_parser.use_kwargs(make_post_schema, location='json')
+    def post(
+            self,
+            async_query: bool,
+            to_timestamp: Timestamp,
+            from_timestamp: Timestamp,
+            address: ChecksumEvmAddress | None = None,
+            evm_chain: EVM_CHAIN_IDS_WITH_TRANSACTIONS_TYPE | None = None,
+    ) -> Response:
+        return self.rest_api.force_refetch_evm_transactions(
+            address=address,
+            evm_chain=evm_chain,
+            async_query=async_query,
+            from_timestamp=from_timestamp,
+            to_timestamp=to_timestamp,
         )

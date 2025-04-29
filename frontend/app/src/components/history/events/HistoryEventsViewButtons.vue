@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ShowEventForm } from '@/types/history/events';
+import type { ShowEventForm } from '@/modules/history/management/forms/form-types';
 
 const openDecodingDialog = defineModel<boolean>('openDecodingDialog', { required: true });
 
@@ -10,9 +10,10 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: 'refresh'): void;
-  (e: 'show:form', payload: ShowEventForm): void;
-  (e: 'show:add-transaction-form'): void;
+  'refresh': [];
+  'show:form': [payload: ShowEventForm];
+  'show:add-transaction-form': [];
+  'show:repulling-transactions-form': [];
 }>();
 
 const { t } = useI18n();
@@ -39,7 +40,7 @@ const { t } = useI18n();
   <RuiButton
     color="primary"
     data-cy="history-events__add"
-    @click="emit('show:form', { type: 'event', data: { nextSequenceId: '0' } })"
+    @click="emit('show:form', { type: 'event', data: { type: 'add', nextSequenceId: '0' } })"
   >
     <template #prepend>
       <RuiIcon name="lu-plus" />
@@ -106,6 +107,18 @@ const { t } = useI18n();
           <RuiIcon name="lu-plus" />
         </template>
         {{ t('transactions.dialog.add_tx') }}
+      </RuiButton>
+
+      <RuiButton
+        variant="list"
+        data-cy="history-events__repulling-transactions"
+        :disabled="loading"
+        @click="emit('show:repulling-transactions-form')"
+      >
+        <template #prepend>
+          <RuiIcon name="lu-clock-arrow-up" />
+        </template>
+        {{ t('transactions.repulling.title') }}
       </RuiButton>
     </div>
   </RuiMenu>

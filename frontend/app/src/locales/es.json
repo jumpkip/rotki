@@ -128,59 +128,59 @@
       "labels": {
         "calculate_past_cost_basis": "Calcular el coste base pasado al crear el informe",
         "cost_basis_method": "Método para calcular el coste base",
-        "eth_staking_taxable_after_withdrawal_enabled": "Should omit ETH staking events from accounting until withdrawals are enabled",
-        "include_crypto2crypto": "Take into account crypto to crypto trades",
-        "include_fees_in_cost_basis": "Take into account cost basis fees",
-        "include_gas_costs": "Take into account Ethereum gas costs",
-        "tax_free": "Is there a tax free period?",
-        "taxfree_after_period": "Tax free after how many days"
+        "eth_staking_taxable_after_withdrawal_enabled": "Debemos omitir los eventos de staking de ETH en la contabilidad hasta que los retiros estén habilitados",
+        "include_crypto2crypto": "Tener en cuenta los intercambios de cripto a cripto.",
+        "include_fees_in_cost_basis": "Tener en cuenta las tarifas en el coste base.",
+        "include_gas_costs": "Tener en cuenta los costos de gas de Ethereum",
+        "tax_free": "¿Hay un periodo libre de impuestos?",
+        "taxfree_after_period": "Libre de impuestos después de cuántos días"
       },
-      "title": "Trade Settings"
+      "title": "Configuraciones de intercambios"
     }
   },
   "actions": {
     "add_eth2_validator": {
       "error": {
-        "description": "There was an error while adding the ETH staking validator {id}: {message}",
-        "title": "Adding ETH staking validator"
+        "description": "Hubo un error al agregar el validador de ETH {id}: {message}",
+        "title": "Agregando validador de ETH"
       },
       "task": {
-        "description": "Adding ETH staking validator",
-        "title": "Adding validator: {id}"
+        "description": "Agregando validador de ETH",
+        "title": "Agregando validador: {id}"
       }
     },
     "assets": {
       "erc20": {
         "error": {
-          "description": "There was an error while retrieving token details: {message}",
-          "title": "Retrieving token details for {address} ({evmChain})"
+          "description": "Hubo un error al consultar los detalles del token: {message}",
+          "title": "Consultando detalles del token {address} ({evmChain})"
         },
         "task": {
-          "title": "Retrieving token details for {address} ({evmChain})"
+          "title": "Consultando detalles del token {address} ({evmChain})"
         }
       },
       "update": {
         "error": {
-          "description": "The asset database update failed: {message}"
+          "description": "La actualización de la base de datos de activos falló: {message}"
         },
         "task": {
-          "title": "Updating assets database"
+          "title": "Actualizando la base de datos de activos"
         }
       },
       "versions": {
         "error": {
-          "description": "The asset database update check failed: {message}"
+          "description": "La verificación de actualización de la base de datos de activos falló: {message}"
         },
         "task": {
-          "title": "Checking for asset database updates"
+          "title": "Verificando actualizaciones en la base de datos de activos."
         }
       }
     },
     "balances": {
       "all_balances": {
         "error": {
-          "message": "Failed to fetch all balances: {message}",
-          "title": "Querying all Balances"
+          "message": "Error al recuperar todos los balances: {message}",
+          "title": "Consultar todos los balances"
         },
         "task": {
           "title": "Consultar todos los balances"
@@ -188,7 +188,7 @@
       },
       "blockchain": {
         "error": {
-          "description": "Error at querying blockchain balances: {error}",
+          "description": "Error al consultar los balances en blockchain.: {error}",
           "title": "Consultando balances en blockchains"
         },
         "task": {
@@ -197,94 +197,94 @@
       },
       "blockchain_account_removal": {
         "error": {
-          "description": "Failed to remove the account: {error}",
-          "title": "Removing {count} {blockchain} account(s)"
+          "description": "Error al eliminar la cuenta: {error}",
+          "title": "Eliminando {count} cuentas(s) en {blockchain} "
         },
         "task": {
-          "description": "{count} accounts are being removed",
-          "title": "Removing {blockchain} account"
+          "description": "{count} cuentas están siendo eliminadas",
+          "title": "Eliminando cuenta de {blockchain}"
         }
       },
       "blockchain_accounts_add": {
         "no_new": {
-          "description": "The selected addresses are already tracked by rotki"
+          "description": "Las direcciones seleccionadas ya están siendo rastreadas por rotki"
         },
         "task": {
-          "description": "Adding {address}",
-          "title": "Adding {blockchain} account"
+          "description": "Agregando {address}",
+          "title": "Agregando cuenta de {blockchain}"
         }
       },
       "create_oracle_cache": {
-        "already_running": "Task is already running",
-        "failed": "Failed while creating a cache entry from {fromAsset} to {toAsset} on source: {error}",
-        "task": "Creating cache entry from {fromAsset} to {toAsset} on {source}"
+        "already_running": "La tarea ya está en curso",
+        "failed": "Error al crear una entrada de caché de {fromAsset} a {toAsset} en la fuente: {error}",
+        "task": "Creando entrada de caché dee {fromAsset} a {toAsset} en {source}"
       },
       "detect_tokens": {
         "task": {
-          "description": "Fetch detected tokens for {address} ({chain})",
-          "title": "Fetch detected tokens"
+          "description": "Recuperando tokens detectados para {address} ({chain})",
+          "title": "Recuperando tokens detectados"
         }
       },
       "exchange_balances": {
         "error": {
-          "message": "Failed to query {location} balances: {error}",
-          "title": "{location} balance query"
+          "message": "Error al consultar los balances de {location}: {error}",
+          "title": "Consulta de balances de {location}"
         },
         "task": {
-          "title": "Retrieving {location} balances"
+          "title": "Recuperando balances de {location}"
         }
       },
       "exchange_rates": {
         "error": {
-          "message": "Failed fetching exchange rates: {message}",
-          "title": "Exchange Rates"
+          "message": "Error al consultar los tipos de cambio: {message}",
+          "title": "Tipos de cambio"
         },
         "task": {
-          "title": "Exchange Rates"
+          "title": "Tipos de cambio"
         }
       },
       "exchange_removal": {
-        "description": "The removal of {exchange} failed due to: {error}",
-        "title": "Exchange removal"
+        "description": "No se pudo eliminar {exchange} debido a: {error}",
+        "title": "Elimination de plataforma de intercambio"
       },
       "exchange_setup": {
-        "description": "The setup of {exchange} failed due to: {error}",
-        "title": "Exchange setup"
+        "description": "La configuración de {exchange} falló debido a: {error}",
+        "title": "Configuración de Exchange"
       },
       "historic_fetch_price": {
         "task": {
-          "description": "Fetching rate from {fromAsset} to {toAsset} on {date} | Fetching rates for {count} pairs to {toAsset}",
-          "title": "Fetching conversion rate"
+          "description": "Recuperando tipos de {fromAsset} a {toAsset} en {date} | Recuperando tasas para {count} pares a {toAsset}",
+          "title": "Recuperando el tipo de intercambio"
         }
       },
       "loopring": {
         "error": {
-          "description": "Querying Loopring balances failed: {error}",
-          "title": "Querying Loopring balances"
+          "description": "La consulta de balances de Loopring falló: {error}",
+          "title": "Consultando balances de Loopring"
         },
         "task": {
-          "title": "Querying Loopring balances"
+          "title": "Consultando balances de Loopring"
         }
       },
       "manual_balances": {
         "error": {
-          "message": "Failed: {message}",
-          "title": "Retrieving manual balances"
+          "message": "Falló: {message}",
+          "title": "Recuperando balances manuales"
         }
       },
       "manual_delete": {
         "error": {
-          "title": "Deleting Manual Balance"
+          "title": "Eliminando balance manual"
         }
       },
       "xpub_removal": {
         "error": {
-          "description": "Failed to remove {xpub}: {error}",
-          "title": "Xpub Removal"
+          "description": "Falló al eliminar {xpub}: {error}",
+          "title": "Eliminación de Xpub"
         },
         "task": {
           "description": "{xpub}",
-          "title": "Removing xpub"
+          "title": "Eliminando xpub"
         }
       }
     },
@@ -595,16 +595,6 @@
         }
       }
     },
-    "trades": {
-      "error": {
-        "description": "Failed query for {exchange}: {error}",
-        "title": "Trades for {exchange}"
-      },
-      "task": {
-        "description": "Retrieving trades for {exchange}",
-        "title": "Trades"
-      }
-    },
     "transactions": {
       "error": {
         "description": "Failed query for {address} ({chain}): {error}",
@@ -798,6 +788,7 @@
       "add_mapping": "Añadir cartografía",
       "add_title": "Añadir una nueva asignación",
       "all_exchanges": "Todos los intercambios",
+      "asset_symbol": "Símbolo del activo",
       "confirm_delete": {
         "message": "¿Está seguro de que desea eliminar la asignación de activos para el símbolo {asset} en {location}?",
         "title": "Eliminar asignación de activos de bolsa"
@@ -813,7 +804,7 @@
         "location_non_empty": "El campo ubicación no puede estar vacío",
         "location_symbol_non_empty": "El campo de símbolo de activo no puede estar vacío"
       },
-      "location_symbol": "Símbolo del activo",
+      "location_symbol": "Símbolo del activo en la bolsa",
       "recognized_as": "Reconocido como",
       "save_for_all": "Guardar esta asignación para todas las bolsas",
       "subtitle": "Puede vincular símbolos de activos en una bolsa centralizada con activos reconocidos por rotki. Esto es necesario para que rotki pueda procesar activos en las bolsas."
@@ -1093,52 +1084,6 @@
       "password_mismatch": "The password confirmation does not match the provided password"
     }
   },
-  "closed_trades": {
-    "confirmation": {
-      "message": "Are you sure you want to delete the following trade: {action} of {amount} {pair}",
-      "multiple_message": "Are you sure you want to delete these {length} trades?",
-      "title": "Delete Trade"
-    },
-    "delete_tooltip": "Delete trade",
-    "description": {
-      "for": "for",
-      "with": "with"
-    },
-    "details": {
-      "link": "Link",
-      "title": "Trade Details"
-    },
-    "dialog": {
-      "add": {
-        "title": "Add an external trade"
-      },
-      "edit": {
-        "subtitle": "Edit an existing trade",
-        "title": "Edit External Trade"
-      }
-    },
-    "edit_tooltip": "Edit trade",
-    "filter": {
-      "base_asset": "filter by the base asset of the trade",
-      "date_hint": "format {format} HH:mm:ss (time/seconds are optional)",
-      "end_date": "filter by the end date of the trade period",
-      "location": "filter by the trade location",
-      "quote_asset": "filter by the quote asset of the trade",
-      "start_date": "filter by the start date of the trade period",
-      "trade_type": "filter by the trade action (buy or sell)"
-    },
-    "headers": {
-      "action": "Action",
-      "base": "Base",
-      "quote": "Quote",
-      "rate": "Rate"
-    },
-    "hide_ignored_trades": "Hide ignored trades",
-    "label": "Intercambios",
-    "refresh_tooltip": "Refrescar intercambios",
-    "selected": "{count} interambio(s) seleccionados",
-    "title": "Exchange Trades"
-  },
   "collapsed_pending_tasks": {
     "cancel_task": "Cancelar tarea",
     "cancel_task_info": "Esta acción dejará el proceso en ejecución ({title}) en un estado inacabado, ¿está seguro de que desea cancelarlo?",
@@ -1185,7 +1130,6 @@
     "amount": "Cantidad",
     "asset": "Activo",
     "assets": "Activos",
-    "available_to_premium": "solo disponible para usuarios premium.",
     "balance": "Balance",
     "category": "Categoría",
     "claimed": "Reclamada",
@@ -1202,7 +1146,6 @@
     "location": "Ubicación",
     "name": "Name",
     "never": "Nunca",
-    "no_premium": "No premium subscription detected. ",
     "notes": "Notas",
     "of": "de",
     "optional": "Opcional",
@@ -1220,8 +1163,7 @@
     "unclaimed": "No reclamado",
     "unknown": "Desconocido",
     "validator_index": "Índice de validador",
-    "value_in_symbol": "{symbol} Value",
-    "visit_website": "To get a premium subscription please visit our {0}."
+    "value_in_symbol": "{symbol} Value"
   },
   "conflict_dialog": {
     "action": {
@@ -1782,64 +1724,6 @@
     },
     "subtitle": "rotki connects to various service providers in order to obtain information such as historical prices or blockchain data. In certain cases rotki depends on these APIs for basic information, in which case you will need to provide an API key."
   },
-  "external_trade_form": {
-    "amount": {
-      "hint": "Amount bought/sold"
-    },
-    "base_asset": {
-      "hint": "The base asset of the trade",
-      "label": "Base Asset"
-    },
-    "buy_quote": "With",
-    "date": {
-      "hint": "Time the trade took place"
-    },
-    "fee": {
-      "hint": "[Optional] Fee if any of the trade that occurred"
-    },
-    "fee_currency": {
-      "hint": "[Optional] The currency used for the fee",
-      "label": "Fee Currency"
-    },
-    "link": {
-      "hint": "[Optional] A link to the trade. e.g. in an explorer",
-      "label": "Link"
-    },
-    "notes": {
-      "hint": "[Optional] Additional notes to store for the trade",
-      "label": "Additional notes"
-    },
-    "quote_amount": {
-      "label": "Quote amount bought/sold"
-    },
-    "quote_asset": {
-      "hint": "The quote asset of the trade",
-      "label": "Quote Asset"
-    },
-    "rate": {
-      "label": "Rate of the trade"
-    },
-    "rate_not_found": "We could not find a rate for the specified pair.",
-    "sell_quote": "For",
-    "summary": {
-      "buy": "{label}: Buy {amount} {base} with {quote} for {rate} {quote} per {base}",
-      "label": "Summary",
-      "sell": "{label}: Sell {amount} {base} for {quote} for {rate} {quote} per {base}"
-    },
-    "trade_type": {
-      "buy": "Buy",
-      "label": "Trade type",
-      "sell": "Sell"
-    },
-    "validation": {
-      "non_empty_amount": "The amount cannot be empty",
-      "non_empty_base": "The base asset cannot be empty",
-      "non_empty_fee": "The fee cannot be empty when fee currency is inputted",
-      "non_empty_fee_currency": "The fee currency cannot be empty when fee is inputted",
-      "non_empty_quote": "The quote asset cannot be empty",
-      "non_empty_rate": "The rate cannot be empty"
-    }
-  },
   "file_upload": {
     "date_input_format": {
       "hint": "Use this if date format in your file is: {format}",
@@ -2232,9 +2116,6 @@
     },
     "title": "Earned Per Asset"
   },
-  "liquity_page": {
-    "no_premium": "Liquity Staking"
-  },
   "liquity_pools": {
     "liquidation_gains": "Unclaimed liquidation gains",
     "no_lusd_deposited": "No LUSD deposited",
@@ -2439,10 +2320,6 @@
       "airdrops": "Airdrops"
     },
     "history": "Historial",
-    "history_sub": {
-      "history_events": "Historia Eventos",
-      "trades": "Intercambios en Exch."
-    },
     "import_data": "Import Data",
     "locations": "Locations",
     "manage_address_book": "Manage Address Book",
@@ -2481,11 +2358,6 @@
       "collection": "Collection"
     },
     "upgrade": "Displaying {limit} NFTs. To view more please upgrade to {link}"
-  },
-  "no_premium_placeholder": {
-    "get_premium": "@:common.visit_website",
-    "no_premium": "@:common.no_premium",
-    "premium_only": " {text} @:common.available_to_premium"
   },
   "no_task_running": {
     "description": "No Pending tasks"
@@ -3154,22 +3026,11 @@
   "task_manager": {
     "error": "An error occurred while processing task [{taskId}] '{title}': {error}"
   },
-  "theme_manager_lock": {
-    "description": "Theme customization is only available with a premium subscription",
-    "subtitle": "Manage colors for the app theme",
-    "title": "Theme"
-  },
-  "theme_switch_lock": {
-    "tooltip": "Switching to dark mode is only available under a premium subscription"
-  },
   "timeframe_settings": {
     "default_timeframe": "Dashboard graph default timeframe",
     "default_timeframe_description": "Set the default time frame for the dashboard graph. This timeframe will be pre-selected upon login. By default it will remember the previous session's selection.",
     "inactive_timeframes": "Inactive Timeframes",
     "visible_timeframes": "Visible Timeframes"
-  },
-  "trade_history": {
-    "loading": "Please wait while your trades are getting loaded..."
   },
   "transactions": {
     "actions": {
@@ -3221,7 +3082,7 @@
         }
       },
       "export": {
-        "confirmation_message": "¿Estás seguro de que deseas exportar este documento con los filtros seleccionados aplicados?"
+        "confirmation_message": "¿Estás seguro de que deseas exportar la lista de eventos con los filtros seleccionados aplicados?"
       },
       "form": {
         "amount": {

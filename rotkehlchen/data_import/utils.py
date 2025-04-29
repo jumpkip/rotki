@@ -8,10 +8,11 @@ from rotkehlchen.api.websockets.typedefs import ProgressUpdateSubType, WSMessage
 from rotkehlchen.assets.converters import LOCATION_TO_ASSET_MAPPING, asset_from_common_identifier
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.errors.misc import InputError
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.serialization.deserialize import deserialize_asset_amount, deserialize_timestamp
-from rotkehlchen.types import AssetAmount, Fee, Location, TimestampMS
+from rotkehlchen.serialization.deserialize import deserialize_fval, deserialize_timestamp
+from rotkehlchen.types import Location, TimestampMS
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -19,7 +20,8 @@ if TYPE_CHECKING:
     from rotkehlchen.assets.asset import Asset, AssetWithOracles
     from rotkehlchen.db.dbhandler import DBHandler
     from rotkehlchen.db.drivers.gevent import DBCursor
-    from rotkehlchen.exchanges.data_structures import MarginPosition, Trade
+    from rotkehlchen.exchanges.data_structures import MarginPosition
+    from rotkehlchen.fval import FVal
     from rotkehlchen.history.events.structures.asset_movement import AssetMovementExtraData
     from rotkehlchen.history.events.structures.base import HistoryBaseEntry
 
@@ -36,7 +38,6 @@ class BaseExchangeImporter(ABC):
     def __init__(self, db: 'DBHandler', name: str) -> None:
         self.db = db
         self.history_db = DBHistoryEvents(self.db)
-        self._trades: list[Trade] = []
         self._margin_trades: list[MarginPosition] = []
         self._history_events: list[HistoryBaseEntry] = []
         self.name = name
@@ -92,10 +93,6 @@ class BaseExchangeImporter(ABC):
         - InputError if one of the rows is malformed
         """
 
-    def add_trade(self, write_cursor: 'DBCursor', trade: 'Trade') -> None:
-        self._trades.append(trade)
-        self.maybe_flush_all(write_cursor)
-
     def add_margin_trade(self, write_cursor: 'DBCursor', margin_trade: 'MarginPosition') -> None:
         self._margin_trades.append(margin_trade)
         self.maybe_flush_all(write_cursor)
@@ -105,14 +102,12 @@ class BaseExchangeImporter(ABC):
         self.maybe_flush_all(write_cursor)
 
     def maybe_flush_all(self, cursor: 'DBCursor') -> None:
-        if len(self._trades) + len(self._margin_trades) + len(self._history_events) >= ITEMS_PER_DB_WRITE:  # noqa: E501
+        if len(self._margin_trades) + len(self._history_events) >= ITEMS_PER_DB_WRITE:
             self.flush_all(cursor)
 
     def flush_all(self, write_cursor: 'DBCursor') -> None:
-        self.db.add_trades(write_cursor, trades=self._trades)
         self.db.add_margin_positions(write_cursor, margin_positions=self._margin_trades)
         self.history_db.add_history_events(write_cursor, history=self._history_events)
-        self._trades = []
         self._margin_trades = []
         self._history_events = []
 
@@ -168,13 +163,17 @@ class SkippedCSVEntry(Exception):
 def process_rotki_generic_import_csv_fields(
         csv_row: dict[str, Any],
         currency_colname: str,
-) -> tuple['AssetWithOracles', Fee | None, 'Asset | None', Location, TimestampMS]:
+) -> tuple['AssetWithOracles', 'FVal | None', 'Asset | None', Location, TimestampMS]:
     """
     Process the imported csv for generic rotki trades and events
     """
-    location = Location.deserialize(csv_row['Location'])
+    try:
+        location = Location.deserialize(csv_row['Location'])
+    except DeserializationError:
+        location = Location.EXTERNAL
+
     timestamp = TimestampMS(deserialize_timestamp(csv_row['Timestamp']))
-    fee = Fee(deserialize_asset_amount(csv_row['Fee'])) if csv_row['Fee'] else None
+    fee = deserialize_fval(csv_row['Fee']) if csv_row['Fee'] else None
     asset_mapping = LOCATION_TO_ASSET_MAPPING.get(location, asset_from_common_identifier)
     asset = asset_mapping(csv_row[currency_colname])
     fee_currency = (
@@ -193,7 +192,7 @@ def hash_csv_row(csv_row: Mapping[str, Any]) -> str:
 def detect_duplicate_event(
         event_type: HistoryEventType,
         event_subtype: HistoryEventSubType,
-        amount: AssetAmount,
+        amount: 'FVal',
         asset: 'Asset',
         timestamp_ms: TimestampMS,
         location: Location,

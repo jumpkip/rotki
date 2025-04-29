@@ -21,7 +21,8 @@ import { useRefresh } from '@/composables/balances/refresh';
 import { useBlockchains } from '@/composables/blockchain';
 import { AccountExternalFilterSchema, type Filters, type Matcher, useBlockchainAccountFilter } from '@/composables/filters/blockchain-account';
 import { usePaginationFilters } from '@/composables/use-pagination-filter';
-import { useBlockchainStore } from '@/store/blockchain';
+import { useBlockchainAccountData } from '@/modules/balances/blockchain/use-blockchain-account-data';
+import { useConfirmStore } from '@/store/confirm';
 import { SavedFilterLocation } from '@/types/filtering';
 import { getAccountAddress, getGroupId } from '@/utils/blockchain/accounts/utils';
 import { fromUriEncoded, toUriEncoded } from '@/utils/route-uri';
@@ -32,7 +33,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: 'edit', account: AccountManageState): void;
+  edit: [account: AccountManageState];
 }>();
 
 const { category } = toRefs(props);
@@ -46,9 +47,7 @@ const tab = ref<number>(0);
 const expanded = ref<string[]>([]);
 const query = ref<LocationQuery>({});
 
-const blockchainStore = useBlockchainStore();
-const { fetchAccounts: fetchAccountsPage } = blockchainStore;
-const { groups } = storeToRefs(blockchainStore);
+const { fetchAccounts: fetchAccountsPage } = useBlockchainAccountData();
 const { handleBlockchainRefresh, refreshBlockchainBalances } = useRefresh();
 const { fetchAccounts } = useBlockchains();
 
@@ -123,9 +122,17 @@ function getChains(row: BlockchainAccountGroupWithBalance): string[] {
   return excludedChains ? chains.filter(chain => !excludedChains.includes(chain)) : chains;
 }
 
-watchImmediate(groups, async () => {
-  await fetchData();
-});
+const { show } = useConfirmStore();
+
+function redetectAllClicked() {
+  show({
+    message: t('account_balances.detect_tokens.confirmation.message'),
+    title: t('account_balances.detect_tokens.confirmation.title'),
+    type: 'info',
+  }, () => {
+    handleBlockchainRefresh(undefined, true);
+  });
+}
 
 watchDebounced(
   logicOr(isDetectingTokens, isSectionLoading, operationRunning),
@@ -137,6 +144,10 @@ watchDebounced(
     debounce: 800,
   },
 );
+
+onMounted(async () => {
+  await fetchData();
+});
 
 defineExpose({
   refresh: async () => {
@@ -177,7 +188,7 @@ defineExpose({
                   color="primary"
                   :loading="isDetectingTokens"
                   :disabled="refreshDisabled"
-                  @click="handleBlockchainRefresh(undefined, true)"
+                  @click="redetectAllClicked()"
                 >
                   <template #prepend>
                     <RuiIcon name="lu-refresh-ccw" />
@@ -189,7 +200,7 @@ defineExpose({
               {{ t('account_balances.detect_tokens.tooltip.redetect_all') }}
             </RuiTooltip>
 
-            <DetectTokenChainsSelection />
+            <DetectTokenChainsSelection @redetect:all="redetectAllClicked()" />
           </RuiButtonGroup>
 
           <DetectEvmAccounts />
@@ -219,7 +230,7 @@ defineExpose({
       :data-category="category"
       :category="category"
       class="mt-4"
-      group
+      group="evm"
       :accounts="accounts"
       @edit="emit('edit', $event)"
       @refresh="fetchData()"
@@ -238,6 +249,7 @@ defineExpose({
               :chains="getChains(row)"
               :tags="visibleTags"
               :group-id="getGroupId(row)"
+              :group="row.data.type === 'xpub' ? 'xpub' : undefined"
               :category="row.category || ''"
               @edit="emit('edit', $event)"
             />

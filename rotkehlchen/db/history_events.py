@@ -8,6 +8,7 @@ from pysqlcipher3 import dbapi2 as sqlcipher
 
 from rotkehlchen.api.websockets.typedefs import ProgressUpdateSubType, WSMessageType
 from rotkehlchen.assets.asset import Asset
+from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants import ZERO
 from rotkehlchen.constants.limits import FREE_HISTORY_EVENTS_LIMIT
 from rotkehlchen.db.constants import (
@@ -34,6 +35,7 @@ from rotkehlchen.db.filtering import (
 from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.errors.misc import InputError
 from rotkehlchen.errors.serialization import DeserializationError
+from rotkehlchen.exchanges.constants import ALL_SUPPORTED_EXCHANGES
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.asset_movement import AssetMovement
 from rotkehlchen.history.events.structures.base import (
@@ -47,6 +49,7 @@ from rotkehlchen.history.events.structures.eth2 import (
     EthWithdrawalEvent,
 )
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
+from rotkehlchen.history.events.structures.evm_swap import EvmSwapEvent
 from rotkehlchen.history.events.structures.swap import SwapEvent
 from rotkehlchen.history.price import query_usd_price_or_use_default
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -54,6 +57,7 @@ from rotkehlchen.serialization.deserialize import deserialize_fval
 from rotkehlchen.types import (
     EVM_EVMLIKE_LOCATIONS_TYPE,
     ChainID,
+    ChecksumEvmAddress,
     EVMTxHash,
     Location,
     SupportedBlockchain,
@@ -461,9 +465,7 @@ class DBHistoryEvents:
         if filter_query.pagination is not None:
             base_query = f'SELECT * FROM ({base_query}) {filter_query.pagination.prepare()}'
 
-        ethereum_tracked_accounts = self.db.get_blockchain_accounts(cursor).get(
-            SupportedBlockchain.ETHEREUM,
-        )
+        ethereum_tracked_accounts: set[ChecksumEvmAddress] | None = None
         cursor.execute(base_query, filters_bindings)
         output: list[HistoryBaseEntry] | list[tuple[int, HistoryBaseEntry]] = []
         type_idx = 1 if group_by_event_ids else 0
@@ -495,6 +497,14 @@ class DBHistoryEvents:
                     if entry_type == HistoryBaseEntryType.ETH_WITHDRAWAL_EVENT:
                         deserialized_event = EthWithdrawalEvent.deserialize_from_db(data)
                     else:
+                        if ethereum_tracked_accounts is None:  # do the query only once if needed
+                            with self.db.conn.read_ctx() as second_cursor:
+                                second_cursor.execute(
+                                    'SELECT account FROM blockchain_accounts WHERE blockchain=?',
+                                    (SupportedBlockchain.ETHEREUM.get_key().upper(),),
+                                )
+                                ethereum_tracked_accounts = {string_to_evm_address(row[0]) for row in second_cursor}  # noqa: E501
+
                         deserialized_event = EthBlockEvent.deserialize_from_db(data, fee_recipient_tracked=location_label_tuple[0] in ethereum_tracked_accounts)  # noqa: E501
 
                 elif entry_type == HistoryBaseEntryType.ETH_DEPOSIT_EVENT:
@@ -512,6 +522,7 @@ class DBHistoryEvents:
                     deserialized_event = (
                         AssetMovement if entry_type == HistoryBaseEntryType.ASSET_MOVEMENT_EVENT else  # noqa: E501
                         SwapEvent if entry_type == HistoryBaseEntryType.SWAP_EVENT else
+                        EvmSwapEvent if entry_type == HistoryBaseEntryType.EVM_SWAP_EVENT else
                         HistoryEvent
                     ).deserialize_from_db(data)
             except (DeserializationError, UnknownAsset) as e:
@@ -682,6 +693,12 @@ class DBHistoryEvents:
         if entries_limit is None:
             return count_without_limit, count_without_limit
 
+        # When we have a limit but the total is already smaller or equal,
+        # just return the total for both counts
+        if count_without_limit <= entries_limit:
+            return count_without_limit, count_without_limit
+
+        # Otherwise, get the limited count
         free_query, free_bindings = self._create_history_events_query(
             has_premium=False,
             filter_query=query_filter,
@@ -692,6 +709,12 @@ class DBHistoryEvents:
             f'SELECT COUNT(*) FROM ({free_query})',
             free_bindings,
         ).fetchone()[0]
+
+        # If we're grouping by event IDs and got 0 results but should have some,
+        # fall back to using the minimum of limit and total
+        if group_by_event_ids and count_with_limit == 0 and entries_limit > 0:
+            count_with_limit = min(entries_limit, count_without_limit)
+
         return count_without_limit, count_with_limit
 
     def get_amount_stats(
@@ -861,9 +884,9 @@ class DBHistoryEvents:
             )
             transactions_per_chain = {ChainID.deserialize_from_db(row[0]).name: row[1] for row in cursor}  # noqa: E501
             cursor.execute(
-                'SELECT location, COUNT(*) from trades '
-                'WHERE timestamp >= ? AND timestamp <= ? GROUP BY location',
-                (from_ts, to_ts),
+                f'SELECT location, COUNT(DISTINCT event_identifier) AS unique_events FROM history_events '  # noqa: E501
+                f'WHERE location IN ({",".join("?" * len(possible_trades_locations := ALL_SUPPORTED_EXCHANGES + (Location.EXTERNAL,)))}) AND timestamp BETWEEN ? AND ? GROUP BY location',  # noqa: E501
+                (*[i.serialize_for_db() for i in possible_trades_locations], from_ts_ms, to_ts_ms),
             )
             trades_by_exchange = {str(Location.deserialize_from_db(row[0])): row[1] for row in cursor}  # noqa: E501
             cursor.execute(

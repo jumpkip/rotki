@@ -234,7 +234,7 @@ def test_native_token_balance(
         patch.object(blockchain.polygon_pos.node_inquirer, 'default_call_order', mock_default_call_order),  # noqa: E501
         patch(
             'rotkehlchen.globaldb.handler.GlobalDBHandler.get_token_detection_data',
-            new=lambda *args, **kwargs: [EvmTokenDetectionData(
+            new=lambda *args, **kwargs: ([EvmTokenDetectionData(
                 identifier=pol.identifier,
                 address=pol.evm_address,
                 decimals=pol.decimals,  # type: ignore
@@ -250,7 +250,7 @@ def test_native_token_balance(
                 identifier=usdt.identifier,
                 address=usdt.evm_address,
                 decimals=usdt.decimals,  # type: ignore
-            )],
+            )], []),
         ),
     ):
         blockchain.polygon_pos.tokens.detect_tokens(
@@ -264,16 +264,10 @@ def test_native_token_balance(
                 amount=FVal('8.204435619126641457'),
                 usd_value=FVal('12.3066534286899621855'),
             ),
-            usdc: Balance(
-                amount=FVal('0.33078'),
-                usd_value=FVal('0.496170'),
-            ),
+            usdc: Balance(amount=FVal('0.33078'), usd_value=FVal(0.496170)),
             weth: Balance(
                 amount=FVal('0.007712106620416874'),
-                usd_value=FVal('0.0115681599306253110'),
+                usd_value=FVal(0.0115681599306253110),
             ),
-            usdt: Balance(
-                amount=FVal('0.074222'),
-                usd_value=FVal('0.1113330'),
-            ),
+            usdt: Balance(amount=FVal('0.074222'), usd_value=FVal(0.1113330)),
         }

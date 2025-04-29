@@ -1,14 +1,21 @@
 from typing import Final, Literal, get_args
 
+from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.types import ChainID
 
 CPT_CURVE: Final = 'curve'
+CURVE_COUNTERPARTY_DETAILS: Final = CounterpartyDetails(
+    identifier=CPT_CURVE,
+    label='Curve.fi',
+    image='curve.png',
+)
 ADD_LIQUIDITY_EVENTS: Final = {
     b'B?d\x95\xa0\x8f\xc6RB\\\xf4\xed\r\x1f\x9e7\xe5q\xd9\xb9R\x9b\x1c\x1c#\xcc\xe7\x80\xb2\xe7\xdf\r',  # ADD_LIQUIDITY  # noqa: E501
     b'&\xf5Z\x85\x08\x1d$\x97N\x85\xc6\xc0\x00E\xd0\xf0E9\x91\xe9Xs\xf5+\xff\r!\xaf@y\xa7h',  # ADD_LIQUIDITY_2_ASSETS  # noqa: E501
     b'?\x19\x15w^\x0c\x9a8\xa5z{\xb7\xf1\xf9\x00_Ho\xb9\x04\xe1\xf8J\xa2\x156MVs\x19\xa5\x8d',  # ADD_LIQUIDITY_4_ASSETS  # noqa: E501
     b'\x18\x9cb;fk\x1bE\xb8=qx\xf3\x9b\x8c\x08|\xb0\x97t1|\xa2\xf5<-<7&\xf2"\xa2',  # AddLiquidity in DepositAndStake Zap  # noqa: E501
+    b'q\x96\xcb\xf6=\xf1\xf2\xec c\x8eh>\xbeQ\xd1\x82`\xbeQ\x05\x92\xee\x1e.\xfe?<\xfdL3\xe9',  # AddLiquidity used in CurveTwocryptoOptimized  #  noqa: E501
 }
 ADD_LIQUIDITY_IN_DEPOSIT_AND_STAKE = b'T\n\xb3\x85\xf9\xb5\xd4P\xa2t\x04\x17,\xaa\xdeQk;\xa3\xf4\xbe\x88#\x9a\xc5j*\xd1\xde*\x1fZ'  # noqa: E501
 REMOVE_LIQUIDITY_IMBALANCE: Final = {
@@ -22,6 +29,7 @@ REMOVE_LIQUIDITY_EVENTS: Final = {
     b"Z\xd0V\xf2\xe2\x8a\x8c\xec# \x15@k\x846h\xc1\xe3l\xdaY\x81'\xec;\x8cY\xb8\xc7's\xa0",  # REMOVE_LIQUIDITY  # noqa: E501,
     b'\xa4\x9dL\xf0&V\xae\xbf\x8cw\x1fZ\x85\x85c\x8a*\x15\xeel\x97\xcfr\x05\xd4 \x8e\xd7\xc1\xdf%-',  # REMOVE_LIQUIDITY_3_ASSETS  # noqa: E501
     b'\x98x\xca7^\x10o*C\xc3\xb5\x99\xfcbEh\x13\x1cL\x9aK\xa6j\x14V7\x15v;\xe9\xd5\x9d',  # REMOVE_LIQUIDITY_4_ASSETS  # noqa: E501
+    b'\xdd<\x036\xa1o\x1bd\xf1r\xb7\xbb\r\xad[+<|v\xf9\x1e\x8cJ\xaf\xd6\xaa\xe6\r\xce\x80\x01S',  # RemoveLiquidity in CurveTwocryptoOptimized  # noqa: E501
 }
 GAUGE_DEPOSIT: Final = b'\xe1\xff\xfc\xc4\x92=\x04\xb5Y\xf4\xd2\x9a\x8b\xfcl\xda\x04\xeb[\r<F\x07Q\xc2@,\\\\\xc9\x10\x9c'  # noqa: E501
 GAUGE_WITHDRAW: Final = b'\x88N\xda\xd9\xceo\xa2D\r\x8aT\xcc\x124\x90\xeb\x96\xd2v\x84y\xd4\x9f\xf9\xc76a%\xa9BCd'  # noqa: E501
@@ -33,6 +41,7 @@ TOKEN_EXCHANGE_NG: Final = b'\x14?\x1f\x8e\x86\x1f\xbd\xed\xdd[F\xe8D\xb7\xd3\xa
 EXCHANGE_MULTIPLE: Final = b'\x14\xb5a\x17\x8a\xe0\xf3h\xf4\x0f\xaf\xd0H\\Oq)\xeaq\xcd\xc0\x0bL\xe1\xe5\x94\x0f\x9b\xc6Y\xc8\xb2'  # noqa: E501
 # token exchange topic of new generation (NG) router
 EXCHANGE_NG: Final = b'V\xd0f\x1e$\r\xfb\x19\x9e\xf1\x96\xe1noBG9\x906c\x14\xf0"j\xc9x\xf7\xbe<\xd9\xee\x83'  # noqa: E501
+MINTED_CRV: Final = b'\x9d"\x8di\xb5\xfd\xb8\xd2s\xa23o\x8f\xb8a-\x03\x961\x02N\xa9\xbf\t\xc4$\xa9P:\xa0x\xf0'  # noqa: E501
 
 # list of pools that we know contain bad tokens
 IGNORED_CURVE_POOLS = {'0x066B6e1E93FA7dcd3F0Eb7f8baC7D5A747CE0BF9'}
@@ -67,3 +76,4 @@ CURVE_METAREGISTRY_METHODS = [
 CURVE_ADDRESS_PROVIDER: Final = string_to_evm_address('0x5ffe7FB82894076ECB99A30D6A32e969e6e35E98')
 CURVE_SWAP_ROUTER_NG: Final = string_to_evm_address('0xF0d4c12A5768D806021F80a262B4d39d26C58b8D')
 DEPOSIT_AND_STAKE_ZAP: Final = string_to_evm_address('0x37c5ab57AF7100Bdc9B668d766e193CCbF6614FD')
+CHILD_LIQUIDITY_GAUGE_FACTORY: Final = string_to_evm_address('0xabC000d88f23Bb45525E447528DBF656A9D55bf5')  # noqa: E501

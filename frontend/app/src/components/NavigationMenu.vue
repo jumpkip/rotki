@@ -95,26 +95,26 @@ const navItems: MenuItem[] = [
     ],
   },
   {
+    class: 'trade',
+    type: 'group',
+    ...Routes.ONCHAIN,
+    items: [
+      {
+        class: 'onchain-send',
+        type: 'item',
+        ...Routes.ONCHAIN_SEND,
+      },
+    ],
+  },
+  {
     class: 'nfts',
     type: 'item',
     ...Routes.NFTS,
   },
   {
     class: 'history',
-    type: 'group',
+    type: 'item',
     ...Routes.HISTORY,
-    items: [
-      {
-        class: 'history-trades',
-        type: 'item',
-        ...Routes.HISTORY_TRADES,
-      },
-      {
-        class: 'history-events',
-        type: 'item',
-        ...Routes.HISTORY_EVENTS,
-      },
-    ],
   },
   {
     class: 'airdrops',

@@ -600,16 +600,6 @@
         }
       }
     },
-    "trades": {
-      "error": {
-        "description": "{exchange} 查询失败：{error}",
-        "title": "交易 {exchange}"
-      },
-      "task": {
-        "description": "检索{exchange}的交易",
-        "title": "交易"
-      }
-    },
     "transactions": {
       "error": {
         "description": "{address} ({chain}) 查询失败：{error}",
@@ -806,6 +796,7 @@
       "add_mapping": "添加映射",
       "add_title": "添加新映射",
       "all_exchanges": "所有交易所",
+      "asset_symbol": "资产符号",
       "confirm_delete": {
         "message": "您确定要删除 {location} 中符号 {asset} 的资产映射吗？",
         "title": "删除交易所资产映射"
@@ -821,7 +812,7 @@
         "location_non_empty": "位置字段不能为空",
         "location_symbol_non_empty": "资产符号字段不能为空"
       },
-      "location_symbol": "资产符号",
+      "location_symbol": "交易所中的资产符号",
       "recognized_as": "确认为",
       "save_for_all": "为所有交易所保存此映射",
       "subtitle": "您可以将中央交易所的资产符号与 rotki 识别的资产联系起来。这是 rotki 处理交易所资产所必需的。"
@@ -1126,52 +1117,6 @@
       "password_mismatch": "密码确认与提供的密码不匹配"
     }
   },
-  "closed_trades": {
-    "confirmation": {
-      "message": "您确定要删除以下交易：{action} of {amount} {pair}",
-      "multiple_message": "您确定要删除这些 {length} 笔交易吗？",
-      "title": "删除交易"
-    },
-    "delete_tooltip": "删除交易",
-    "description": {
-      "for": "为了",
-      "with": "与"
-    },
-    "details": {
-      "link": "链接",
-      "title": "交易详情"
-    },
-    "dialog": {
-      "add": {
-        "title": "添加对外贸易"
-      },
-      "edit": {
-        "subtitle": "编辑现有交易",
-        "title": "编辑对外交易"
-      }
-    },
-    "edit_tooltip": "编辑交易",
-    "filter": {
-      "base_asset": "按交易基础资产筛选",
-      "date_hint": "格式 {format} HH:mm:ss(时间/秒可选)",
-      "end_date": "按交易期结束日期过滤",
-      "location": "按交易地点过滤",
-      "quote_asset": "按交易的报价资产过滤",
-      "start_date": "按交易周期的开始日期筛选",
-      "trade_type": "按交易行为过滤（买入或卖出）"
-    },
-    "headers": {
-      "action": "动作",
-      "base": "基地",
-      "quote": "引用",
-      "rate": "率"
-    },
-    "hide_ignored_trades": "隐藏忽略的交易",
-    "label": "交易",
-    "refresh_tooltip": "刷新交易",
-    "selected": "{count} 笔交易已选择",
-    "title": "关闭订单"
-  },
   "collapsed_pending_tasks": {
     "cancel_task": "取消任务",
     "cancel_task_info": "此操作将使正在运行的进程 ({title}) 处于未完成状态，您确定要取消吗？",
@@ -1218,7 +1163,6 @@
     "amount": "金额",
     "asset": "资产",
     "assets": "资产",
-    "available_to_premium": "仅对高级用户可用。",
     "balance": "余额",
     "category": "类别",
     "claimed": "声称",
@@ -1241,7 +1185,6 @@
     "multi_chain": "多链",
     "name": "姓名",
     "never": "从不",
-    "no_premium": "未检测到高级订阅。",
     "notes": "备注",
     "of": "of",
     "optional": "可选",
@@ -1260,8 +1203,7 @@
     "unclaimed": "无人认领",
     "unknown": "未知",
     "validator_index": "验证器索引",
-    "value_in_symbol": "{symbol} 值",
-    "visit_website": "要获得高级订阅，请访问我们的 {0}."
+    "value_in_symbol": "{symbol} 值"
   },
   "conflict_dialog": {
     "action": {
@@ -1837,64 +1779,6 @@
     },
     "subtitle": "rotki 连接到各种服务提供商,以获取历史价格或区块链数据等信息。在某些情况下,rotki 依赖这些 API 获取基本信息，在这种情况下，您需要提供 API 密钥。"
   },
-  "external_trade_form": {
-    "amount": {
-      "hint": "买入/卖出金额"
-    },
-    "base_asset": {
-      "hint": "交易的基础资产",
-      "label": "基础资产"
-    },
-    "buy_quote": "与",
-    "date": {
-      "hint": "交易发生的时间"
-    },
-    "fee": {
-      "hint": "[可选]如果发生任何交易则收取费用"
-    },
-    "fee_currency": {
-      "hint": "[可选] 费用使用的货币",
-      "label": "手续费币种"
-    },
-    "link": {
-      "hint": "[可选] 交易链接。例如在浏览器中",
-      "label": "链接"
-    },
-    "notes": {
-      "hint": "[可选] 为交易存储的附加说明",
-      "label": "补充说明"
-    },
-    "quote_amount": {
-      "label": "报价买入/卖出金额"
-    },
-    "quote_asset": {
-      "hint": "交易的报价资产",
-      "label": "报价资产"
-    },
-    "rate": {
-      "label": "交易费率"
-    },
-    "rate_not_found": "我们找不到指定货币对的汇率。",
-    "sell_quote": "对于",
-    "summary": {
-      "buy": "{label}: 用 {quote} 以每 {base} {rate} {quote} 的价格购买 {amount} {base}",
-      "label": "总结",
-      "sell": "{label}：以每 {base} 的 {rate} {quote} 价格以 {quote} 价格出售 {amount} {base}"
-    },
-    "trade_type": {
-      "buy": "买",
-      "label": "交易类型",
-      "sell": "卖"
-    },
-    "validation": {
-      "non_empty_amount": "金额不能为空",
-      "non_empty_base": "基础资产不能为空",
-      "non_empty_fee": "输入费用币种时费用不能为空",
-      "non_empty_fee_currency": "输入费用时费用货币不能为空",
-      "non_empty_quote": "报价资产不能为空",
-      "non_empty_rate": "费率不能为空"
-    }
-  },
   "file_upload": {
     "date_input_format": {
       "hint": "如果文件中的日期格式为：{format}，请使用此选项",
@@ -2292,9 +2176,6 @@
     },
     "title": "每项资产赚取"
   },
-  "liquity_page": {
-    "no_premium": "流动性质押"
-  },
   "liquity_pools": {
     "liquidation_gains": "无人认领的清算收益",
     "no_lusd_deposited": "没有存入 LUSD",
@@ -2526,10 +2407,6 @@
       "airdrops": "空投"
     },
     "history": "历史",
-    "history_sub": {
-      "history_events": "历史事件",
-      "trades": "交换。行业"
-    },
     "import_data": "导入数据",
     "locations": "地点",
     "manage_address_book": "管理地址簿",
@@ -2579,11 +2456,6 @@
       "collection": "收藏"
     },
     "upgrade": "显示 {limit} 个 NFT。要查看更多,请升级到 {link}"
-  },
-  "no_premium_placeholder": {
-    "get_premium": "@:common.visit_website",
-    "no_premium": "@:common.no_premium",
-    "premium_only": " {text} @:common.available_to_premium"
   },
   "no_task_running": {
     "description": "没有待处理的任务"
@@ -2835,12 +2707,6 @@
       "select_color": "选择颜色",
       "subtitle": "管理应用主题的颜色",
       "title": "主题"
-    },
-    "theme_switch": {
-      "auto": "自动（检测设备主题）",
-      "dark": "暗",
-      "light": "亮",
-      "tooltip": "切换到 {mode} 模式"
     },
     "unsupported_app_version": {
       "minimum_supported": "最低支持版本为 v{v}",
@@ -3296,22 +3162,17 @@
   "task_manager": {
     "error": "处理任务 [{taskId}] '{title}' 时出错：{error}"
   },
-  "theme_manager_lock": {
-    "description": "主题定制仅适用于高级订阅",
-    "subtitle": "管理应用主题的颜色",
-    "title": "主题"
-  },
-  "theme_switch_lock": {
-    "tooltip": "切换到黑暗模式仅在高级订阅下可用"
+  "theme_switch": {
+    "auto": "自动（检测设备主题）",
+    "dark": "暗",
+    "light": "亮",
+    "tooltip": "切换到 {mode} 模式"
   },
   "timeframe_settings": {
     "default_timeframe": "仪表板图形默认时间范围",
     "default_timeframe_description": "设置仪表板图表的默认时间范围。此时间范围将在登录时预先选择。默认情况下，它将记住上一个会话的选择。",
     "inactive_timeframes": "非活动时间帧",
     "visible_timeframes": "可见时间框架"
-  },
-  "trade_history": {
-    "loading": "正在加载您的交易，请稍候..."
   },
   "transactions": {
     "actions": {
@@ -3363,7 +3224,7 @@
         }
       },
       "export": {
-        "confirmation_message": "您确定要导出此文档并应用所选的过滤器吗？"
+        "confirmation_message": "您确定要导出已应用所选筛选器的事件列表吗？"
       },
       "form": {
         "amount": {

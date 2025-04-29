@@ -9,13 +9,18 @@ from rotkehlchen.db.drivers.gevent import DBCursor
 from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.errors.misc import InputError
 from rotkehlchen.errors.serialization import DeserializationError
-from rotkehlchen.exchanges.data_structures import Trade
+from rotkehlchen.history.events.structures.swap import (
+    create_swap_events,
+    deserialize_trade_type_is_buy,
+    get_swap_spend_receive,
+)
 from rotkehlchen.serialization.deserialize import (
-    deserialize_asset_amount,
-    deserialize_fee,
+    deserialize_fval,
+    deserialize_fval_or_zero,
     deserialize_timestamp_from_date,
 )
-from rotkehlchen.types import Location, Price, TradeType
+from rotkehlchen.types import AssetAmount, Location, Price
+from rotkehlchen.utils.misc import ts_sec_to_ms
 
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
@@ -40,59 +45,53 @@ class BisqTradesImporter(BaseExchangeImporter):
         """
         if csv_row['Status'] == 'Canceled':
             return
-        timestamp = deserialize_timestamp_from_date(
-            date=csv_row['Date/Time'],
-            formatstr=timestamp_format,
-            location='Bisq',
-        )
+
         # Get assets and amounts sold
-        offer = csv_row['Offer type'].split()
+        trade_type, base_asset_symbol = csv_row['Offer type'].split()
         assets1_symbol, assets2_symbol = csv_row['Market'].split('/')
-        if offer[0] == 'Sell':
-            trade_type = TradeType.SELL
-            if offer[1] == assets1_symbol:
-                base_asset = symbol_to_asset_or_token(assets1_symbol)
-                quote_asset = symbol_to_asset_or_token(assets2_symbol)
-            else:
-                base_asset = symbol_to_asset_or_token(assets2_symbol)
-                quote_asset = symbol_to_asset_or_token(assets1_symbol)
+        if base_asset_symbol == assets1_symbol:
+            base_asset = symbol_to_asset_or_token(assets1_symbol)
+            quote_asset = symbol_to_asset_or_token(assets2_symbol)
         else:
-            trade_type = TradeType.BUY
-            if offer[1] == assets1_symbol:
-                base_asset = symbol_to_asset_or_token(assets1_symbol)
-                quote_asset = symbol_to_asset_or_token(assets2_symbol)
-            else:
-                base_asset = symbol_to_asset_or_token(assets2_symbol)
-                quote_asset = symbol_to_asset_or_token(assets1_symbol)
+            base_asset = symbol_to_asset_or_token(assets2_symbol)
+            quote_asset = symbol_to_asset_or_token(assets1_symbol)
 
         if base_asset == A_BTC:
-            buy_amount = deserialize_asset_amount(csv_row['Amount in BTC'])
+            buy_amount = deserialize_fval(csv_row['Amount in BTC'])
         else:
-            buy_amount = deserialize_asset_amount(csv_row['Amount'])
+            buy_amount = deserialize_fval(csv_row['Amount'])
 
-        rate = Price(deserialize_asset_amount(csv_row['Price']))
         # Get trade fee
         if len(csv_row['Trade Fee BSQ']) != 0:
-            fee_amount = deserialize_fee(csv_row['Trade Fee BSQ'])
+            fee_amount = deserialize_fval_or_zero(csv_row['Trade Fee BSQ'])
             fee_currency = A_BSQ
         else:
-            fee_amount = deserialize_fee(csv_row['Trade Fee BTC'])
+            fee_amount = deserialize_fval_or_zero(csv_row['Trade Fee BTC'])
             fee_currency = A_BTC
 
-        trade = Trade(
-            timestamp=timestamp,
-            location=Location.BISQ,
+        spend, receive = get_swap_spend_receive(
+            is_buy=deserialize_trade_type_is_buy(trade_type),
             base_asset=base_asset,
             quote_asset=quote_asset,
-            trade_type=trade_type,
             amount=buy_amount,
-            rate=rate,
-            fee=fee_amount,
-            fee_currency=fee_currency,
-            link='',
-            notes=f'ID: {csv_row["Trade ID"]}',
+            rate=Price(deserialize_fval(csv_row['Price'])),
         )
-        self.add_trade(write_cursor, trade)
+        self.add_history_events(
+            write_cursor=write_cursor,
+            history_events=create_swap_events(
+                timestamp=ts_sec_to_ms(deserialize_timestamp_from_date(
+                    date=csv_row['Date/Time'],
+                    formatstr=timestamp_format,
+                    location='Bisq',
+                )),
+                location=Location.BISQ,
+                spend=spend,
+                receive=receive,
+                fee=AssetAmount(asset=fee_currency, amount=fee_amount),
+                unique_id=(trade_id := csv_row['Trade ID']),
+                spend_notes=f'ID: {trade_id}',
+            ),
+        )
 
     def _import_csv(self, write_cursor: DBCursor, filepath: Path, **kwargs: Any) -> None:
         """

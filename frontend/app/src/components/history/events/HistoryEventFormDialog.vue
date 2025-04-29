@@ -1,36 +1,25 @@
 <script lang="ts" setup>
-import type { HistoryEvent, HistoryEventEntry } from '@/types/history/events';
+import type {
+  GroupEventData,
+  StandaloneEventData,
+} from '@/modules/history/management/forms/form-types';
 import BigDialog from '@/components/dialogs/BigDialog.vue';
 import HistoryEventForm from '@/components/history/events/HistoryEventForm.vue';
-import { useHistoryEventsForm } from '@/composables/history/events/form';
 import { useTemplateRef } from 'vue';
 
-const open = defineModel<boolean>('open', { required: true });
+const modelValue = defineModel<GroupEventData | StandaloneEventData | undefined>({ required: true });
 
-const props = withDefaults(
-  defineProps<{
-    editableItem?: HistoryEventEntry;
-    nextSequence?: string;
-    loading?: boolean;
-    groupHeader?: HistoryEvent;
-    groupEvents?: HistoryEvent[];
-  }>(),
-  {
-    editableItem: undefined,
-    groupEvents: undefined,
-    groupHeader: undefined,
-    loading: false,
-    nextSequence: undefined,
-  },
-);
+withDefaults(defineProps<HistoryEventFormDialogProps>(), {
+  loading: false,
+});
 
 const emit = defineEmits<{
-  (e: 'refresh'): void;
+  refresh: [];
 }>();
 
-const { editableItem, groupHeader } = toRefs(props);
-
-const { defaultNotes } = useHistoryEventsForm();
+interface HistoryEventFormDialogProps {
+  loading?: boolean;
+}
 
 const { t } = useI18n();
 
@@ -39,14 +28,10 @@ const loading = ref<boolean>(false);
 const form = useTemplateRef<InstanceType<typeof HistoryEventForm>>('form');
 
 const title = computed<string>(() =>
-  get(editableItem)
+  get(modelValue) !== undefined
     ? t('transactions.events.dialog.edit.title')
     : t('transactions.events.dialog.add.title'),
 );
-
-watchImmediate(editableItem, (editable) => {
-  set(defaultNotes, editable?.defaultNotes);
-});
 
 async function save() {
   set(loading, true);
@@ -54,7 +39,7 @@ async function save() {
   set(loading, false);
 
   if (success) {
-    set(open, false);
+    set(modelValue, undefined);
     emit('refresh');
   }
 }
@@ -62,23 +47,20 @@ async function save() {
 
 <template>
   <BigDialog
-    :display="open"
+    :display="modelValue !== undefined"
     :title="title"
     :primary-action="t('common.actions.save')"
     :action-disabled="loading"
     :loading="loading"
     :prompt-on-close="stateUpdated"
     @confirm="save()"
-    @cancel="open = false"
+    @cancel="modelValue = undefined"
   >
     <HistoryEventForm
+      v-if="modelValue"
       ref="form"
       v-model:state-updated="stateUpdated"
-      :group-header="groupHeader"
-      :editable-item="editableItem"
-      :next-sequence="nextSequence"
-      :default-notes="defaultNotes"
-      :group-events="groupEvents"
+      :data="modelValue"
     />
   </BigDialog>
 </template>

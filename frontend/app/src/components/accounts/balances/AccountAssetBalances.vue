@@ -4,6 +4,7 @@ import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
 import AssetDetails from '@/components/helper/AssetDetails.vue';
 import RowAppend from '@/components/helper/RowAppend.vue';
 import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
+import { TableId, useRememberTableSorting } from '@/modules/table/use-remember-table-sorting';
 import { useBalancePricesStore } from '@/store/balances/prices';
 import { useGeneralSettingsStore } from '@/store/settings/general';
 import { CURRENCY_USD } from '@/types/currencies';
@@ -92,6 +93,8 @@ const headers = computed<DataTableColumn<AssetWithPrice>[]>(() => [
     sortable: true,
   },
 ]);
+
+useRememberTableSorting<AssetWithPrice>(TableId.ACCOUNT_ASSET_BALANCES, sort, headers);
 </script>
 
 <template>
@@ -123,7 +126,7 @@ const headers = computed<DataTableColumn<AssetWithPrice>[]>(() => [
       <template #item.price="{ row }">
         <AmountDisplay
           v-if="assetPrice(row.asset).value"
-          no-scramble
+          is-asset-price
           show-currency="symbol"
           fiat-currency="USD"
           :price-asset="row.asset"

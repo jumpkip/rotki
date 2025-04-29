@@ -19,7 +19,7 @@ from rotkehlchen.history.events.structures.types import (
 from rotkehlchen.history.events.utils import create_event_identifier
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import deserialize_fval
-from rotkehlchen.types import Location, TimestampMS
+from rotkehlchen.types import AssetAmount, Location, TimestampMS
 from rotkehlchen.utils.misc import ts_ms_to_sec
 
 if TYPE_CHECKING:
@@ -27,7 +27,6 @@ if TYPE_CHECKING:
 
     from rotkehlchen.accounting.mixins.event import AccountingEventMixin
     from rotkehlchen.accounting.pot import AccountingPot
-    from rotkehlchen.types import Fee
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -42,7 +41,7 @@ class AssetMovementExtraData(TypedDict):
     # Internal reference used in exchanges.
     reference: NotRequired[str]
     # Internal use only. Used for matching the corresponding crypto_transaction. Removed before being saved to the DB.  # noqa: E501
-    fee: NotRequired['Fee']
+    fee: NotRequired['FVal']
     # blockchain where the transaction happened. We use string since
     # it can be a non supported blockchain
     blockchain: NotRequired[str]
@@ -145,8 +144,7 @@ class AssetMovement(HistoryBaseEntry[AssetMovementExtraData | None]):
         )
 
     def serialize(self) -> dict[str, Any]:
-        """Serialize the event for api.
-        Autogenerates the event notes, appending any notes added by the user in a second sentence.
+        """Serialize the event for api, and generate the auto_notes.
         May raise UnknownAsset, but this would be an edge case as the asset should already have
         been checked for existence when it was deserialized from an API or from the database.
         """
@@ -154,16 +152,13 @@ class AssetMovement(HistoryBaseEntry[AssetMovementExtraData | None]):
         location_name = get_formatted_location_name(self.location)
         asset_symbol = self.asset.symbol_or_name()
         if self.event_subtype == HistoryEventSubType.FEE:
-            notes = f'Pay {self.amount} {asset_symbol} as {location_name} {str(self.event_type).lower()} fee.'  # noqa: E501
+            auto_notes = f'Pay {self.amount} {asset_symbol} as {location_name} {str(self.event_type).lower()} fee'  # noqa: E501
         elif self.event_type == HistoryEventType.DEPOSIT:
-            notes = f'Deposit {self.amount} {asset_symbol} to {location_name}.'
+            auto_notes = f'Deposit {self.amount} {asset_symbol} to {location_name}'
         else:  # withdrawal
-            notes = f'Withdraw {self.amount} {asset_symbol} from {location_name}.'
+            auto_notes = f'Withdraw {self.amount} {asset_symbol} from {location_name}'
 
-        if (user_notes := serialized_data['notes']) is not None:
-            notes += f' {user_notes}'
-
-        serialized_data['notes'] = notes
+        serialized_data['auto_notes'] = auto_notes
         return serialized_data
 
     @classmethod
@@ -234,12 +229,12 @@ def create_asset_movement_with_fee(
         event_type: Literal[HistoryEventType.DEPOSIT, HistoryEventType.WITHDRAWAL],
         asset: Asset,
         amount: 'FVal',
-        fee_asset: Asset,
-        fee: 'FVal',
+        fee: AssetAmount | None = None,
         location_label: str | None = None,
         unique_id: str | None = None,
         identifier: int | None = None,
         fee_identifier: int | None = None,
+        event_identifier: str | None = None,
         extra_data: AssetMovementExtraData | None = None,
         movement_notes: str | None = None,
         fee_notes: str | None = None,
@@ -255,19 +250,20 @@ def create_asset_movement_with_fee(
         amount=amount,
         unique_id=unique_id,
         identifier=identifier,
+        event_identifier=event_identifier,
         extra_data=extra_data,
         location_label=location_label,
         notes=movement_notes,
     )]
-    if fee != ZERO:
+    if fee is not None and fee.amount != ZERO:
         events.append(AssetMovement(
             identifier=fee_identifier,
             event_identifier=events[0].event_identifier,
             location=location,
             event_type=event_type,
             timestamp=timestamp,
-            asset=fee_asset,
-            amount=fee,
+            asset=fee.asset,
+            amount=fee.amount,
             is_fee=True,
             location_label=location_label,
             notes=fee_notes,

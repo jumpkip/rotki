@@ -1,10 +1,18 @@
 <script setup lang="ts">
-import type { EvmChainAndTxHash, EvmHistoryEvent, HistoryEventEntry } from '@/types/history/events';
+import type {
+  EvmChainAndTxHash,
+  HistoryEvent,
+  HistoryEventEntry,
+  StandaloneEditableEvents,
+} from '@/types/history/events';
 import { useSupportedChains } from '@/composables/info/chains';
+import { isEvmSwapEvent, isGroupEditableHistoryEvent } from '@/modules/history/management/forms/form-guards';
 import { useTaskStore } from '@/store/tasks';
 import { TaskType } from '@/types/task-type';
 import { toEvmChainAndTxHash } from '@/utils/history';
-import { isAssetMovementEvent, isEvmEventRef } from '@/utils/history/events';
+import { isEvmEvent } from '@/utils/history/events';
+
+interface EventInfo { txHash: string; location: string }
 
 const props = defineProps<{
   event: HistoryEventEntry;
@@ -12,10 +20,10 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: 'add-event', event: HistoryEventEntry): void;
-  (e: 'toggle-ignore', event: HistoryEventEntry): void;
-  (e: 'redecode', data: EvmChainAndTxHash): void;
-  (e: 'delete-tx', data: EvmChainAndTxHash): void;
+  'add-event': [event: StandaloneEditableEvents];
+  'toggle-ignore': [event: HistoryEventEntry];
+  'redecode': [data: EvmChainAndTxHash];
+  'delete-tx': [data: EvmChainAndTxHash];
 }>();
 
 const { useIsTaskRunning } = useTaskStore();
@@ -23,21 +31,35 @@ const eventTaskLoading = useIsTaskRunning(TaskType.TRANSACTIONS_DECODING);
 
 const { event } = toRefs(props);
 
-const evmEvent = isEvmEventRef(event);
+const evmEvent = computed<EventInfo | undefined>(() => {
+  const currentEvent = get(event);
+  if (isEvmSwapEvent(currentEvent) || isEvmEvent(currentEvent)) {
+    return {
+      location: currentEvent.location,
+      txHash: currentEvent.txHash,
+    };
+  }
+  return undefined;
+});
 const { getChain } = useSupportedChains();
 
 const { t } = useI18n();
 
-const addEvent = (event: HistoryEventEntry) => emit('add-event', event);
+function addEvent(event: HistoryEvent) {
+  if (isGroupEditableHistoryEvent(event)) {
+    return;
+  }
+  emit('add-event', event);
+}
 const toggleIgnore = (event: HistoryEventEntry) => emit('toggle-ignore', event);
 const redecode = (data: EvmChainAndTxHash) => emit('redecode', data);
 
-function deleteTxAndEvents({ location, txHash }: EvmHistoryEvent) {
+function deleteTxAndEvents({ location, txHash }: EventInfo) {
   return emit('delete-tx', { evmChain: getChain(location), txHash });
 }
 
-function hideAddAction(item: HistoryEventEntry): boolean {
-  return isAssetMovementEvent(item) && item.eventSubtype === 'fee';
+function hideAddAction(item: HistoryEvent): boolean {
+  return isGroupEditableHistoryEvent(item);
 }
 </script>
 
@@ -64,7 +86,7 @@ function hideAddAction(item: HistoryEventEntry): boolean {
       </template>
       <div class="py-2">
         <RuiButton
-          v-if="!hideAddAction"
+          v-if="!hideAddAction(event)"
           variant="list"
           @click="addEvent(event)"
         >

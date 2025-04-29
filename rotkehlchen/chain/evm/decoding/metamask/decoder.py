@@ -86,9 +86,7 @@ class MetamaskCommonDecoder(DecoderInterface):
             ):  # find the receive event
                 event.event_type = HistoryEventType.TRADE
                 event.event_subtype = HistoryEventSubType.RECEIVE
-                event.counterparty = CPT_METAMASK_SWAPS
                 event.notes = f'Receive {event.amount} {event.asset.resolve_to_asset_with_symbol().symbol} as the result of a metamask swap'  # noqa: E501
-                event.address = self.router_address
                 # use this index as the event may be a native currency transfer
                 # and appear at the start
                 event.sequence_index = context.tx_log.log_index
@@ -113,7 +111,7 @@ class MetamaskCommonDecoder(DecoderInterface):
 
         if not (fee_raw and fee_asset_address):
             # if fee is not found then we have already updated the events so exit
-            return DEFAULT_DECODING_OUTPUT
+            return DecodingOutput(process_swaps=True)
 
         if fee_asset is None:  # if fee_asset is not determined yet
             if (  # determine it from in_event/out_event
@@ -137,17 +135,14 @@ class MetamaskCommonDecoder(DecoderInterface):
         fee_event = self.base.make_event_from_transaction(
             transaction=context.transaction,
             tx_log=context.tx_log,
-            event_type=HistoryEventType.SPEND,
+            event_type=HistoryEventType.TRADE,
             event_subtype=HistoryEventSubType.FEE,
             asset=fee_asset,
             amount=fee_amount,
-            location_label=sender,
             notes=f'Spend {fee_amount} {fee_asset.symbol} as metamask fees',
-            counterparty=CPT_METAMASK_SWAPS,
-            address=context.transaction.to_address,
         )
 
-        return DecodingOutput(event=fee_event)
+        return DecodingOutput(event=fee_event, process_swaps=True)
 
     # -- DecoderInterface methods
 

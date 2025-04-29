@@ -18,6 +18,7 @@ const PACKAGE_ROOT = __dirname;
 const envPath = process.env.VITE_PUBLIC_PATH;
 const publicPath = envPath || '/';
 const isDevelopment = process.env.NODE_ENV === 'development';
+const isCypress = !!process.env.VITE_CYPRESS;
 const isTest = !!process.env.VITE_TEST;
 const hmrEnabled = isDevelopment && !(process.env.CI && isTest);
 
@@ -45,7 +46,16 @@ if (envPath)
 if (!hmrEnabled)
   console.info('HMR is disabled');
 
-const enableChecker = !(process.env.CI || process.env.VITE_TEST || process.env.VITEST);
+const enableChecker = !(process.env.CI || isTest || process.env.VITEST);
+
+/**
+ * These modules are required by walletconnect/appkit
+ */
+const requiredModules = ['buffer', 'events', 'crypto'] as const;
+
+function isNotRequired(module: string): boolean {
+  return !Array.prototype.includes.call(requiredModules, module);
+}
 
 export default defineConfig({
   resolve: {
@@ -61,7 +71,17 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(process.env.npm_package_version),
   },
   optimizeDeps: {
-    include: ['imask', 'vanilla-jsoneditor'],
+    include: [
+      'imask',
+      'vanilla-jsoneditor',
+      '@reown/appkit',
+      '@reown/appkit/vue',
+      '@reown/appkit/networks',
+      '@reown/appkit-adapter-wagmi',
+      '@reown/walletkit',
+      '@walletconnect/core',
+      'ethers',
+    ],
   },
   plugins: [
     VueRouter({
@@ -116,7 +136,7 @@ export default defineConfig({
       include: [path.resolve(__dirname, './src/locales/**')],
     }),
     ...(!isTest && process.env.ENABLE_DEV_TOOLS ? [vueDevTools()] : []),
-    ...(isTest
+    ...(isCypress
       ? [
           istanbul({
             include: 'src/*',
@@ -146,7 +166,10 @@ export default defineConfig({
     assetsDir: '.',
     minify: true,
     rollupOptions: {
-      external: ['electron', ...builtinModules.flatMap(p => [p, `node:${p}`])],
+      external: [
+        'electron',
+        ...builtinModules.filter(isNotRequired).flatMap(p => [p, `node:${p}`]),
+      ],
       input: join(PACKAGE_ROOT, 'index.html'),
       output: {
         chunkFileNames: (assetInfo: { name: string }) => {
@@ -175,6 +198,12 @@ export default defineConfig({
             'dayjs',
             'consola',
             'zod',
+          ],
+          'wallet-connect': [
+            '@reown/walletkit',
+            '@reown/appkit',
+            '@reown/appkit-adapter-wagmi',
+            '@walletconnect/core',
           ],
         },
       },

@@ -9,6 +9,7 @@ import type {
 import type { MaybeRef } from '@vueuse/core';
 import { useSupportedChainsApi } from '@/composables/api/info/chains';
 import { useArrayInclude } from '@/composables/array';
+import { Routes } from '@/router/routes';
 import { useMainStore } from '@/store/main';
 import { isBlockchain } from '@/types/blockchain/chains';
 import { Blockchain, getTextToken, toHumanReadable, toSentenceCase, toSnakeCase } from '@rotki/common';
@@ -79,8 +80,8 @@ export const useSupportedChains = createSharedComposable(() => {
     return chains.some(x => x.id === selectedChain);
   };
 
-  const getEvmChainName = (chain: string): string | null =>
-    get(evmChainsData).find(x => x.id === chain)?.evmChainName || null;
+  const getEvmChainName = (chain: string): string | undefined =>
+    get(evmChainsData).find(x => x.id === chain)?.evmChainName || undefined;
 
   const getChainInfoByName = (chain: MaybeRef<string>): ComputedRef<ChainInfo | null> =>
     computed(() => get(supportedChains).find(({ name }) => name.toLowerCase() === get(chain).toLowerCase()) || null);
@@ -178,12 +179,23 @@ export const useSupportedChains = createSharedComposable(() => {
     return match?.type;
   };
 
+  const getBlockchainRedirectLink = (blockchain: string): string => {
+    const chain = get(blockchain);
+    if (chain === Blockchain.ETH2) {
+      return '/staking/eth2';
+    }
+
+    const target = getChainAccountType(chain) ?? 'evm';
+    return `${Routes.ACCOUNTS.toString()}/${target}`;
+  };
+
   return {
     allEvmChains,
     evmChainNames,
     evmChains,
     evmChainsData,
     evmLikeChainsData,
+    getBlockchainRedirectLink,
     getChain,
     getChainAccountType,
     getChainImageUrl,

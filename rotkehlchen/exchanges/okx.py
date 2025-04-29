@@ -26,21 +26,21 @@ from rotkehlchen.history.events.structures.asset_movement import (
     AssetMovement,
     create_asset_movement_with_fee,
 )
-from rotkehlchen.history.events.structures.base import HistoryBaseEntry
 from rotkehlchen.history.events.structures.swap import (
     SwapEvent,
     create_swap_events,
+    deserialize_trade_type_is_buy,
     get_swap_spend_receive,
 )
 from rotkehlchen.history.events.structures.types import HistoryEventType
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.serialization.deserialize import deserialize_asset_amount, deserialize_fee
+from rotkehlchen.serialization.deserialize import deserialize_fval, deserialize_fval_or_zero
 from rotkehlchen.types import (
     ApiKey,
     ApiSecret,
+    AssetAmount,
     ExchangeAuthCredentials,
-    Fee,
     Location,
     Timestamp,
     TimestampMS,
@@ -51,6 +51,7 @@ from rotkehlchen.utils.misc import ts_sec_to_ms
 if TYPE_CHECKING:
     from rotkehlchen.assets.asset import AssetWithOracles
     from rotkehlchen.db.dbhandler import DBHandler
+    from rotkehlchen.history.events.structures.base import HistoryBaseEntry
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -281,7 +282,7 @@ class Okx(ExchangeInterface):
                 continue
 
             try:
-                amount = deserialize_asset_amount(currency_data['availBal']) + deserialize_asset_amount(currency_data['frozenBal'])  # noqa: E501
+                amount = deserialize_fval(currency_data['availBal']) + deserialize_fval(currency_data['frozenBal'])  # noqa: E501
             except DeserializationError as e:
                 self.msg_aggregator.add_error(
                     f'Error processing {self.name} {asset.name} balance result due to inability '
@@ -307,7 +308,7 @@ class Okx(ExchangeInterface):
             self,
             start_ts: Timestamp,
             end_ts: Timestamp,
-    ) -> Sequence[HistoryBaseEntry]:
+    ) -> tuple[Sequence['HistoryBaseEntry'], Timestamp]:
         """
         https://www.okx.com/docs-v5/en/#rest-api-funding-get-deposit-history
         https://www.okx.com/docs-v5/en/#rest-api-funding-get-withdrawal-history
@@ -355,7 +356,7 @@ class Okx(ExchangeInterface):
         for raw_trade in trades:
             events.extend(self.swap_events_from_okx(raw_trade))
 
-        return events
+        return events, end_ts
 
     def swap_events_from_okx(self, raw_trade: dict[str, Any]) -> list[SwapEvent]:
         """Converts a raw trade from OKX into SwapEvents.
@@ -369,17 +370,17 @@ class Okx(ExchangeInterface):
                 raise DeserializationError(
                     f'Expected pair {raw_trade["instId"]} to contain a "-"',
                 ) from e
-            spend_asset, spend_amount, receive_asset, receive_amount = get_swap_spend_receive(
-                raw_trade_type=raw_trade['side'],
+            spend, receive = get_swap_spend_receive(
+                is_buy=deserialize_trade_type_is_buy(raw_trade['side']),
                 base_asset=asset_from_okx(base_asset_str),
                 quote_asset=asset_from_okx(quote_asset_str),
-                amount=deserialize_asset_amount(raw_trade['accFillSz']),
+                amount=deserialize_fval(raw_trade['accFillSz']),
                 rate=deserialize_price(raw_trade['avgPx']),
             )
-            fee_amount = deserialize_fee(raw_trade['fee'])
+            fee_amount = deserialize_fval_or_zero(raw_trade['fee'])
             # fee charged by the platform is represented by a negative number
             if fee_amount < ZERO:
-                fee_amount = Fee(-1 * fee_amount)
+                fee_amount = -1 * fee_amount
             fee_asset = asset_from_okx(raw_trade['feeCcy'])
             unique_id = raw_trade['ordId']
         except UnknownAsset as e:
@@ -408,12 +409,9 @@ class Okx(ExchangeInterface):
             return create_swap_events(
                 timestamp=timestamp,
                 location=self.location,
-                spend_asset=spend_asset,
-                spend_amount=spend_amount,
-                receive_asset=receive_asset,
-                receive_amount=receive_amount,
-                fee_asset=fee_asset,
-                fee_amount=fee_amount,
+                spend=spend,
+                receive=receive,
+                fee=AssetAmount(asset=fee_asset, amount=fee_amount),
                 location_label=self.name,
                 unique_id=unique_id,
             )
@@ -430,27 +428,20 @@ class Okx(ExchangeInterface):
         If there is an error `None` is returned and error is logged.
         """
         try:
-            tx_hash = raw_movement['txId']
-            timestamp = TimestampMS(int(raw_movement['ts']))
-            asset = asset_from_okx(raw_movement['ccy'])
-            amount = deserialize_asset_amount(raw_movement['amt'])
-            address = deserialize_asset_movement_address(raw_movement, 'to', asset)
-            fee = Fee(ZERO)
-            if event_type is HistoryEventType.WITHDRAWAL:
-                fee = deserialize_fee(raw_movement['fee'])
-
             return create_asset_movement_with_fee(
                 location=self.location,
                 location_label=self.name,
                 event_type=event_type,
-                timestamp=timestamp,
-                asset=asset,
-                amount=amount,
-                fee_asset=asset,
-                fee=fee,
-                unique_id=tx_hash,
+                timestamp=TimestampMS(int(raw_movement['ts'])),
+                asset=(asset := asset_from_okx(raw_movement['ccy'])),
+                amount=deserialize_fval(raw_movement['amt']),
+                fee=AssetAmount(
+                    asset=asset,
+                    amount=deserialize_fval_or_zero(raw_movement['fee']),
+                ) if event_type is HistoryEventType.WITHDRAWAL else None,
+                unique_id=(tx_hash := raw_movement['txId']),
                 extra_data=maybe_set_transaction_extra_data(
-                    address=address,
+                    address=deserialize_asset_movement_address(raw_movement, 'to', asset),
                     transaction_id=tx_hash,
                 ),
             )

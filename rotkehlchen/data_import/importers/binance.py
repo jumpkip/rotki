@@ -3,7 +3,7 @@ import csv
 import logging
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, Literal
 
 from rotkehlchen.assets.converters import asset_from_binance
 from rotkehlchen.constants import ZERO
@@ -14,24 +14,22 @@ from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset
 from rotkehlchen.errors.misc import InputError
 from rotkehlchen.errors.price import NoPriceForGivenTimestamp
 from rotkehlchen.errors.serialization import DeserializationError
-from rotkehlchen.exchanges.data_structures import Trade
+from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.asset_movement import AssetMovement
 from rotkehlchen.history.events.structures.base import HistoryBaseEntry, HistoryEvent
+from rotkehlchen.history.events.structures.swap import SwapEvent, create_swap_events
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.history.price import PriceHistorian
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import (
-    deserialize_asset_amount,
+    deserialize_fval,
     deserialize_timestamp_from_date,
 )
 from rotkehlchen.types import (
     AssetAmount,
-    Fee,
     Location,
     Price,
     Timestamp,
-    TradeID,
-    TradeType,
 )
 from rotkehlchen.utils.misc import ts_sec_to_ms
 
@@ -69,7 +67,7 @@ class BinanceSingleEntry(BinanceEntry, abc.ABC):
     """
     AVAILABLE_OPERATIONS: tuple[str, ...]
 
-    def is_entry(self, requested_operation: str, account: str, change: AssetAmount) -> bool:  # pylint: disable=unused-argument
+    def is_entry(self, requested_operation: str, account: str, change: FVal) -> bool:  # pylint: disable=unused-argument
         """This method checks whether row with "requested_operation" could be processed
         by a class on which this method has been called.
         Some subclasses require combined checks with the "account" and "change" to
@@ -205,8 +203,8 @@ class BinanceTradeEntry(BinanceMultipleEntry):
             importer: BaseExchangeImporter,
             timestamp: Timestamp,
             data: list[BinanceCsvRow],
-    ) -> list[Trade]:
-        """Processes multiple rows data and stores it into rotki's trades
+    ) -> list[SwapEvent]:
+        """Processes multiple rows of data and convert them into SwapEvents.
         Each row has format: {'Operation': ..., 'Change': ..., 'Coin': ...}
         Change is amount, Coin is asset
         If amount is negative then this asset is sold, otherwise it's bought
@@ -273,28 +271,25 @@ class BinanceTradeEntry(BinanceMultipleEntry):
                 cur_batch.append(rows_grouped_by_fee[True].pop())
             grouped_trade_rows.append(cur_batch)
 
-        # Creating trades structures based on grouped rows data
-        raw_trades: list[Trade] = []
+        swap_events = []
         for trade_rows in grouped_trade_rows:
             to_asset: AssetWithOracles | None = None
-            to_amount: AssetAmount | None = None
+            to_amount: FVal | None = None
             from_asset: AssetWithOracles | None = None
-            from_amount: AssetAmount | None = None
-            fee_asset: AssetWithOracles | None = None
-            fee_amount: Fee | None = None
-            trade_type: TradeType | None = None
+            from_amount: FVal | None = None
+            fee = None
+            trade_type: Literal['buy', 'sell'] | None = None
 
             for row in trade_rows:
                 cur_asset = row['Coin']
                 amount = row['Change']
                 if row['Operation'] in {'Fee', 'Transaction Fee'}:
-                    fee_asset = cur_asset
-                    fee_amount = Fee(abs(amount))
+                    fee = AssetAmount(asset=cur_asset, amount=abs(amount))
                 else:
-                    trade_type = TradeType.SELL if row['Operation'] == 'Sell' else TradeType.BUY
+                    trade_type = row['Operation']
                     if amount < 0:
                         from_asset = cur_asset
-                        from_amount = AssetAmount(-amount)
+                        from_amount = FVal(-amount)
                     else:
                         to_asset = cur_asset
                         to_amount = amount
@@ -315,40 +310,17 @@ class BinanceTradeEntry(BinanceMultipleEntry):
                     )
                 continue
 
-            rate = to_amount / from_amount
-            trade = Trade(
-                timestamp=timestamp,
+            swap_events.extend(create_swap_events(
+                timestamp=ts_sec_to_ms(timestamp),
                 location=Location.BINANCE,
-                trade_type=trade_type,
-                base_asset=to_asset,
-                quote_asset=from_asset,
-                amount=to_amount,
-                rate=Price(rate),
-                fee_currency=fee_asset,
-                fee=fee_amount,
-                link='',
-                notes='Imported from binance CSV file. Binance operation: Buy / Sell',
-            )
-            raw_trades.append(trade)
+                spend=AssetAmount(asset=from_asset, amount=from_amount),
+                receive=AssetAmount(asset=to_asset, amount=to_amount),
+                fee=fee,
+                event_identifier=f'{EVENT_IDENTIFIER_PREFIX}{hash_binance_csv_row(trade_rows[0])}',  # any row works, just using the first to create the event identifier  # noqa: E501
+                spend_notes='Imported from binance CSV file. Binance operation: Buy / Sell',
+            ))
 
-        # Sometimes we can get absolutely identical trades (including timestamp) but the database
-        # allows us to add only one of them. So we combine these trades into a huge single trade
-        # First step: group trades
-        grouped_trades: dict[TradeID, list[Trade]] = defaultdict(list)
-        for trade in raw_trades:
-            grouped_trades[trade.identifier].append(trade)
-
-        # Second step: combine them
-        unique_trades = []
-        for trades_group in grouped_trades.values():
-            result_trade = trades_group[0]
-            for trade in trades_group[1:]:
-                result_trade.amount = AssetAmount(result_trade.amount + trade.amount)
-                if result_trade.fee is not None and trade.fee is not None:
-                    result_trade.fee = Fee(result_trade.fee + trade.fee)
-            unique_trades.append(result_trade)
-
-        return unique_trades
+        return swap_events
 
     def process_entries(
             self,
@@ -357,10 +329,9 @@ class BinanceTradeEntry(BinanceMultipleEntry):
             timestamp: Timestamp,
             data: list[BinanceCsvRow],
     ) -> int:
-        trades = self.process_trades(importer=importer, timestamp=timestamp, data=data)
-        for trade in trades:
-            importer.add_trade(write_cursor=write_cursor, trade=trade)
-        return len(trades)
+        swap_events = self.process_trades(importer=importer, timestamp=timestamp, data=data)
+        importer.add_history_events(write_cursor=write_cursor, history_events=swap_events)
+        return len(swap_events)
 
 
 class BinanceDepositWithdrawEntry(BinanceSingleEntry):
@@ -558,7 +529,7 @@ class BinanceUSDMProgram(BinanceSingleEntry):
         'Realized Profit and Loss',
     )
 
-    def is_entry(self, requested_operation: str, account: str, change: AssetAmount) -> bool:
+    def is_entry(self, requested_operation: str, account: str, change: FVal) -> bool:
         if requested_operation in {'Fee', 'Funding Fee'} and change == abs(change):
             return False
         return requested_operation in self.AVAILABLE_OPERATIONS and account == self.ACCOUNT
@@ -684,7 +655,7 @@ class BinanceImporter(BaseExchangeImporter):
                     location='binance',
                 )
                 csv_row['Coin'] = asset_from_binance(csv_row['Coin'])
-                csv_row['Change'] = deserialize_asset_amount(csv_row['Change'])
+                csv_row['Change'] = deserialize_fval(csv_row['Change'])
                 csv_row[INDEX] = index
                 multirows[timestamp].append(csv_row)
             except UnknownAsset as e:

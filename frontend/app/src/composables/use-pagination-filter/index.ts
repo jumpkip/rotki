@@ -20,12 +20,12 @@ import { isEmpty } from 'es-toolkit/compat';
 
 type Params<
   TItem extends NonNullable<unknown>,
-  TPayload extends PaginationRequestPayload<TItem>,
-> = Partial<Omit<TPayload, keyof PaginationRequestPayload<TItem>>>;
+  TPayload extends PaginationRequestPayload<TItem extends Array<infer U> ? U : TItem>,
+> = Partial<Omit<TPayload, keyof PaginationRequestPayload<TItem extends Array<infer U> ? U : TItem>>>;
 
 interface UsePaginationFiltersOptions<
   TItem extends NonNullable<unknown>,
-  TPayload extends PaginationRequestPayload<TItem> = PaginationRequestPayload<TItem>,
+  TPayload extends PaginationRequestPayload<TItem extends Array<infer U> ? U : TItem> = PaginationRequestPayload<TItem extends Array<infer U> ? U : TItem>,
   TFilter extends MatchedKeywordWithBehaviour<string> | void = undefined,
   TSuggestionMatcher extends SearchMatcher<string, string> | void = undefined,
 > {
@@ -43,7 +43,7 @@ interface UsePaginationFiltersOptions<
 
 interface UsePaginationFilterReturn<
   TItem extends NonNullable<unknown>,
-  TPayload extends PaginationRequestPayload<TItem> = PaginationRequestPayload<TItem>,
+  TPayload extends PaginationRequestPayload<TItem extends Array<infer U> ? U : TItem> = PaginationRequestPayload<TItem extends Array<infer U> ? U : TItem>,
   TFilter extends MatchedKeywordWithBehaviour<string> | void = undefined,
   TSuggestionMatcher extends SearchMatcher<string, string> | void = undefined,
 > {
@@ -70,7 +70,7 @@ interface UsePaginationFilterReturn<
  */
 export function usePaginationFilters<
   TItem extends NonNullable<unknown>,
-  TPayload extends PaginationRequestPayload<TItem> = PaginationRequestPayload<TItem>,
+  TPayload extends PaginationRequestPayload<TItem extends Array<infer U> ? U : TItem> = PaginationRequestPayload<TItem extends Array<infer U> ? U : TItem>,
   TFilter extends MatchedKeywordWithBehaviour<string> | void = undefined,
   TSuggestionMatcher extends SearchMatcher<string, string> | void = undefined,
 >(
@@ -187,7 +187,6 @@ export function usePaginationFilters<
       ...(get(defaultParams) ?? {}),
       ...selectedFilters,
       ...get(extraParams),
-      ...get(queryParamsOnly),
       ...nonEmptyProperties(get(requestParams) ?? {}),
     };
 
@@ -353,6 +352,26 @@ export function usePaginationFilters<
     set(filters, newFilter);
   };
 
+  async function updateQuery(): Promise<void> {
+    const hasHistory = get(history);
+    const isHistoryEnabled = hasHistory !== false;
+
+    if (!(get(userAction) && isHistoryEnabled)) {
+      return;
+    }
+
+    const routeQuery = getQuery();
+    if (!isEqual(route.query, routeQuery)) {
+      if (hasHistory === 'router') {
+        await router.push({ query: routeQuery });
+      }
+      else {
+        set(query, routeQuery);
+      }
+      set(userAction, false);
+    }
+  }
+
   onBeforeMount(() => {
     applyRouteFilter();
   });
@@ -372,33 +391,19 @@ export function usePaginationFilters<
     setPage(1, !paramEquals);
   });
 
-  watch(queryParamsOnly, (params, op) => {
+  watch(queryParamsOnly, async (params, op) => {
     if (isEqual(params, op))
       return;
 
     set(userAction, true);
+    await updateQuery();
   });
 
   watch(pageParams, async (params, op) => {
     if (isEqual(params, op))
       return;
 
-    const hasHistory = get(history);
-    if (get(userAction) && hasHistory !== false) {
-      // Route should only be updated on user action otherwise it messes with forward navigation.
-      const routeQuery = getQuery();
-      // prevent pushing same route
-      if (!isEqual(route.query, routeQuery)) {
-        if (hasHistory === 'router') {
-          await router.push({ query: routeQuery });
-        }
-        else {
-          set(query, routeQuery);
-        }
-        set(userAction, false);
-      }
-    }
-
+    await updateQuery();
     await fetchData();
   });
 

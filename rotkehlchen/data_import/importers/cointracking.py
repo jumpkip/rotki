@@ -19,21 +19,22 @@ from rotkehlchen.db.drivers.gevent import DBCursor
 from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.errors.misc import InputError
 from rotkehlchen.errors.serialization import DeserializationError
-from rotkehlchen.exchanges.data_structures import Trade
-from rotkehlchen.history.events.structures.asset_movement import AssetMovement
+from rotkehlchen.history.events.structures.asset_movement import (
+    create_asset_movement_with_fee,
+)
 from rotkehlchen.history.events.structures.base import HistoryEvent
+from rotkehlchen.history.events.structures.swap import create_swap_events
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.serialization.deserialize import (
-    deserialize_asset_amount,
-    deserialize_asset_amount_force_positive,
-    deserialize_fee,
+    deserialize_fval,
+    deserialize_fval_force_positive,
+    deserialize_fval_or_zero,
     deserialize_timestamp_from_date,
 )
-from rotkehlchen.types import AssetAmount, Fee, Location, Price, TradeType
+from rotkehlchen.types import AssetAmount, Location
 from rotkehlchen.utils.misc import ts_sec_to_ms
 
 if TYPE_CHECKING:
-    from rotkehlchen.assets.asset import AssetWithOracles
     from rotkehlchen.db.dbhandler import DBHandler
 
 
@@ -106,23 +107,21 @@ class CointrackingImporter(BaseExchangeImporter):
             - UnknownAsset if one of the assets founds in the entry are not supported
         """
         row_type = csv_row['Type']
-        timestamp = deserialize_timestamp_from_date(
+        timestamp = ts_sec_to_ms(deserialize_timestamp_from_date(
             date=csv_row['Date'],
             formatstr=timestamp_format,
             location='cointracking.info',
-        )
+        ))
         location = exchange_row_to_location(csv_row['Exchange'])
         asset_resolver = LOCATION_TO_ASSET_MAPPING.get(location, symbol_to_asset_or_token)
         notes = csv_row['Comment']
         if location == Location.EXTERNAL:
             notes += f'. Data from -{csv_row["Exchange"]}- not known by rotki.'
 
-        fee = Fee(ZERO)
-        # whatever (used only if there is no fee)
-        fee_currency: AssetWithOracles = self.usd
-        if csv_row['Fee'] != '':
-            fee = deserialize_fee(csv_row['Fee'])
-            fee_currency = asset_resolver(csv_row['Cur.Fee'])
+        fee = AssetAmount(
+            asset=asset_resolver(csv_row['Cur.Fee']),
+            amount=deserialize_fval_or_zero(csv_row['Fee']),
+        ) if csv_row['Fee'] != '' else None
 
         if row_type in {'Gift/Tip', 'Trade', 'Income'}:
             base_asset = asset_resolver(csv_row['Cur.Buy'])
@@ -133,62 +132,50 @@ class CointrackingImporter(BaseExchangeImporter):
             if quote_asset is None:
                 # Really makes no difference as this is just a gift and the amount is zero
                 quote_asset = self.usd
-            base_amount_bought = deserialize_asset_amount(csv_row['Buy'])
+            base_amount_bought = deserialize_fval(csv_row['Buy'])
             if base_amount_bought == ZERO:
                 raise DeserializationError('Bought amount in trade is zero')
 
             if csv_row['Sell'] != '-':
-                quote_amount_sold = deserialize_asset_amount(csv_row['Sell'])
+                quote_amount_sold = deserialize_fval(csv_row['Sell'])
             else:
-                quote_amount_sold = AssetAmount(ZERO)
-            rate = Price(quote_amount_sold / base_amount_bought)
+                quote_amount_sold = ZERO
 
-            trade = Trade(
-                timestamp=timestamp,
-                location=location,
-                base_asset=base_asset,
-                quote_asset=quote_asset,
-                trade_type=TradeType.BUY,  # It's always a buy during cointracking import
-                amount=base_amount_bought,
-                rate=rate,
-                fee=fee,
-                fee_currency=fee_currency,
-                link='',
-                notes=notes,
+            self.add_history_events(
+                write_cursor=write_cursor,
+                history_events=create_swap_events(
+                    timestamp=timestamp,
+                    location=location,
+                    spend=AssetAmount(asset=quote_asset, amount=quote_amount_sold),
+                    receive=AssetAmount(asset=base_asset, amount=base_amount_bought),
+                    fee=fee,
+                    spend_notes=notes,
+                ),
             )
-            self.add_trade(write_cursor, trade)
         elif row_type in {'Deposit', 'Withdrawal'}:
             if row_type == 'Deposit':
-                amount = deserialize_asset_amount(csv_row['Buy'])
+                amount = deserialize_fval(csv_row['Buy'])
                 asset = asset_resolver(csv_row['Cur.Buy'])
                 movement_type: Literal[HistoryEventType.DEPOSIT, HistoryEventType.WITHDRAWAL] = HistoryEventType.DEPOSIT  # noqa: E501
             else:
-                amount = deserialize_asset_amount_force_positive(csv_row['Sell'])
+                amount = deserialize_fval_force_positive(csv_row['Sell'])
                 asset = asset_resolver(csv_row['Cur.Sell'])
                 movement_type = HistoryEventType.WITHDRAWAL
 
-            events = [AssetMovement(
-                location=location,
-                event_type=movement_type,
-                timestamp=ts_sec_to_ms(timestamp),
-                asset=asset,
-                amount=amount,
-            )]
-            if fee != ZERO:
-                events.append(AssetMovement(
-                    event_identifier=events[0].event_identifier,
+            self.add_history_events(
+                write_cursor=write_cursor,
+                history_events=create_asset_movement_with_fee(
+                    timestamp=timestamp,
                     location=location,
+                    asset=asset,
+                    amount=amount,
                     event_type=movement_type,
-                    timestamp=ts_sec_to_ms(timestamp),
-                    asset=fee_currency,
-                    amount=fee,
-                    is_fee=True,
-                ))
-            self.add_history_events(write_cursor, events)
+                    fee=fee,
+                ),
+            )
         elif row_type == 'Staking':
-            amount = deserialize_asset_amount(csv_row['Buy'])
+            amount = deserialize_fval(csv_row['Buy'])
             asset = asset_resolver(csv_row['Cur.Buy'])
-            timestamp_ms = ts_sec_to_ms(timestamp)
             event_type = HistoryEventType.STAKING
             event_subtype = HistoryEventSubType.REWARD
 
@@ -197,7 +184,7 @@ class CointrackingImporter(BaseExchangeImporter):
                 event_subtype=event_subtype,
                 amount=amount,
                 asset=asset,
-                timestamp_ms=timestamp_ms,
+                timestamp_ms=timestamp,
                 location=location,
                 event_prefix=COINTRACKING_EVENT_PREFIX,
                 importer=self,
@@ -208,7 +195,7 @@ class CointrackingImporter(BaseExchangeImporter):
             event = HistoryEvent(
                 event_identifier=f'{COINTRACKING_EVENT_PREFIX}_{uuid4().hex}',
                 sequence_index=0,
-                timestamp=timestamp_ms,
+                timestamp=timestamp,
                 location=location,
                 event_type=event_type,
                 event_subtype=event_subtype,

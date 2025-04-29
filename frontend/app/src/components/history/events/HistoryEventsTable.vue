@@ -1,10 +1,13 @@
 <script setup lang="ts">
+import type { HistoryEventDeletePayload } from '@/modules/history/events/types';
+import type { ShowEventHistoryForm } from '@/modules/history/management/forms/form-types';
 import type { Collection } from '@/types/collection';
 import type {
   EvmChainAndTxHash,
   HistoryEventEntry,
+  HistoryEventRow,
   PullEvmTransactionPayload,
-  ShowEventHistoryForm,
+  StandaloneEditableEvents,
 } from '@/types/history/events';
 import type { DataTableColumn, DataTableSortData, TablePaginationData } from '@rotki/ui-library';
 import DateDisplay from '@/components/display/DateDisplay.vue';
@@ -13,32 +16,26 @@ import LazyLoader from '@/components/helper/LazyLoader.vue';
 import HistoryEventsAction from '@/components/history/events/HistoryEventsAction.vue';
 import HistoryEventsIdentifier from '@/components/history/events/HistoryEventsIdentifier.vue';
 import HistoryEventsList from '@/components/history/events/HistoryEventsList.vue';
-import IgnoredInAcountingIcon from '@/components/history/IgnoredInAcountingIcon.vue';
+import IgnoredInAccountingIcon from '@/components/history/IgnoredInAccountingIcon.vue';
 import LocationIcon from '@/components/history/LocationIcon.vue';
 import UpgradeRow from '@/components/history/UpgradeRow.vue';
 import { useHistoryEventsApi } from '@/composables/api/history/events';
 import { useIgnore } from '@/composables/history';
 import { useHistoryEvents } from '@/composables/history/events';
+import { TableId, useRememberTableSorting } from '@/modules/table/use-remember-table-sorting';
 import { useConfirmStore } from '@/store/confirm';
 import { useNotificationsStore } from '@/store/notifications';
 import { useStatusStore } from '@/store/status';
-import { IgnoreActionType } from '@/types/history/ignored';
 import { Section } from '@/types/status';
 import { isTaskCancelled } from '@/utils';
-import { isAssetMovementEvent } from '@/utils/history/events';
-import { groupBy } from 'es-toolkit';
-
-interface DeleteOrIgnoreEvent {
-  readonly event: HistoryEventEntry;
-  readonly mode: 'ignore' | 'delete';
-}
+import { flatten } from 'es-toolkit';
 
 const sort = defineModel<DataTableSortData<HistoryEventEntry>>('sort', { required: true });
 
 const pagination = defineModel<TablePaginationData>('pagination', { required: true });
 
 const props = defineProps<{
-  groups: Collection<HistoryEventEntry>;
+  groups: Collection<HistoryEventRow>;
   excludeIgnored: boolean;
   groupLoading: boolean;
   identifiers?: string[];
@@ -58,7 +55,6 @@ defineSlots<{
 const { groupLoading, groups } = toRefs(props);
 
 const eventsLoading = ref(false);
-const deleteOrIgnoreEvent = ref<DeleteOrIgnoreEvent>();
 const selected = ref<HistoryEventEntry[]>([]);
 
 const { t } = useI18n();
@@ -70,13 +66,12 @@ const { isLoading } = useStatusStore();
 const { deleteTransactions } = useHistoryEventsApi();
 const { deleteHistoryEvent, fetchHistoryEvents } = useHistoryEvents();
 const { ignoreSingle, toggle } = useIgnore<HistoryEventEntry>({
-  actionType: IgnoreActionType.HISTORY_EVENTS,
   toData: (item: HistoryEventEntry) => item.eventIdentifier,
 }, selected, () => {
   emit('refresh');
 });
 
-const sectionLoading = isLoading(Section.HISTORY_EVENT);
+const sectionLoading = isLoading(Section.HISTORY);
 
 const cols = computed<DataTableColumn<HistoryEventEntry>[]>(() => [{
   cellClass: '!p-0 w-px',
@@ -108,14 +103,16 @@ const cols = computed<DataTableColumn<HistoryEventEntry>[]>(() => [{
   label: '',
 }]);
 
-const events: Ref<HistoryEventEntry[]> = asyncComputed(async () => {
+useRememberTableSorting<HistoryEventEntry>(TableId.HISTORY, sort, cols);
+
+const events: Ref<HistoryEventRow[]> = asyncComputed(async () => {
   const data = get(groups, 'data');
 
   if (data.length === 0)
     return [];
 
   const response = await fetchHistoryEvents({
-    eventIdentifiers: data.map(item => item.eventIdentifier),
+    eventIdentifiers: data.flatMap(item => Array.isArray(item) ? item.map(i => i.eventIdentifier) : item.eventIdentifier),
     excludeIgnoredAssets: props.excludeIgnored,
     groupByEventIds: false,
     identifiers: props.identifiers,
@@ -129,23 +126,41 @@ const events: Ref<HistoryEventEntry[]> = asyncComputed(async () => {
   lazy: true,
 });
 
-const eventsGroupedByEventIdentifier = computed<Record<string, HistoryEventEntry[]>>(() => groupBy(get(events), item => item.eventIdentifier));
+const eventsGroupedByEventIdentifier = computed<Record<string, HistoryEventEntry[]>>(() => {
+  const mapping: Record<string, HistoryEventEntry[]> = {};
+  for (const event of get(events)) {
+    if (Array.isArray(event)) {
+      for (const subevent of event) {
+        if (mapping[subevent.eventIdentifier]) {
+          mapping[subevent.eventIdentifier].push(subevent);
+        }
+        else {
+          mapping[subevent.eventIdentifier] = [subevent];
+        }
+      }
+    }
+    else {
+      if (mapping[event.eventIdentifier]) {
+        mapping[event.eventIdentifier].push(event);
+      }
+      else {
+        mapping[event.eventIdentifier] = [event];
+      }
+    }
+  }
+  return mapping;
+});
 
 const loading = refDebounced(logicOr(groupLoading, eventsLoading), 300);
-const hasIgnoredEvent = useArraySome(events, event => event.ignoredInAccounting);
+const hasIgnoredEvent = useArraySome(events, event => Array.isArray(event) && event.some(item => item.ignoredInAccounting));
 
 function getItemClass(item: HistoryEventEntry): '' | 'opacity-50' {
   return item.ignoredInAccounting ? 'opacity-50' : '';
 }
 
-function confirmDelete({ canDelete, item }: { item: HistoryEventEntry; canDelete: boolean }): void {
-  set(deleteOrIgnoreEvent, {
-    event: item,
-    mode: canDelete ? 'delete' : 'ignore',
-  });
-
+function confirmDelete(payload: HistoryEventDeletePayload): void {
   let text: { primaryAction: string; title: string; message: string };
-  if (!canDelete) {
+  if (payload.type === 'ignore') {
     text = {
       message: t('transactions.events.confirmation.ignore.message'),
       primaryAction: t('transactions.events.confirmation.ignore.action'),
@@ -159,33 +174,17 @@ function confirmDelete({ canDelete, item }: { item: HistoryEventEntry; canDelete
       title: t('transactions.events.confirmation.delete.title'),
     };
   }
-  show(text, onConfirmDelete, () => {
-    set(deleteOrIgnoreEvent, undefined);
-  });
+  show(text, async () => await onConfirmDelete(payload));
 }
 
-async function onConfirmDelete(): Promise<void> {
-  if (!isDefined(deleteOrIgnoreEvent))
-    return;
-
-  const { event, mode } = get(deleteOrIgnoreEvent);
-
-  if (mode === 'ignore') {
-    await ignoreSingle(event, true);
+async function onConfirmDelete(payload: HistoryEventDeletePayload): Promise<void> {
+  if (payload.type === 'ignore') {
+    await ignoreSingle(payload.event, true);
   }
   else {
-    const ids = [];
-    if (isAssetMovementEvent(event)) {
-      ids.push(...(get(eventsGroupedByEventIdentifier)[event.eventIdentifier] || []).map(item => item.identifier));
-    }
-    else {
-      ids.push(event.identifier);
-    }
-    const { success } = await deleteHistoryEvent(ids);
-    if (!success)
-      return;
-
-    emit('refresh');
+    const { success } = await deleteHistoryEvent(payload.ids);
+    if (success)
+      emit('refresh');
   }
 }
 
@@ -196,7 +195,7 @@ function suggestNextSequenceId(group: HistoryEventEntry): string {
     return (Number(group.sequenceIndex) + 1).toString();
 
   const eventIdentifierHeader = group.eventIdentifier;
-  const filtered = all
+  const filtered = flatten(all)
     .filter(({ eventIdentifier, hidden }) => eventIdentifier === eventIdentifierHeader && !hidden)
     .map(({ sequenceIndex }) => Number(sequenceIndex))
     .sort((a, b) => b - a);
@@ -262,6 +261,37 @@ function forceRedecode(): void {
   set(deleteCustom, false);
   set(redecodePayload, undefined);
 }
+
+function addEvent(group: StandaloneEditableEvents, row: HistoryEventEntry): void {
+  emit('show:form', {
+    data: {
+      group,
+      nextSequenceId: suggestNextSequenceId(row),
+      type: 'group-add',
+    },
+    type: 'event',
+  });
+}
+
+function editEvent(event: any, row: HistoryEventEntry): void {
+  emit('show:form', {
+    data: {
+      ...event,
+      nextSequenceId: suggestNextSequenceId(row),
+    },
+    type: 'event',
+  });
+}
+
+function addMissingRule($event: any, row: HistoryEventEntry): void {
+  emit('show:form', {
+    data: {
+      ...$event,
+      nextSequenceId: suggestNextSequenceId(row),
+    },
+    type: 'missingRule',
+  });
+}
 </script>
 
 <template>
@@ -273,9 +303,9 @@ function forceRedecode(): void {
       <RuiDataTable
         v-model:pagination.external="pagination"
         v-model:sort.external="sort"
-        :expanded="rows"
+        :expanded="flatten(rows)"
         :cols="cols"
-        :rows="rows"
+        :rows="flatten(rows)"
         :loading="loading"
         :item-class="getItemClass"
         :empty="{ label: t('data_table.no_data') }"
@@ -288,7 +318,7 @@ function forceRedecode(): void {
         outlined
       >
         <template #item.ignoredInAccounting="{ row }">
-          <IgnoredInAcountingIcon
+          <IgnoredInAccountingIcon
             v-if="row.ignoredInAccounting"
             class="ml-4"
           />
@@ -320,13 +350,7 @@ function forceRedecode(): void {
             <HistoryEventsAction
               :event="row"
               :loading="eventsLoading"
-              @add-event="emit('show:form', {
-                type: 'event',
-                data: {
-                  group: row,
-                  nextSequenceId: suggestNextSequenceId(row),
-                },
-              })"
+              @add-event="addEvent($event, row);"
               @toggle-ignore="toggle($event)"
               @redecode="redecode($event, row.eventIdentifier)"
               @delete-tx="confirmTxAndEventsDelete($event)"
@@ -343,22 +367,9 @@ function forceRedecode(): void {
             :loading="sectionLoading || eventsLoading"
             :has-ignored-event="hasIgnoredEvent"
             :highlighted-identifiers="highlightedIdentifiers"
-            @edit-event="emit('show:form', {
-              type: 'event',
-              data: {
-                group: row,
-                nextSequenceId: suggestNextSequenceId(row),
-                ...$event,
-              },
-            })"
+            @edit-event="editEvent($event, row);"
             @delete-event="confirmDelete($event)"
-            @show:missing-rule-action="emit('show:form', {
-              type: 'missingRule',
-              data: {
-                group: row,
-                event: $event,
-              },
-            })"
+            @show:missing-rule-action="addMissingRule($event, row);"
           />
         </template>
         <template #body.prepend="{ colspan }">

@@ -13,15 +13,16 @@ import {
   validWithParamsSessionAndExternalService,
 } from '@/services/utils';
 import {
+  type AddHistoryEventPayload,
   type AddTransactionHashPayload,
-  type EditHistoryEventPayload,
+  type HistoryEventCollectionRow,
   HistoryEventDetail,
-  type HistoryEventEntryWithMeta,
   type HistoryEventRequestPayload,
   HistoryEventsCollectionResponse,
-  type NewHistoryEventPayload,
+  type ModifyHistoryEventPayload,
   type OnlineHistoryEventsRequestPayload,
   type PullTransactionPayload,
+  type RepullingTransactionPayload,
   TransactionChainType,
   type TransactionRequestPayload,
 } from '@/types/history/events';
@@ -38,15 +39,16 @@ interface UseHistoryEventsApiReturn {
   pullAndRecodeTransactionRequest: (payload: PullTransactionPayload, type?: TransactionChainType) => Promise<PendingTask>;
   getUndecodedTransactionsBreakdown: (type?: TransactionChainType) => Promise<PendingTask>;
   decodeTransactions: (chains: string[], type?: TransactionChainType, ignoreCache?: boolean) => Promise<PendingTask>;
-  addHistoryEvent: (event: NewHistoryEventPayload) => Promise<{ identifier: number }>;
-  editHistoryEvent: (event: EditHistoryEventPayload) => Promise<boolean>;
+  addHistoryEvent: (event: AddHistoryEventPayload) => Promise<{ identifier: number }>;
+  editHistoryEvent: (event: ModifyHistoryEventPayload) => Promise<boolean>;
   deleteHistoryEvent: (identifiers: number[], forceDelete?: boolean) => Promise<boolean>;
   getEventDetails: (identifier: number) => Promise<HistoryEventDetail>;
   addTransactionHash: (payload: AddTransactionHashPayload) => Promise<boolean>;
+  repullingTransactions: (payload: RepullingTransactionPayload) => Promise<PendingTask>;
   getTransactionTypeMappings: () => Promise<HistoryEventTypeData>;
   getHistoryEventCounterpartiesData: () => Promise<ActionDataEntry[]>;
   getHistoryEventProductsData: () => Promise<HistoryEventProductData>;
-  fetchHistoryEvents: (payload: HistoryEventRequestPayload) => Promise<CollectionResponse<HistoryEventEntryWithMeta>>;
+  fetchHistoryEvents: (payload: HistoryEventRequestPayload) => Promise<CollectionResponse<HistoryEventCollectionRow>>;
   queryOnlineHistoryEvents: (payload: OnlineHistoryEventsRequestPayload) => Promise<PendingTask>;
   queryExchangeEvents: (payload: QueryExchangePayload) => Promise<PendingTask>;
   exportHistoryEventsCSV: (filters: HistoryEventRequestPayload, directoryPath?: string) => Promise<PendingTask>;
@@ -140,7 +142,7 @@ export function useHistoryEventsApi(): UseHistoryEventsApiReturn {
     return handleResponse(response);
   };
 
-  const addHistoryEvent = async (event: NewHistoryEventPayload): Promise<{ identifier: number }> => {
+  const addHistoryEvent = async (event: AddHistoryEventPayload): Promise<{ identifier: number }> => {
     const response = await api.instance.put<ActionResult<{ identifier: number }>>(
       '/history/events',
       snakeCaseTransformer(event),
@@ -152,7 +154,7 @@ export function useHistoryEventsApi(): UseHistoryEventsApiReturn {
     return handleResponse(response);
   };
 
-  const editHistoryEvent = async (event: EditHistoryEventPayload): Promise<boolean> => {
+  const editHistoryEvent = async (event: ModifyHistoryEventPayload): Promise<boolean> => {
     const response = await api.instance.patch<ActionResult<boolean>>('/history/events', snakeCaseTransformer(event), {
       validateStatus: validStatus,
     });
@@ -188,6 +190,21 @@ export function useHistoryEventsApi(): UseHistoryEventsApiReturn {
     return handleResponse(response);
   };
 
+  const repullingTransactions = async (payload: RepullingTransactionPayload): Promise<PendingTask> => {
+    const response = await api.instance.post<ActionResult<PendingTask>>(
+      '/blockchains/evm/transactions/refetch',
+      snakeCaseTransformer({
+        ...payload,
+        asyncQuery: true,
+      }),
+      {
+        validateStatus: validTaskStatus,
+      },
+    );
+
+    return handleResponse(response);
+  };
+
   const getTransactionTypeMappings = async (): Promise<HistoryEventTypeData> => {
     const response = await api.instance.get<ActionResult<HistoryEventTypeData>>('/history/events/type_mappings', {
       validateStatus: validStatus,
@@ -214,8 +231,8 @@ export function useHistoryEventsApi(): UseHistoryEventsApiReturn {
 
   const fetchHistoryEvents = async (
     payload: HistoryEventRequestPayload,
-  ): Promise<CollectionResponse<HistoryEventEntryWithMeta>> => {
-    const response = await api.instance.post<ActionResult<CollectionResponse<HistoryEventEntryWithMeta>>>(
+  ): Promise<CollectionResponse<HistoryEventCollectionRow>> => {
+    const response = await api.instance.post<ActionResult<CollectionResponse<HistoryEventCollectionRow>>>(
       '/history/events',
       snakeCaseTransformer(payload),
       {
@@ -303,5 +320,6 @@ export function useHistoryEventsApi(): UseHistoryEventsApiReturn {
     pullAndRecodeTransactionRequest,
     queryExchangeEvents,
     queryOnlineHistoryEvents,
+    repullingTransactions,
   };
 }

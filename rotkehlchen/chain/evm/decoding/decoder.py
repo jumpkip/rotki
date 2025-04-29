@@ -12,8 +12,9 @@ from typing import TYPE_CHECKING, Any, Optional, Protocol
 
 import gevent
 from gevent.lock import Semaphore
+from more_itertools import peekable
+from web3.exceptions import Web3Exception
 
-from rotkehlchen.accounting.structures.types import ActionType
 from rotkehlchen.api.websockets.typedefs import ProgressUpdateSubType, WSMessageType
 from rotkehlchen.assets.utils import TokenEncounterInfo, get_or_create_evm_token, get_token
 from rotkehlchen.chain.ethereum.utils import token_normalized_value
@@ -21,8 +22,18 @@ from rotkehlchen.chain.evm.decoding.interfaces import ReloadableDecoderMixin
 from rotkehlchen.chain.evm.decoding.oneinch.v5.decoder import Oneinchv5Decoder
 from rotkehlchen.chain.evm.decoding.oneinch.v6.decoder import Oneinchv6Decoder
 from rotkehlchen.chain.evm.decoding.open_ocean.decoder import OpenOceanDecoder
+from rotkehlchen.chain.evm.decoding.pendle.constants import (
+    PENDLE_SUPPORTED_CHAINS_WITHOUT_ETHEREUM,
+)
+from rotkehlchen.chain.evm.decoding.pendle.decoder import PendleCommonDecoder
+from rotkehlchen.chain.evm.decoding.rainbow.constants import RAINBOW_SUPPORTED_CHAINS
+from rotkehlchen.chain.evm.decoding.rainbow.decoder import RainbowDecoder
 from rotkehlchen.chain.evm.decoding.safe.decoder import SafemultisigDecoder
 from rotkehlchen.chain.evm.decoding.socket_bridge.decoder import SocketBridgeDecoder
+from rotkehlchen.chain.evm.decoding.stakedao.constants import (
+    STAKEDAO_SUPPORTED_CHAINS_WITHOUT_CLAIMS,
+)
+from rotkehlchen.chain.evm.decoding.stakedao.decoder import StakedaoCommonDecoder
 from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.decoding.weth.constants import (
     CHAINS_WITH_SPECIAL_WETH,
@@ -46,6 +57,7 @@ from rotkehlchen.errors.misc import (
 from rotkehlchen.errors.serialization import ConversionError, DeserializationError
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.evm_event import EvmProduct
+from rotkehlchen.history.events.structures.evm_swap import EvmSwapEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.tasks.assets import maybe_detect_new_tokens
@@ -118,6 +130,7 @@ def decode_safely(
         IndexError,
         ValueError,
         ConversionError,
+        Web3Exception,
     ) as e:
         log.error(traceback.format_exc())
         error_prefix = f'Decoding of transaction {tx_hash.hex()} in {chain_id.to_name()}'
@@ -264,6 +277,28 @@ class EVMTransactionDecoder(ABC):
             self._add_single_decoder(
                 class_name='Weth',
                 decoder_class=WethDecoder,
+                rules=rules,
+            )
+
+        # Add the Rainbow decoder if the chain is supported
+        if self.evm_inquirer.chain_id in RAINBOW_SUPPORTED_CHAINS:
+            self._add_single_decoder(
+                class_name='RainbowDecoder',
+                decoder_class=RainbowDecoder,
+                rules=rules,
+            )
+
+        if self.evm_inquirer.chain_id in PENDLE_SUPPORTED_CHAINS_WITHOUT_ETHEREUM:
+            self._add_single_decoder(
+                class_name='Pendle',
+                decoder_class=PendleCommonDecoder,
+                rules=rules,
+            )
+
+        if self.evm_inquirer.chain_id in STAKEDAO_SUPPORTED_CHAINS_WITHOUT_CLAIMS:
+            self._add_single_decoder(
+                class_name='Stakedao',
+                decoder_class=StakedaoCommonDecoder,
                 rules=rules,
             )
 
@@ -442,7 +477,11 @@ class EVMTransactionDecoder(ABC):
             if err:
                 continue
 
-            if decoding_output.event is not None or len(decoding_output.action_items) > 0:
+            if (
+                decoding_output.event is not None or
+                len(decoding_output.action_items) > 0 or
+                decoding_output.process_swaps
+            ):
                 return decoding_output
 
         return None
@@ -479,7 +518,7 @@ class EVMTransactionDecoder(ABC):
             decoded_events: list['EvmEvent'],
             all_logs: list[EvmTxReceiptLog],
             counterparties: set[str],
-    ) -> list['EvmEvent']:
+    ) -> tuple[list['EvmEvent'], bool]:
         """
         The post-decoding rules list consists of tuples (priority, rule) and must be
         sorted by priority in ascending order. The higher the priority number the later
@@ -487,7 +526,10 @@ class EVMTransactionDecoder(ABC):
         Matches post decoding rules to all matched counterparties propagated for decoding
         from the decoding/enriching rules and also the counterparties associated with the
         transaction to_address field.
+        Returns a tuple containing the list of decoded events and a boolean flag indicating
+        whether any post-decoding rules ran successfully and may have modified the events.
         """
+        maybe_modified = False
         if transaction.to_address is not None:
             address_counterparty = self.rules.addresses_to_counterparties.get(transaction.to_address)  # noqa: E501
             if address_counterparty is not None:
@@ -503,7 +545,7 @@ class EVMTransactionDecoder(ABC):
         # Sort post decoding rules by priority (which is the first element of the tuple)
         rules.sort(key=operator.itemgetter(0))
         for _, rule in rules:
-            decoded_events, _ = decode_safely(
+            result_events, is_err = decode_safely(
                 msg_aggregator=self.msg_aggregator,
                 tx_hash=transaction.tx_hash,
                 chain_id=transaction.chain_id,
@@ -512,8 +554,87 @@ class EVMTransactionDecoder(ABC):
                 decoded_events=decoded_events,
                 all_logs=all_logs,
             )
+            if not is_err:  # post decoding appends and returns to decoded events if successful
+                maybe_modified = True
+                decoded_events = result_events
+                if len(result_events) > len(decoded_events):
+                    break  # an event was added, so let's break out of post decoding
 
-        return decoded_events
+        return decoded_events, maybe_modified
+
+    @staticmethod
+    def _process_swaps(
+            transaction: EvmTransaction,
+            decoded_events: list['EvmEvent'],
+    ) -> list['EvmEvent']:
+        """Convert EvmEvents with event_type of TRADE into EvmSwapEvents.
+
+        Assumes that the decoding logic has already ordered the sequence indexes of trade events
+        in the correct spend/receive/fee order with no other events between them (although the
+        indexes do not need to be consecutive). If an incomplete or unordered group of Trade events
+        is encountered an error will be logged and the original EvmEvents saved to the db.
+
+        Returns the list of decoded events ordered by sequence index with any complete groups
+        of trade events replaced with EvmSwapEvents.
+        """
+        processed_events = []
+        trade_subtypes = (HistoryEventSubType.SPEND, HistoryEventSubType.RECEIVE, HistoryEventSubType.FEE)  # noqa: E501
+        events_iterator = peekable(iter(decoded_events))
+        while (next_event := events_iterator.peek(None)) is not None:
+            if (
+                next_event.event_type != HistoryEventType.TRADE or
+                next_event.event_subtype not in trade_subtypes
+            ):  # event is not part of a swap - save it and continue
+                processed_events.append(next(events_iterator))
+                continue
+
+            trade_events: list[EvmEvent] = []
+            for idx, subtype in enumerate(trade_subtypes):
+                if (
+                    (next_event := events_iterator.peek(None)) is not None and
+                    next_event.event_type == HistoryEventType.TRADE and
+                    next_event.event_subtype == subtype and
+                    len(trade_events) == idx
+                ):  # match events in the order defined in trade_subtypes
+                    trade_events.append(next(events_iterator))
+                elif subtype != HistoryEventSubType.FEE:  # if spend or receive don't match above then the group is incomplete or out of order.  # noqa: E501
+                    # If no matches yet (failed on SPEND), save next(events_iterator), so that
+                    # we move on to the event after in the next while loop iteration.
+                    # If partial match (failed on RECEIVE), save only the already matched
+                    # trade_events so the next event (could be the SPEND of another group) will be
+                    # reprocessed in the next while loop iteration.
+                    processed_events.extend(trade_events if len(trade_events) > 0 else [next(events_iterator)])  # noqa: E501
+                    log.error(
+                        'Encountered incomplete or unordered swap event group '
+                        f'{trade_events + [next_event]} in transaction {transaction!s}',
+                    )
+                    trade_events = []
+                    break
+
+            if len(trade_events) == 0:
+                continue  # swap group was incomplete or unordered.
+
+            spend_event = trade_events[0]
+            for idx, trade_event in enumerate(trade_events):
+                swap_event = EvmSwapEvent(
+                    tx_hash=trade_event.tx_hash,
+                    sequence_index=spend_event.sequence_index + idx,  # Make indexes consecutive (required for retrieving the receive and fee events when editing a swap event group via the api).  # noqa: E501
+                    timestamp=trade_event.timestamp,
+                    location=trade_event.location,
+                    event_subtype=trade_event.event_subtype,  # type: ignore[arg-type]  # will be SPEND, RECEIVE, or FEE here
+                    asset=trade_event.asset,
+                    amount=trade_event.amount,
+                    notes=trade_event.notes,
+                    extra_data=trade_event.extra_data,
+                    # the rest should be the same for the whole group, so set from the spend event.
+                    location_label=spend_event.location_label,
+                    counterparty=spend_event.counterparty,
+                    product=spend_event.product,
+                    address=spend_event.address,
+                )
+                processed_events.append(swap_event)
+
+        return processed_events
 
     def _decode_transaction(
             self,
@@ -539,6 +660,7 @@ class EVMTransactionDecoder(ABC):
         counterparties = set()
         refresh_balances = False
         reload_decoders = None
+        process_swaps = False
 
         # Check if any rules should run due to the 4bytes signature of the input data
         fourbytes = transaction.input_data[:4]
@@ -570,17 +692,14 @@ class EVMTransactionDecoder(ABC):
                 action_items=action_items,
             )
             if input_data_rules and len(tx_log.topics) != 0 and (input_rule := input_data_rules.get(tx_log.topics[0])) is not None:  # noqa: E501
-                result, err = decode_safely(
+                result, is_err = decode_safely(
                     msg_aggregator=self.msg_aggregator,
                     tx_hash=context.transaction.tx_hash,
                     chain_id=context.transaction.chain_id,
                     func=input_rule,
                     context=context,
                 )
-                if err:
-                    result = DEFAULT_DECODING_OUTPUT
-
-                if result.event:
+                if not is_err and result.event:
                     events.append(result.event)
                     continue  # since the input data rule found an event for this log
 
@@ -589,6 +708,8 @@ class EVMTransactionDecoder(ABC):
                 refresh_balances = True
             if decoding_output.reload_decoders is not None:
                 reload_decoders = decoding_output.reload_decoders
+            if decoding_output.process_swaps:
+                process_swaps = True
 
             action_items.extend(decoding_output.action_items)
             if decoding_output.matched_counterparty is not None:
@@ -613,13 +734,21 @@ class EVMTransactionDecoder(ABC):
                     counterparties.add(rules_decoding_output.matched_counterparty)
                 if rules_decoding_output.event is not None:
                     events.append(rules_decoding_output.event)
+                if rules_decoding_output.process_swaps:
+                    process_swaps = True
 
-        events = self.run_all_post_decoding_rules(
+        events, maybe_modified = self.run_all_post_decoding_rules(
             transaction=transaction,
             decoded_events=events,
             all_logs=tx_receipt.logs,
             counterparties=counterparties,
         )
+        if maybe_modified:
+            process_swaps = True  # a swap may have been created in post decoding
+
+        events = sorted(events, key=lambda x: x.sequence_index, reverse=False)
+        if process_swaps:
+            events = self._process_swaps(transaction=transaction, decoded_events=events)
 
         if monerium_special_handling_event is True:
             # When events that need special handling exist iterate over the decoded events and
@@ -654,7 +783,6 @@ class EVMTransactionDecoder(ABC):
                 with suppress(InputError):  # We don't care if it's already in the DB
                     self.database.add_to_ignored_action_ids(
                         write_cursor=write_cursor,
-                        action_type=ActionType.HISTORY_EVENT,
                         identifiers=[transaction.identifier],
                     )
 
@@ -663,7 +791,6 @@ class EVMTransactionDecoder(ABC):
                 (tx_id, EVMTX_DECODED),
             )
 
-        events = sorted(events, key=lambda x: x.sequence_index, reverse=False)
         return events, refresh_balances, reload_decoders  # Propagate for post processing in the caller  # noqa: E501
 
     def get_and_decode_undecoded_transactions(
@@ -1181,6 +1308,8 @@ class EVMTransactionDecoder(ABC):
 
                 if action_item.to_counterparty is not None:
                     transfer.counterparty = action_item.to_counterparty
+                if action_item.to_product is not None:
+                    transfer.product = action_item.to_product
                 if action_item.extra_data is not None:
                     transfer.extra_data = action_item.extra_data
                 if action_item.to_address is not None:
@@ -1225,6 +1354,7 @@ class EVMTransactionDecoder(ABC):
             event=transfer,
             matched_counterparty=enrichment_output.matched_counterparty,
             refresh_balances=enrichment_output.refresh_balances,
+            process_swaps=enrichment_output.process_swaps,
         )
 
     def _post_process(self, refresh_balances: bool) -> None:

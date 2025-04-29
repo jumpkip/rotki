@@ -35,7 +35,7 @@ from rotkehlchen.types import Location, TimestampMS
 def assert_csv_export_response(
         response: requests.Response,
         csv_dir: Path,
-        expected_count: int = 9,
+        expected_count: int = 14,
         is_download: bool = False,
         includes_extra_headers: bool = True,
         csv_delimiter: str = ',',
@@ -67,13 +67,13 @@ def assert_csv_export_response(
         'asset_symbol',
         'amount',
         'fiat_value',
-        'notes',
         'identifier',
         'entry_type',
         'event_identifier',
         'sequence_index',
         'direction',
-    )
+        'extra_data',
+    )  # skip auto_notes and user_notes here since they may or may not be present
 
     extra_headers = (
         # evm event

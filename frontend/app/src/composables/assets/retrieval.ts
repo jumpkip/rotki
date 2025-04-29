@@ -31,13 +31,14 @@ export type AssetSymbolReturn = (identifier: MaybeRef<string | undefined>, optio
 export type AssetNameReturn = (identifier: MaybeRef<string | undefined>, options?: MaybeRef<AssetResolutionOptions>) => ComputedRef<string>;
 
 interface UseAssetInfoRetrievalReturn {
+  assetAssociationMap: ComputedRef<Record<string, string>>;
   fetchTokenDetails: (payload: EvmChainAddress) => Promise<ERC20Token>;
   getAssociatedAssetIdentifier: (identifier: string) => ComputedRef<string>;
-  getAssetAssociationIdentifiers: (identifier: string) => string[];
   assetInfo: AssetInfoReturn;
   refetchAssetInfo: (key: string) => void;
   assetSymbol: AssetSymbolReturn;
   assetName: AssetNameReturn;
+  getAssetSymbol: (identifier: string | undefined, options?: AssetResolutionOptions) => string;
   tokenAddress: (identifier: MaybeRef<string>, enableAssociation?: MaybeRef<boolean>) => ComputedRef<string>;
   assetSearch: (params: AssetSearchParams) => Promise<AssetsWithId>;
 }
@@ -62,19 +63,6 @@ export function useAssetInfoRetrieval(): UseAssetInfoRetrievalReturn {
 
   const getAssociatedAssetIdentifier = (identifier: string): ComputedRef<string> =>
     computed(() => get(assetAssociationMap)[identifier] ?? identifier);
-
-  const getAssetAssociationIdentifiers = (identifier: string): string[] => {
-    const assets = [identifier];
-
-    Object.entries(get(assetAssociationMap)).forEach(([key, item]) => {
-      if (item !== identifier)
-        return;
-
-      assets.push(key);
-    });
-
-    return assets;
-  };
 
   const getAssetNameFallback = (id: string): string => {
     if (isEvmIdentifier(id)) {
@@ -139,6 +127,12 @@ export function useAssetInfoRetrieval(): UseAssetInfoRetrievalReturn {
     const symbol = get(assetInfo(id, options))?.symbol;
     return symbol || '';
   });
+
+  const getAssetSymbol = (identifier: string | undefined, options?: AssetResolutionOptions): string => {
+    if (!identifier)
+      return '';
+    return get(assetInfo(identifier, options))?.symbol ?? '';
+  };
 
   const assetName = (
     identifier: MaybeRef<string | undefined>,
@@ -211,12 +205,13 @@ export function useAssetInfoRetrieval(): UseAssetInfoRetrievalReturn {
   };
 
   return {
+    assetAssociationMap,
     assetInfo,
     assetName,
     assetSearch,
     assetSymbol,
     fetchTokenDetails,
-    getAssetAssociationIdentifiers,
+    getAssetSymbol,
     getAssociatedAssetIdentifier,
     refetchAssetInfo: queueIdentifier,
     tokenAddress,

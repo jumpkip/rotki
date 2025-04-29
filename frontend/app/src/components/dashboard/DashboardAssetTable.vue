@@ -11,8 +11,9 @@ import EvmNativeTokenBreakdown from '@/components/EvmNativeTokenBreakdown.vue';
 import AssetDetails from '@/components/helper/AssetDetails.vue';
 import RowAppend from '@/components/helper/RowAppend.vue';
 import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
+import { useManualBalanceData } from '@/modules/balances/manual/use-manual-balance-data';
+import { TableId, useRememberTableSorting } from '@/modules/table/use-remember-table-sorting';
 import { Routes } from '@/router/routes';
-import { useManualBalancesStore } from '@/store/balances/manual';
 import { useBalancePricesStore } from '@/store/balances/prices';
 import { useFrontendSettingsStore } from '@/store/settings/frontend';
 import { useGeneralSettingsStore } from '@/store/settings/general';
@@ -57,7 +58,7 @@ const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
 const { exchangeRate } = useBalancePricesStore();
 const { assetInfo, assetName, assetSymbol } = useAssetInfoRetrieval();
 const { dashboardTablesVisibleColumns } = storeToRefs(useFrontendSettingsStore());
-const { missingCustomAssets } = storeToRefs(useManualBalancesStore());
+const { missingCustomAssets } = useManualBalanceData();
 const statisticsStore = useStatisticsStore();
 const { totalNetWorthUsd } = storeToRefs(statisticsStore);
 const router = useRouter();
@@ -180,6 +181,8 @@ const tableHeaders = computed<DataTableColumn<AssetBalanceWithPrice>[]>(() => {
   return headers;
 });
 
+useRememberTableSorting<AssetBalanceWithPrice>(TableId.DASHBOARD_ASSET, sort, tableHeaders);
+
 function redirectToManualBalance(item: AssetBalanceWithPrice) {
   const tableType = props.tableType;
   if ([DashboardTableType.ASSETS, DashboardTableType.LIABILITIES].includes(tableType)) {
@@ -267,7 +270,7 @@ watch(search, () => setPage(1));
         <AmountDisplay
           v-else
           :loading="!row.usdPrice || row.usdPrice.lt(0)"
-          no-scramble
+          is-asset-price
           show-currency="symbol"
           :price-asset="row.asset"
           :price-of-asset="row.usdPrice"

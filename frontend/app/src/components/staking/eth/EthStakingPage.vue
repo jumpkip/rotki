@@ -2,17 +2,17 @@
 import ActiveModules from '@/components/defi/ActiveModules.vue';
 import ModuleNotActive from '@/components/defi/ModuleNotActive.vue';
 import TablePageLayout from '@/components/layout/TablePageLayout.vue';
-import NoPremiumPlaceholder from '@/components/premium/NoPremiumPlaceholder.vue';
+import EthStakingPagePlaceholder from '@/components/staking/eth/EthStakingPagePlaceholder.vue';
 import EthStakingPageSettingMenu from '@/components/staking/eth/EthStakingPageSettingMenu.vue';
 import EthValidatorFilter from '@/components/staking/eth/EthValidatorFilter.vue';
 import { useBlockchainAccountsApi } from '@/composables/api/blockchain/accounts';
 import { useEthStaking } from '@/composables/blockchain/accounts/staking';
-import { useBlockchainBalances } from '@/composables/blockchain/balances';
 import { usePremium } from '@/composables/premium';
 import { useModules } from '@/composables/session/modules';
 import { useEth2DailyStats } from '@/composables/staking/eth2/daily-stats';
 import { useEth2Staking } from '@/composables/staking/eth2/eth2';
 import { useStatusUpdater } from '@/composables/status';
+import { useBlockchainBalances } from '@/modules/balances/use-blockchain-balances';
 import { EthStaking } from '@/premium/premium';
 import { useBlockchainValidatorsStore } from '@/store/blockchain/validators';
 import { useSessionAuthStore } from '@/store/session/auth';
@@ -167,10 +167,7 @@ function forceRefreshStats() {
 
 <template>
   <div>
-    <NoPremiumPlaceholder
-      v-if="!premium"
-      :text="t('eth2_page.no_premium')"
-    />
+    <EthStakingPagePlaceholder v-if="!premium" />
     <ModuleNotActive
       v-else-if="!enabled"
       :modules="[module]"

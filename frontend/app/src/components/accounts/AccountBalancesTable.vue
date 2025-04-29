@@ -14,6 +14,7 @@ import { useAccountDelete } from '@/composables/accounts/blockchain/use-account-
 import { useBlockchainAccountLoading } from '@/composables/accounts/blockchain/use-account-loading';
 import { type AccountManageState, editBlockchainAccount } from '@/composables/accounts/blockchain/use-account-manage';
 import { useSupportedChains } from '@/composables/info/chains';
+import { TableId, useRememberTableSorting } from '@/modules/table/use-remember-table-sorting';
 import { useGeneralSettingsStore } from '@/store/settings/general';
 import { useStatusStore } from '@/store/status';
 import { useTaskStore } from '@/store/tasks';
@@ -40,10 +41,10 @@ const expandedIds = defineModel<string[]>('expandedIds', { required: true });
 
 const props = withDefaults(defineProps<{
   accounts: Collection<T>;
-  group?: boolean;
+  group?: 'evm' | 'xpub';
   category: string;
 }>(), {
-  group: false,
+  group: undefined,
 });
 
 const emit = defineEmits<{
@@ -106,30 +107,32 @@ const cols = computed<DataTableColumn<DataRow>[]>(() => {
           sortable: false,
         }]
       : []),
-    ...(!group
-      ? []
-      : [{
+    ...(group
+      ? [{
           cellClass: 'py-0 !px-3',
           class: '!px-3',
           key: 'label',
           label: t('common.account'),
           sortable: true,
-        }]),
-    {
-      cellClass: 'py-0 !pr-0',
-      class: '!pr-0',
-      key: 'chain',
-      label: t('common.chain'),
-      sortable: false,
-    },
-    ...(!group
-      ? []
-      : [{
+        }]
+      : []),
+    ...(group !== 'xpub'
+      ? [{
+          cellClass: 'py-0 !pr-0',
+          class: '!pr-0',
+          key: 'chain',
+          label: t('common.chain'),
+          sortable: false,
+        }]
+      : []),
+    ...(group === 'evm'
+      ? [{
           cellClass: 'py-0',
           key: 'tags',
           label: t('common.tags'),
           sortable: false,
-        }]),
+        }]
+      : []),
     {
       align: 'end',
       cellClass: 'py-0 !pr-0 !pl-2',
@@ -154,6 +157,8 @@ const cols = computed<DataTableColumn<DataRow>[]>(() => {
 
   return headers;
 });
+
+useRememberTableSorting<DataRow>(TableId.ACCOUNT_BALANCES, sort, cols);
 
 const accountOperation = logicOr(
   useIsTaskRunning(TaskType.ADD_ACCOUNT),
@@ -315,7 +320,7 @@ defineExpose({
           class="account-balance-table__actions"
           :edit-tooltip="t('account_balances.edit_tooltip')"
           :disabled="accountOperation"
-          :no-edit="!group"
+          :no-edit="group !== 'evm'"
           @edit-click="edit(row)"
           @delete-click="confirmDelete(row)"
         />
@@ -328,7 +333,7 @@ defineExpose({
       <RowAppend
         :label="t('common.total')"
         :left-patch-colspan="anyExpansion ? 1 : 0"
-        :label-colspan="group ? 4 : 2"
+        :label-colspan="group && group === 'evm' ? 4 : 2"
         :is-mobile="false"
         class-name="[&>td]:p-4 text-sm"
       >

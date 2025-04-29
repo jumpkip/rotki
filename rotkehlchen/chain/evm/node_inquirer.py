@@ -36,7 +36,7 @@ from rotkehlchen.chain.evm.constants import (
 )
 from rotkehlchen.chain.evm.contracts import EvmContract, EvmContracts
 from rotkehlchen.chain.evm.proxies_inquirer import EvmProxiesInquirer
-from rotkehlchen.chain.evm.types import NodeName, Web3Node, WeightedNode
+from rotkehlchen.chain.evm.types import NodeName, RemoteDataQueryStatus, Web3Node, WeightedNode
 from rotkehlchen.constants import ONE
 from rotkehlchen.errors.misc import (
     BlockchainQueryError,
@@ -531,25 +531,29 @@ class EvmNodeInquirer(ABC, LockableQueryMixIn):
         for node_idx, weighted_node in enumerate(call_order):
             node_info = weighted_node.node_info
             web3node = self.web3_mapping.get(node_info, None)
-            if (
-                web3node is None and
-                node_info.name != self.etherscan_node_name and
-                node_info.name not in self.failed_to_connect_nodes
-            ):
-                success, _ = self.attempt_connect(node=node_info)
-                if success is False:
-                    self.failed_to_connect_nodes.add(node_info.name)
+            if web3node is None:
+                if node_info.name in self.failed_to_connect_nodes:
                     continue
 
-                if (web3node := self.web3_mapping.get(node_info, None)) is None:
-                    log.error(f'Unexpected missing node {node_info} at {self.chain_id}')
-                    continue
+                if node_info.name != self.etherscan_node_name:
+                    success, _ = self.attempt_connect(node=node_info)
+                    if success is False:
+                        self.failed_to_connect_nodes.add(node_info.name)
+                        continue
 
-            if (
-                web3node is not None and
+                    if (web3node := self.web3_mapping.get(node_info, None)) is None:
+                        log.error(f'Unexpected missing node {node_info} at {self.chain_id}')
+                        continue
+
+            if web3node is not None and ((
                 method.__name__ in self.methods_that_query_past_data and
                 web3node.is_pruned is True
-            ):
+            ) or (
+                kwargs.get('block_identifier', 'latest') != 'latest' and
+                web3node.is_archive is False
+            )):
+                # If the block_identifier is different from 'latest'
+                # this query should be routed to an archive node
                 continue
 
             try:
@@ -1431,7 +1435,7 @@ class EvmNodeInquirer(ABC, LockableQueryMixIn):
             force_refresh: bool = False,
             chain_id: ChainID | None = None,
             cache_key_parts: Sequence[str] | None = None,
-    ) -> bool:
+    ) -> RemoteDataQueryStatus:
         """
         It checks if the cache data is fresh enough and if not, it queries
         the remote sources of the data and stores it to the globaldb cache tables.
@@ -1453,7 +1457,7 @@ class EvmNodeInquirer(ABC, LockableQueryMixIn):
             force_refresh is False
         ):
             log.debug(f'Not refreshing cache {cache_type}. Queried recently')
-            return False
+            return RemoteDataQueryStatus.NO_UPDATE
 
         try:
             new_data = query_method(
@@ -1465,9 +1469,12 @@ class EvmNodeInquirer(ABC, LockableQueryMixIn):
             log.error(
                 f'Failed to call {query_method} when updating cache {cache_type} due to {e}',
             )
-            return False
+            return RemoteDataQueryStatus.FAILED
 
-        return new_data is not None
+        return (
+            RemoteDataQueryStatus.NEW_DATA if new_data is not None
+            else RemoteDataQueryStatus.NO_UPDATE
+        )
 
 
 class EvmNodeInquirerWithDSProxy(EvmNodeInquirer):

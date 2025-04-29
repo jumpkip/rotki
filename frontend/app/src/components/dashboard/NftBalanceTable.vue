@@ -12,8 +12,9 @@ import NftDetails from '@/components/helper/NftDetails.vue';
 import RefreshButton from '@/components/helper/RefreshButton.vue';
 import RowAppend from '@/components/helper/RowAppend.vue';
 import { usePaginationFilters } from '@/composables/use-pagination-filter';
+import { useNftBalances } from '@/modules/balances/nft/use-nft-balances';
+import { TableId, useRememberTableSorting } from '@/modules/table/use-remember-table-sorting';
 import { Routes } from '@/router/routes';
-import { useNonFungibleBalancesStore } from '@/store/balances/non-fungible';
 import { useFrontendSettingsStore } from '@/store/settings/frontend';
 import { useGeneralSettingsStore } from '@/store/settings/general';
 import { useStatisticsStore } from '@/store/statistics';
@@ -32,7 +33,7 @@ const nonFungibleRoute = Routes.BALANCES_NON_FUNGIBLE;
 
 const statistics = useStatisticsStore();
 const { totalNetWorthUsd } = storeToRefs(statistics);
-const { fetchNonFungibleBalances, refreshNonFungibleBalances } = useNonFungibleBalancesStore();
+const { fetchNonFungibleBalances, refreshNonFungibleBalances } = useNftBalances();
 const { dashboardTablesVisibleColumns } = storeToRefs(useFrontendSettingsStore());
 const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
 const { t } = useI18n();
@@ -116,6 +117,8 @@ const tableHeaders = computed<DataTableColumn<NonFungibleBalance>[]>(() => {
   return headers;
 });
 
+useRememberTableSorting<NonFungibleBalance>(TableId.NON_FUNGIBLE_BALANCES, sort, tableHeaders);
+
 function percentageOfTotalNetValue(value: BigNumber) {
   return calculatePercentage(value, get(totalNetWorthUsd));
 }
@@ -197,7 +200,7 @@ watch(loading, async (isLoading, wasLoading) => {
           </template>
           <template #item.usdPrice="{ row }">
             <AmountDisplay
-              no-scramble
+              is-asset-price
               :price-asset="row.priceAsset"
               :amount="row.priceInAsset"
               :value="row.usdPrice"

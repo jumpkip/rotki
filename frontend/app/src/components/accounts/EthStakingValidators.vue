@@ -10,10 +10,11 @@ import RowAppend from '@/components/helper/RowAppend.vue';
 import TableFilter from '@/components/table-filter/TableFilter.vue';
 import { useAccountDelete } from '@/composables/accounts/blockchain/use-account-delete';
 import { useEthStaking } from '@/composables/blockchain/accounts/staking';
-import { useBlockchainBalances } from '@/composables/blockchain/balances';
 import { type Filters, type Matcher, useEthValidatorAccountFilter } from '@/composables/filters/eth-validator';
 import { usePaginationFilters } from '@/composables/use-pagination-filter';
+import { useBlockchainBalances } from '@/modules/balances/use-blockchain-balances';
 import HashLink from '@/modules/common/links/HashLink.vue';
+import { TableId, useRememberTableSorting } from '@/modules/table/use-remember-table-sorting';
 import { useBalancePricesStore } from '@/store/balances/prices';
 import { useBlockchainValidatorsStore } from '@/store/blockchain/validators';
 import { useGeneralSettingsStore } from '@/store/settings/general';
@@ -110,6 +111,8 @@ const cols = computed<DataTableColumn<EthereumValidator>[]>(() => {
     },
   ];
 });
+
+useRememberTableSorting<EthereumValidator>(TableId.ETH_STAKING_VALIDATORS, sort, cols);
 
 const { useIsTaskRunning } = useTaskStore();
 const { isLoading } = useStatusStore();

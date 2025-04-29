@@ -3,6 +3,8 @@ import shutil
 from enum import Enum
 from typing import Any, Literal, NamedTuple
 
+import gevent
+
 from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.constants.misc import USERSDIR_NAME
 from rotkehlchen.data_handler import DataHandler
@@ -19,6 +21,7 @@ from rotkehlchen.premium.premium import (
 )
 from rotkehlchen.types import Timestamp
 from rotkehlchen.utils.misc import ts_now
+from rotkehlchen.utils.mixins.lockable import LockableQueryMixIn, protect_with_lock
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -38,9 +41,10 @@ class SyncCheckResult(NamedTuple):
     payload: dict[str, Any] | None
 
 
-class PremiumSyncManager:
+class PremiumSyncManager(LockableQueryMixIn):
 
     def __init__(self, migration_manager: DataMigrationManager, data: DataHandler) -> None:
+        super().__init__()
         # Initialize this with the value saved in the DB
         with data.db.conn.read_ctx() as cursor:
             # These 2 vars contain the timestamp of our side. When did this DB try to upload
@@ -159,6 +163,7 @@ class PremiumSyncManager:
         # try an automatic upload only once per hour
         return ts_now() - self.last_upload_attempt_ts > 3600 or force_upload
 
+    @protect_with_lock()
     def maybe_upload_data_to_server(
             self,
             force_upload: bool = False,
@@ -166,6 +171,10 @@ class PremiumSyncManager:
         """
         Returns a boolean value denoting whether we can upload the DB to the server.
         In case of error we also return a message to provide information to the user.
+
+        We use a lock to prevent two greenlets from executing this logic at the
+        same time since we want to export to plaintext only once to encrypt and that happens
+        in a spawned thread inside this function.
         """
         assert self.premium is not None, 'caller should make sure premium exists'
         log.debug('Starting maybe_upload_data_to_server')
@@ -196,7 +205,8 @@ class PremiumSyncManager:
             self.last_upload_attempt_ts = ts_now()
             return False, message
 
-        data, our_hash = self.data.compress_and_encrypt_db()
+        greenlet = gevent.get_hub().threadpool.spawn(self.data.compress_and_encrypt_db)
+        data, our_hash = greenlet.get()
         log.debug(
             'CAN_PUSH',
             ours=our_hash,

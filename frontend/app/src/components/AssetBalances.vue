@@ -7,6 +7,7 @@ import EvmNativeTokenBreakdown from '@/components/EvmNativeTokenBreakdown.vue';
 import AssetDetails from '@/components/helper/AssetDetails.vue';
 import RowAppend from '@/components/helper/RowAppend.vue';
 import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
+import { TableId, useRememberTableSorting } from '@/modules/table/use-remember-table-sorting';
 import { useGeneralSettingsStore } from '@/store/settings/general';
 import { useStatisticsStore } from '@/store/statistics';
 import { isEvmNativeToken } from '@/types/asset';
@@ -152,6 +153,8 @@ const tableHeaders = computed<DataTableColumn<AssetBalanceWithPrice>[]>(() => {
   return headers;
 });
 
+useRememberTableSorting<AssetBalanceWithPrice>(TableId.ASSET_BALANCES, sort, tableHeaders);
+
 const sorted = computed<AssetBalanceWithPrice[]>(() => sortAssetBalances([...get(filteredBalances)], get(sort), assetInfo));
 </script>
 
@@ -180,7 +183,7 @@ const sorted = computed<AssetBalanceWithPrice[]>(() => sortAssetBalances([...get
     <template #item.usdPrice="{ row }">
       <AmountDisplay
         :loading="!row.usdPrice || row.usdPrice.lt(0)"
-        no-scramble
+        is-asset-price
         show-currency="symbol"
         :price-asset="row.asset"
         :price-of-asset="row.usdPrice"

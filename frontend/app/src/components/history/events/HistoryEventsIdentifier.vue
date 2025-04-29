@@ -4,11 +4,9 @@ import HashLink from '@/modules/common/links/HashLink.vue';
 import {
   isAssetMovementEventRef,
   isEthBlockEventRef,
-  isEthDepositEventRef,
-  isEvmEventRef,
   isWithdrawalEventRef,
 } from '@/utils/history/events';
-import { Blockchain, toSentenceCase, toSnakeCase } from '@rotki/common';
+import { Blockchain, HistoryEventEntryType, toSentenceCase, toSnakeCase } from '@rotki/common';
 
 const props = defineProps<{
   event: HistoryEventEntry;
@@ -20,12 +18,28 @@ const { event } = toRefs(props);
 
 const { is2xlAndUp } = useBreakpoint();
 
-const translationKey = computed<string>(() => `transactions.events.headers.${toSnakeCase(get(event).entryType)}`);
+const translationKey = computed<string>(() => {
+  // consider an evm swap event as a case of evm event
+  // as they are both evm events and have the same header
+  let entryType = get(event).entryType;
+  if (entryType === HistoryEventEntryType.EVM_SWAP_EVENT)
+    entryType = HistoryEventEntryType.EVM_EVENT;
+  return `transactions.events.headers.${toSnakeCase(entryType)}`;
+});
 
-const evmOrDepositEvent = computed(() => get(isEvmEventRef(event)) || get(isEthDepositEventRef(event)));
 const blockEvent = isEthBlockEventRef(event);
 const withdrawEvent = isWithdrawalEventRef(event);
 const assetMovementEvent = isAssetMovementEventRef(event);
+const transaction = computed(() => {
+  const event = props.event;
+  if ('txHash' in event) {
+    return {
+      location: event.location,
+      txHash: event.txHash,
+    };
+  }
+  return undefined;
+});
 
 const assetMovementTransactionId = computed<string | undefined>(() => get(assetMovementEvent)?.extraData?.transactionId ?? undefined);
 
@@ -34,7 +48,7 @@ const assetMovementTransactionId = computed<string | undefined>(() => get(assetM
  * to display a hash event identifier resulting in a numerical display instead.
  */
 const key = computed(() => {
-  if (get(evmOrDepositEvent))
+  if (get(transaction))
     return 'tx_hash';
   else if (get(blockEvent))
     return 'block';
@@ -81,15 +95,15 @@ const key = computed(() => {
     </template>
 
     <template
-      v-if="evmOrDepositEvent || assetMovementTransactionId"
+      v-if="transaction || assetMovementTransactionId"
       #txHash
     >
       <HashLink
-        v-if="evmOrDepositEvent"
+        v-if="transaction"
         :class="$style.wrapper"
-        :text="evmOrDepositEvent.txHash"
+        :text="transaction.txHash"
         type="transaction"
-        :location="evmOrDepositEvent.location"
+        :location="transaction.location"
         :truncate-length="is2xlAndUp ? 0 : 8"
       />
       <HashLink

@@ -6,7 +6,7 @@ import PriceRefresh from '@/components/helper/PriceRefresh.vue';
 import TablePageLayout from '@/components/layout/TablePageLayout.vue';
 import HideSmallBalances from '@/components/settings/HideSmallBalances.vue';
 import { TRADE_LOCATION_EXTERNAL } from '@/data/defaults';
-import { useManualBalancesStore } from '@/store/balances/manual';
+import { useManualBalances } from '@/modules/balances/manual/use-manual-balances';
 import { useHistoryStore } from '@/store/history';
 import { BalanceType } from '@/types/balances';
 import { NoteLocation } from '@/types/notes';
@@ -32,7 +32,7 @@ const { t } = useI18n();
 const router = useRouter();
 const route = useRoute('balances-manual');
 
-const { fetchManualBalances } = useManualBalancesStore();
+const { fetchManualBalances } = useManualBalances();
 const { fetchAssociatedLocations } = useHistoryStore();
 
 function add() {
@@ -56,7 +56,7 @@ function goToTab(tab: string | number) {
 watchImmediate(route, (route) => {
   const { params } = route;
 
-  if (!params.tab)
+  if (!params.tab || params.tab === '0')
     router.push('/balances/manual/assets');
 }, { deep: true });
 

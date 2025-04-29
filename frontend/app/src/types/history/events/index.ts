@@ -52,6 +52,15 @@ export const EvmChainAddress = z.object({
 
 export type EvmChainAddress = z.infer<typeof EvmChainAddress>;
 
+export interface RepullingTransactionPayload extends Partial<EvmChainAddress> {
+  readonly fromTimestamp: number;
+  readonly toTimestamp: number;
+}
+
+export interface RepullingTransactionResponse {
+  newTransactionsCount: number;
+}
+
 export const EvmChainLikeAddress = z.object({
   address: z.string(),
   chain: z.string(),
@@ -70,15 +79,16 @@ export type HistoryEventDetail = z.infer<typeof HistoryEventDetail>;
 export const CommonHistoryEvent = z.object({
   amount: NumericString,
   asset: z.string(),
+  autoNotes: z.string().optional(),
   eventIdentifier: z.string(),
   eventSubtype: z.string(),
   eventType: z.string(),
   identifier: z.number(),
   location: z.string(),
   locationLabel: z.string().nullable(),
-  notes: z.string().nullable().optional(),
   sequenceIndex: z.number().or(z.string()),
   timestamp: z.number(),
+  userNotes: z.string().optional(),
 });
 
 export const EvmHistoryEvent = CommonHistoryEvent.extend({
@@ -137,13 +147,70 @@ export const AssetMovementEvent = CommonHistoryEvent.extend({
 
 export type AssetMovementEvent = z.infer<typeof AssetMovementEvent>;
 
+export const SwapEventSchema = CommonHistoryEvent.extend({
+  entryType: z.literal(HistoryEventEntryType.SWAP_EVENT),
+  extraData: z.unknown().nullable(),
+});
+
+export type SwapEvent = z.infer<typeof SwapEventSchema>;
+
+export const EvmSwapEventSchema = CommonHistoryEvent.extend({
+  address: z.string().nullable(),
+  counterparty: z.string().nullable(),
+  entryType: z.literal(HistoryEventEntryType.EVM_SWAP_EVENT),
+  extraData: z.unknown().nullable(),
+  txHash: z.string(),
+});
+
+export type EvmSwapEvent = z.infer<typeof EvmSwapEventSchema>;
+
 export const HistoryEvent = EvmHistoryEvent.or(AssetMovementEvent)
   .or(OnlineHistoryEvent)
   .or(EthWithdrawalEvent)
   .or(EthBlockEvent)
-  .or(EthDepositEvent);
+  .or(EthDepositEvent)
+  .or(SwapEventSchema)
+  .or(EvmSwapEventSchema);
 
-export type HistoryEvent = EvmHistoryEvent | OnlineHistoryEvent | EthWithdrawalEvent | EthBlockEvent | EthDepositEvent | AssetMovementEvent;
+export type GroupEditableHistoryEvents = AssetMovementEvent | SwapEvent | EvmSwapEvent;
+
+export type StandaloneEditableEvents = EvmHistoryEvent | OnlineHistoryEvent | EthWithdrawalEvent | EthBlockEvent | EthDepositEvent;
+
+export type HistoryEvent = StandaloneEditableEvents | GroupEditableHistoryEvents;
+
+export interface AddSwapEventPayload {
+  entryType: typeof HistoryEventEntryType.SWAP_EVENT;
+  feeAmount?: string;
+  feeAsset?: string;
+  location: string;
+  userNotes: [string, string, string] | [string, string];
+  receiveAmount: string;
+  receiveAsset: string;
+  spendAmount: string;
+  spendAsset: string;
+  timestamp: number;
+  uniqueId: string;
+}
+
+export interface EditSwapEventPayload extends Omit<AddSwapEventPayload, 'uniqueId'> {
+  eventIdentifier: string;
+  identifier: number;
+}
+
+export interface AddEvmSwapEventPayload extends Omit<AddSwapEventPayload, 'entryType' | 'uniqueId'> {
+  entryType: typeof HistoryEventEntryType.EVM_SWAP_EVENT;
+  address?: string;
+  locationLabel: string;
+  counterparty: string;
+  sequenceIndex: string;
+  txHash: string;
+  eventIdentifier?: string;
+}
+
+export interface EditEvmSwapEventPayload extends AddEvmSwapEventPayload {
+  identifier: number;
+  eventIdentifier: string;
+}
 
 export interface HistoryEventRequestPayload extends PaginationRequestPayload<{ timestamp: number }> {
   readonly fromTimestamp?: string | number;
@@ -232,7 +299,8 @@ export interface EditAssetMovementEventPayload {
   asset: string;
   fee: string | null;
   feeAsset: string | null;
-  notes: string | null;
+  userNotes: string | null;
+  uniqueId: string;
 }
 
 export type NewAssetMovementEventPayload = Omit<EditAssetMovementEventPayload, 'identifier'>;
@@ -253,6 +321,10 @@ export type NewHistoryEventPayload =
   | NewEthWithdrawalEventPayload
   | NewAssetMovementEventPayload;
 
+export type AddHistoryEventPayload = NewHistoryEventPayload | AddSwapEventPayload | AddEvmSwapEventPayload;
+
+export type ModifyHistoryEventPayload = EditHistoryEventPayload | EditSwapEventPayload | EditEvmSwapEventPayload;
+
 export enum HistoryEventAccountingRuleStatus {
   HAS_RULE = 'has rule',
   NOT_PROCESSED = 'not processed',
@@ -264,7 +336,6 @@ export const HistoryEventAccountingRuleStatusEnum = z.nativeEnum(HistoryEventAcc
 export const HistoryEventMeta = EntryMeta.merge(
   z.object({
     customized: z.boolean().optional(),
-    defaultNotes: z.boolean().optional(),
     eventAccountingRuleStatus: HistoryEventAccountingRuleStatusEnum,
     groupedEventsNum: z.number().nullish(),
     hasDetails: z.boolean().optional(),
@@ -282,13 +353,19 @@ const HistoryEventEntryWithMeta = z
 
 export type HistoryEventEntryWithMeta = z.infer<typeof HistoryEventEntryWithMeta>;
 
+const HistoryEventCollectionRowSchema = z.array(HistoryEventEntryWithMeta.or(z.array(HistoryEventEntryWithMeta)));
+
+export type HistoryEventCollectionRow = HistoryEventEntryWithMeta | HistoryEventEntryWithMeta[];
+
 export const HistoryEventsCollectionResponse = CollectionCommonFields.extend({
-  entries: z.array(HistoryEventEntryWithMeta),
+  entries: HistoryEventCollectionRowSchema,
 });
 
 export type HistoryEventsCollectionResponse = z.infer<typeof HistoryEventsCollectionResponse>;
 
 export type HistoryEventEntry = HistoryEvent & HistoryEventMeta;
+
+export type HistoryEventRow = HistoryEventEntry | HistoryEventEntry[];
 
 export enum OnlineHistoryEventsQueryType {
   ETH_WITHDRAWALS = 'eth_withdrawals',
@@ -313,23 +390,3 @@ export const ProcessSkippedHistoryEventsResponse = z.object({
 });
 
 export type ProcessSkippedHistoryEventsResponse = z.infer<typeof ProcessSkippedHistoryEventsResponse>;
-
-export interface ShowMissingRuleForm {
-  readonly type: 'missingRule';
-  readonly data: {
-    group: HistoryEventEntry;
-    event: HistoryEventEntry;
-  };
-}
-
-export interface ShowEventForm {
-  readonly type: 'event';
-  readonly data: {
-    group?: HistoryEvent;
-    event?: HistoryEvent;
-    nextSequenceId?: string;
-    eventsInGroup?: HistoryEvent[];
-  };
-}
-
-export type ShowEventHistoryForm = ShowEventForm | ShowMissingRuleForm;

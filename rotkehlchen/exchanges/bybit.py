@@ -22,7 +22,7 @@ from rotkehlchen.db.settings import CachedSettings
 from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.errors.serialization import DeserializationError
-from rotkehlchen.exchanges.data_structures import MarginPosition, Trade
+from rotkehlchen.exchanges.data_structures import MarginPosition
 from rotkehlchen.exchanges.exchange import ExchangeInterface, ExchangeQueryBalances
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.history.deserialization import deserialize_price
@@ -30,29 +30,30 @@ from rotkehlchen.history.events.structures.asset_movement import (
     AssetMovement,
     create_asset_movement_with_fee,
 )
-from rotkehlchen.history.events.structures.base import HistoryBaseEntry
+from rotkehlchen.history.events.structures.swap import (
+    SwapEvent,
+    create_swap_events,
+    deserialize_trade_type_is_buy,
+    get_swap_spend_receive,
+)
 from rotkehlchen.history.events.structures.types import HistoryEventType
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.serialization.deserialize import (
-    deserialize_asset_amount,
-    deserialize_fee,
-    deserialize_fval,
-)
+from rotkehlchen.serialization.deserialize import deserialize_fval
 from rotkehlchen.types import (
     ApiKey,
     ApiSecret,
+    AssetAmount,
     ExchangeAuthCredentials,
-    Fee,
     Location,
     Timestamp,
     TimestampMS,
-    TradeType,
 )
 from rotkehlchen.utils.misc import combine_dicts, ts_ms_to_sec, ts_now, ts_now_in_ms, ts_sec_to_ms
 
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
+    from rotkehlchen.history.events.structures.base import HistoryBaseEntry
     from rotkehlchen.user_messages import MessagesAggregator
 
 
@@ -141,7 +142,7 @@ class Bybit(ExchangeInterface):
         }
         self.is_unified_account = False
         self.history_events_db = DBHistoryEvents(self.db)
-        self.four_letter_assets = {'USDT', 'USDC', 'USDE'}  # known quote assets
+        self.four_letter_assets = {'USDT', 'USDC', 'USDE', 'USDQ', 'USDR'}  # known quote assets
         with GlobalDBHandler().conn.read_ctx() as cursor:
             cursor.execute(
                 'SELECT exchange_symbol FROM location_asset_mappings WHERE (location IS ? OR location IS NULL) AND LENGTH(exchange_symbol) = 4;',  # noqa: E501
@@ -314,11 +315,11 @@ class Bybit(ExchangeInterface):
 
         return result
 
-    def query_online_trade_history(
+    def _query_trades(
             self,
             start_ts: Timestamp,
             end_ts: Timestamp,
-    ) -> tuple[list[Trade], tuple[Timestamp, Timestamp]]:
+    ) -> list[SwapEvent]:
         """
         Query trades from bybit in the spot category.
         The API is limited to query trades up to two years into the past. We can query time ranges
@@ -330,7 +331,7 @@ class Bybit(ExchangeInterface):
         Since we have a clear limit to stop querying what we do is use the startTime/endTime keys
         to filter the data that we need.
         """
-        new_trades: list[Trade] = []
+        events = []
         if self.is_unified_account is True:
             # unified account can query up to 2 years into the past
             earliest_query_start_ts = Timestamp(ts_now() - DAY_IN_SECONDS * 365 * 2)
@@ -339,7 +340,7 @@ class Bybit(ExchangeInterface):
             earliest_query_start_ts = Timestamp(ts_now() - DAY_IN_SECONDS * 180)
 
         if end_ts <= earliest_query_start_ts:
-            return [], (start_ts, end_ts)  # entire query out of range
+            return []  # entire query out of range
 
         if start_ts <= earliest_query_start_ts:
             start_ts = Timestamp(earliest_query_start_ts + 60 * 5)  # 5 minutes safety margin
@@ -347,6 +348,8 @@ class Bybit(ExchangeInterface):
 
         lower_ts, upper_ts = start_ts, Timestamp(start_ts + WEEK_IN_SECONDS)
         while True:
+            # TODO: Use the execution/list endpoint for trades in order to handle fees.
+            # See https://github.com/orgs/rotki/projects/11?pane=issue&itemId=104934914
             raw_data = self._paginated_api_query(
                 endpoint='order/history',
                 options={
@@ -371,22 +374,21 @@ class Bybit(ExchangeInterface):
                     continue
 
                 try:
-                    if raw_trade['orderType'] == 'Market':
-                        rate = deserialize_price(raw_trade['avgPrice'])
-                    else:
-                        rate = deserialize_price(raw_trade['price'])
-
-                    trade = Trade(
-                        timestamp=ts_ms_to_sec(TimestampMS(int(raw_trade['updatedTime']))),
-                        location=Location.BYBIT,
+                    spend, receive = get_swap_spend_receive(
+                        is_buy=deserialize_trade_type_is_buy(raw_trade['side']),
                         base_asset=base_asset,
                         quote_asset=quote_asset,
-                        trade_type=TradeType.deserialize(raw_trade['side']),
-                        amount=deserialize_asset_amount(raw_trade['qty']),
-                        rate=rate,
-                        fee=deserialize_fee(raw_trade['cumExecFee']) if len(raw_trade['cumExecFee']) else Fee(ZERO),  # noqa: E501
-                        link=raw_trade['orderLinkId'],
+                        amount=deserialize_fval(raw_trade['qty']),
+                        rate=deserialize_price(raw_trade['avgPrice' if raw_trade['orderType'] == 'Market' else 'price']),  # noqa: E501
                     )
+                    events.extend(create_swap_events(
+                        timestamp=TimestampMS(int(raw_trade['updatedTime'])),
+                        location=self.location,
+                        spend=spend,
+                        receive=receive,
+                        location_label=self.name,
+                        unique_id=raw_trade['orderId'],
+                    ))
                 except DeserializationError as e:
                     log.error(f'{e} when reading rate for bybit trade {raw_trade}')
                 except KeyError as e:
@@ -394,8 +396,6 @@ class Bybit(ExchangeInterface):
                         f'Failed to deserialize bybit trade {raw_trade} due to missing key {e}. '
                         'Skipping...',
                     )
-                else:
-                    new_trades.append(trade)
 
             lower_ts = Timestamp(lower_ts + WEEK_IN_SECONDS)
             upper_ts = Timestamp(upper_ts + WEEK_IN_SECONDS)
@@ -404,7 +404,7 @@ class Bybit(ExchangeInterface):
 
             upper_ts = min(upper_ts, end_ts)  # don't query more than needed in last iteration
 
-        return new_trades, (start_ts, end_ts)
+        return events
 
     def validate_api_key(self) -> tuple[bool, str]:
         """Validates that the Bybit API key is good for usage in rotki"""
@@ -603,9 +603,11 @@ class Bybit(ExchangeInterface):
                     location_label=self.name,
                     event_type=query_for,
                     asset=coin,
-                    amount=deserialize_asset_amount(movement['amount']),
-                    fee_asset=coin,
-                    fee=deserialize_fee(movement[fee_key]) if len(movement[fee_key]) else Fee(ZERO),  # noqa: E501,
+                    amount=deserialize_fval(movement['amount']),
+                    fee=AssetAmount(
+                        asset=coin,
+                        amount=deserialize_fval(movement[fee_key]),
+                    ) if len(movement[fee_key]) != 0 else None,
                     unique_id=movement[id_key],
                     extra_data=maybe_set_transaction_extra_data(
                         address=None,
@@ -626,21 +628,18 @@ class Bybit(ExchangeInterface):
             self,
             start_ts: Timestamp,
             end_ts: Timestamp,
-    ) -> Sequence[HistoryBaseEntry]:
+    ) -> tuple[Sequence['HistoryBaseEntry'], Timestamp]:
         """Query deposits and withdrawals sequentially"""
-        new_movements = self._query_deposits_withdrawals(
-            start_ts=start_ts,
-            end_ts=end_ts,
-            query_for=HistoryEventType.DEPOSIT,
-        )
-        new_movements.extend(
-            self._query_deposits_withdrawals(
+        events: list[AssetMovement | SwapEvent] = []
+        for event_type in (HistoryEventType.DEPOSIT, HistoryEventType.WITHDRAWAL):
+            events.extend(self._query_deposits_withdrawals(
                 start_ts=start_ts,
                 end_ts=end_ts,
-                query_for=HistoryEventType.WITHDRAWAL,
-            ),
-        )
-        return new_movements
+                query_for=event_type,
+            ))
+
+        events.extend(self._query_trades(start_ts=start_ts, end_ts=end_ts))
+        return events, end_ts
 
     def query_online_margin_history(
             self,

@@ -10,11 +10,10 @@ from rotkehlchen.api.websockets.typedefs import (
     WSMessageType,
 )
 from rotkehlchen.assets.asset import AssetWithOracles
-from rotkehlchen.db.filtering import TradesFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.db.ranges import DBQueryRanges
 from rotkehlchen.errors.misc import RemoteError
-from rotkehlchen.exchanges.data_structures import MarginPosition, Trade
+from rotkehlchen.exchanges.data_structures import MarginPosition
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import (
     ApiKey,
@@ -167,24 +166,6 @@ class ExchangeWithoutApiSecret(CacheableMixIn, LockableQueryMixIn):
         verify the api key's validity"""
         raise NotImplementedError('validate_api_key() should only be implemented by subclasses')
 
-    def query_online_trade_history(
-            self,
-            start_ts: Timestamp,
-            end_ts: Timestamp,
-    ) -> tuple[list[Trade], tuple[Timestamp, Timestamp]]:
-        """Queries the exchange's API for the trade history of the user
-
-        Should be implemented by subclasses if the exchange can return trade history in any form.
-        This is not implemented only for bitmex as it only returns margin positions
-
-        Returns a tuple of the trades of the exchange and a Tuple of the queried time
-        range. The time range can differ from the given time range if an error happened
-        and the call stopped in the middle.
-
-        Deprecated, Trades are changing to SwapEvents and queried via query_online_history_events
-        """
-        return [], (start_ts, end_ts)
-
     def query_online_margin_history(
             self,
             start_ts: Timestamp,
@@ -203,78 +184,16 @@ class ExchangeWithoutApiSecret(CacheableMixIn, LockableQueryMixIn):
             self,
             start_ts: Timestamp,
             end_ts: Timestamp,
-    ) -> Sequence['HistoryBaseEntry']:
+    ) -> tuple[Sequence['HistoryBaseEntry'], Timestamp]:
         """Queries the exchange's API for history events of the user
 
         Should be implemented in subclasses, unless query_history_events is reimplemented with
         custom logic.
-        Returns events based on HistoryBaseEntry, such as HistoryEvent, AssetMovement, etc.
+        Returns a tuple of HistoryBaseEntry events (HistoryEvent, AssetMovement, etc.) and the
+        last successfully queried timestamp. The timestamp should only differ from end_ts if
+        an error occurred preventing the full range from being queried.
         """
-        return []
-
-    @protect_with_lock()
-    def query_trade_history(
-            self,
-            start_ts: Timestamp,
-            end_ts: Timestamp,
-            only_cache: bool,
-    ) -> list[Trade]:
-        """Queries the local DB and the remote exchange for the trade history of the user
-
-        Limits the query to the given time range and also if only_cache is True returns
-        only what is already saved in the DB without performing an exchange query
-
-        Returns the trades sorted in an ascending timestamp order
-        """
-        log.debug(f'Querying trade history for {self.name} exchange')
-        if only_cache is False:
-            ranges = DBQueryRanges(self.db)
-            location_string = f'{self.location!s}_trades_{self.name}'
-            with self.db.conn.read_ctx() as cursor:
-                ranges_to_query = ranges.get_location_query_ranges(
-                    cursor=cursor,
-                    location_string=location_string,
-                    start_ts=start_ts,
-                    end_ts=end_ts,
-                )
-
-            log.debug(f'Found query ranges {ranges_to_query=} for {location_string}')
-            for query_start_ts, query_end_ts in ranges_to_query:
-                # If we have a time frame we have not asked the exchange for trades then
-                # go ahead and do that now
-                log.debug(
-                    f'Querying online trade history for {self.name} between '
-                    f'{query_start_ts} and {query_end_ts}',
-                )
-                new_trades, queried_range = self.query_online_trade_history(
-                    start_ts=query_start_ts,
-                    end_ts=query_end_ts,
-                )
-
-                # make sure to add them to the DB
-                with self.db.user_write() as write_cursor:
-                    if len(new_trades) != 0:
-                        self.db.add_trades(write_cursor=write_cursor, trades=new_trades)
-
-                    # and also set the used queried timestamp range for the exchange
-                    ranges.update_used_query_range(
-                        write_cursor=write_cursor,
-                        location_string=location_string,
-                        queried_ranges=[queried_range],
-                    )
-
-        # Read all requested trades from the DB
-        with self.db.conn.read_ctx() as cursor:
-            filter_query = TradesFilterQuery.make(
-                from_ts=start_ts,
-                to_ts=end_ts,
-                location=self.location,
-            )
-            return self.db.get_trades(
-                cursor=cursor,
-                filter_query=filter_query,
-                has_premium=True,  # is okay since the returned trades don't make it to the user
-            )
+        return [], end_ts
 
     def query_margin_history(
             self,
@@ -373,7 +292,7 @@ class ExchangeWithoutApiSecret(CacheableMixIn, LockableQueryMixIn):
                 step=HistoryEventsStep.QUERYING_EVENTS_STATUS_UPDATE,
                 period=[query_start_ts, query_end_ts],
             )
-            new_events = self.query_online_history_events(
+            new_events, actual_end_ts = self.query_online_history_events(
                 start_ts=query_start_ts,
                 end_ts=query_end_ts,
             )
@@ -383,8 +302,16 @@ class ExchangeWithoutApiSecret(CacheableMixIn, LockableQueryMixIn):
                 ranges.update_used_query_range(
                     write_cursor=write_cursor,
                     location_string=location_string,
-                    queried_ranges=[(query_start_ts, query_end_ts)],
+                    queried_ranges=[(query_start_ts, actual_end_ts)],
                 )
+
+            if actual_end_ts != query_end_ts:
+                log.error(
+                    f'Failed to query all {self.name} history events between {query_start_ts} '
+                    f'and {query_end_ts}. Last successfully queried timestamp: {actual_end_ts}',
+                )
+                break  # There were errors preventing the full range from being queried. Stop any further queries.  # noqa: E501
+
         self.send_history_events_status_msg(step=HistoryEventsStep.QUERYING_EVENTS_FINISHED)
 
     def query_history_with_callbacks(
@@ -403,16 +330,9 @@ class ExchangeWithoutApiSecret(CacheableMixIn, LockableQueryMixIn):
         new_step_callback, exchange_name = None, None
         if new_step_data is not None:
             new_step_callback, exchange_name = new_step_data
-            new_step_callback(f'Querying {exchange_name} trades history')
+            new_step_callback(f'Querying {exchange_name} margin history')
 
         try:
-            self.query_trade_history(
-                start_ts=start_ts,
-                end_ts=end_ts,
-                only_cache=False,
-            )
-            if new_step_callback is not None:
-                new_step_callback(f'Querying {exchange_name} margin history')
             self.query_margin_history(
                 start_ts=start_ts,
                 end_ts=end_ts,

@@ -11,9 +11,9 @@ import { attemptPolyfillResizeObserver } from '@/utils/cypress';
 import { setupDayjs } from '@/utils/date';
 import { setupFormatter } from '@/utils/setup-formatter';
 import { checkIfDevelopment } from '@shared/utils';
+import { createPinia } from 'pinia';
 
 /* istanbul ignore file */
-import { createPinia } from 'pinia';
 import './main.scss';
 import 'roboto-fontface/css/roboto/roboto-fontface.css';
 import 'typeface-roboto-mono';
@@ -39,6 +39,11 @@ const { isMdAndDown } = useBreakpoint();
 const rui = createRuiPlugin({
   table: { globalItemsPerPage: true, itemsPerPage, limits: [10, 25, 50, 100], stickyOffset: computed(() => get(isMdAndDown) ? 56 : 64) },
 });
+
+const search = window.location.search;
+const skipUpdate = search.includes('skip_update');
+if (skipUpdate)
+  sessionStorage.setItem('skip_update', '1');
 
 const app = createApp(App);
 

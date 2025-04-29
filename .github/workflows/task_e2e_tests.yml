@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [ app, balances, history ]
+        group: [ app, balances ]
     permissions:
       actions: write
       contents: read
@@ -41,6 +41,11 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: colibri
+          cache-on-failure: true
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v3

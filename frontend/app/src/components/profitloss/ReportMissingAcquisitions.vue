@@ -5,6 +5,7 @@ import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
 import DateDisplay from '@/components/display/DateDisplay.vue';
 import AssetDetails from '@/components/helper/AssetDetails.vue';
 import BadgeDisplay from '@/components/history/BadgeDisplay.vue';
+import { TableId, useRememberTableSorting } from '@/modules/table/use-remember-table-sorting';
 import { Routes } from '@/router/routes';
 import { useIgnoredAssetsStore } from '@/store/assets/ignored';
 import { bigNumberSum } from '@/utils/calculation';
@@ -36,7 +37,7 @@ defineSlots<{
 const { isPinned, items } = toRefs(props);
 
 const router = useRouter();
-const { ignoreAsset, isAssetIgnored } = useIgnoredAssetsStore();
+const { ignoreAsset, useIsAssetIgnored } = useIgnoredAssetsStore();
 
 const groupedMissingAcquisitions = computed<MappedGroupedItems[]>(() => {
   const grouped: GroupedItems = {};
@@ -135,7 +136,10 @@ const childHeaders = computed<DataTableColumn<MissingAcquisition>[]>(() => [{
   sortable: true,
 }]);
 
-const isIgnored = (asset: string) => get(isAssetIgnored(asset));
+useRememberTableSorting<MappedGroupedItems>(TableId.REPORT_MISSING_ACQUISITIONS, sort, headers);
+useRememberTableSorting<MissingAcquisition>(TableId.REPORT_MISSING_ACQUISITIONS_DETAIL, childSort, childHeaders);
+
+const isIgnored = (asset: string) => get(useIsAssetIgnored(asset));
 
 const [CreateDate, ReuseDate] = createReusableTemplate<{ row: MappedGroupedItems }>();
 
@@ -143,7 +147,7 @@ async function showInHistoryEvent(identifier: number) {
   emit('pin');
 
   await router.push({
-    path: Routes.HISTORY_EVENTS.toString(),
+    path: Routes.HISTORY.toString(),
     query: {
       identifiers: identifier.toString(),
     },

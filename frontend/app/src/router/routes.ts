@@ -21,6 +21,7 @@ export const Routes = {
   API_KEYS_ROTKI_PREMIUM: ensureRoute('/api-keys/premium'),
   ASSET_MANAGER: ensureRoute('/asset-manager'),
   ASSET_MANAGER_CEX_MAPPING: ensureRoute('/asset-manager/more/cex-mapping'),
+  ASSET_MANAGER_COUNTERPARTY_MAPPING: ensureRoute('/asset-manager/more/counterparty-mapping'),
   ASSET_MANAGER_CUSTOM: ensureRoute('/asset-manager/custom'),
   ASSET_MANAGER_MANAGED: ensureRoute('/asset-manager/managed'),
   ASSET_MANAGER_MISSING_MAPPINGS: ensureRoute('/asset-manager/more/missing-mappings'),
@@ -35,11 +36,11 @@ export const Routes = {
   CALENDAR: ensureRoute('/calendar'),
   DASHBOARD: ensureRoute('/dashboard'),
   HISTORY: ensureRoute('/history'),
-  HISTORY_EVENTS: ensureRoute('/history/transactions'),
-  HISTORY_TRADES: ensureRoute('/history/trades'),
   IMPORT: ensureRoute('/import'),
   LOCATIONS: ensureRoute('/locations/:identifier'),
   NFTS: ensureRoute('/nfts'),
+  ONCHAIN: ensureRoute('/onchain'),
+  ONCHAIN_SEND: ensureRoute('/onchain/send'),
   PRICE_MANAGER: ensureRoute('/price-manager'),
   PRICE_MANAGER_HISTORIC: ensureRoute('/price-manager/historic'),
   PRICE_MANAGER_LATEST: ensureRoute('/price-manager/latest'),
@@ -61,6 +62,7 @@ export const Routes = {
   TAG_MANAGER: ensureRoute('/tag-manager'),
   USER_CREATE: ensureRoute('/user/create'),
   USER_LOGIN: ensureRoute('/user/login'),
+  WALLET_BRIDGE: ensureRoute('/wallet-bridge'),
 } as const;
 
 export const useAppRoutes = createSharedComposable(() => {
@@ -126,6 +128,11 @@ export const useAppRoutes = createSharedComposable(() => {
       route: Routes.ASSET_MANAGER_CEX_MAPPING,
       text: t('navigation_menu.manage_assets_sub.cex_mapping'),
     },
+    ASSET_MANAGER_COUNTERPARTY_MAPPING: {
+      icon: 'lu-list-todo' as const,
+      route: Routes.ASSET_MANAGER_COUNTERPARTY_MAPPING,
+      text: t('navigation_menu.manage_assets_sub.counterparty_mapping'),
+    },
     ASSET_MANAGER_CUSTOM: {
       icon: 'lu-custom-assets' as const,
       route: Routes.ASSET_MANAGER_CUSTOM,
@@ -137,7 +144,7 @@ export const useAppRoutes = createSharedComposable(() => {
       text: t('navigation_menu.manage_assets_sub.assets'),
     },
     ASSET_MANAGER_MISSING_MAPPINGS: {
-      icon: 'lu-list-todo' as const,
+      icon: 'lu-scroll' as const,
       route: Routes.ASSET_MANAGER_MISSING_MAPPINGS,
       text: t('navigation_menu.manage_assets_sub.missing_mappings'),
     },
@@ -147,7 +154,7 @@ export const useAppRoutes = createSharedComposable(() => {
       text: t('navigation_menu.manage_assets_sub.more'),
     },
     ASSET_MANAGER_NEWLY_DETECTED: {
-      icon: 'lu-list-todo' as const,
+      icon: 'lu-list-collapse' as const,
       route: Routes.ASSET_MANAGER_NEWLY_DETECTED,
       text: t('navigation_menu.manage_assets_sub.newly_detected'),
     },
@@ -195,16 +202,6 @@ export const useAppRoutes = createSharedComposable(() => {
       route: Routes.HISTORY,
       text: t('navigation_menu.history'),
     },
-    HISTORY_EVENTS: {
-      icon: 'lu-history-events-fill' as const,
-      route: Routes.HISTORY_EVENTS,
-      text: t('navigation_menu.history_sub.history_events'),
-    },
-    HISTORY_TRADES: {
-      icon: 'lu-shuffle' as const,
-      route: Routes.HISTORY_TRADES,
-      text: t('navigation_menu.history_sub.trades'),
-    },
     IMPORT: {
       icon: 'lu-folder-input' as const,
       route: Routes.IMPORT,
@@ -218,6 +215,16 @@ export const useAppRoutes = createSharedComposable(() => {
       icon: 'lu-image' as const,
       route: Routes.NFTS,
       text: t('navigation_menu.nfts'),
+    },
+    ONCHAIN: {
+      icon: 'lu-coins' as const,
+      route: Routes.ONCHAIN,
+      text: t('navigation_menu.onchain'),
+    },
+    ONCHAIN_SEND: {
+      icon: 'lu-send' as const,
+      route: Routes.ONCHAIN_SEND,
+      text: t('navigation_menu.onchain_sub.send'),
     },
     PRICE_MANAGER: {
       icon: 'lu-manage-prices' as const,
@@ -313,6 +320,11 @@ export const useAppRoutes = createSharedComposable(() => {
       icon: 'lu-tag-manager' as const,
       route: Routes.TAG_MANAGER,
       text: t('navigation_menu.tag_manager'),
+    },
+    WALLET_BRIDGE: {
+      icon: 'lu-chevrons-left-right-ellipsis',
+      route: Routes.WALLET_BRIDGE,
+      text: t('navigation_menu.wallet_bridge'),
     },
   } as const));
 

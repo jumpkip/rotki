@@ -17,15 +17,14 @@ from rotkehlchen.fval import AcceptableFValInitInput, FVal
 from rotkehlchen.history.events.structures.types import HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import (
-    AssetAmount,
     ChainID,
     ChecksumEvmAddress,
     EvmInternalTransaction,
     EvmTransaction,
     EVMTxHash,
-    Fee,
     HexColorCode,
     Timestamp,
+    TimestampMS,
     TradePair,
     deserialize_evm_tx_hash,
 )
@@ -38,23 +37,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
-
-
-def deserialize_fee(fee: str | None) -> Fee:
-    """Deserializes a fee from a json entry. Fee in the JSON entry can also be null
-    in which case a ZERO fee is returned.
-
-    Can throw DeserializationError if the fee is not as expected
-    """
-    if fee is None:
-        return Fee(ZERO)
-
-    try:
-        result = Fee(FVal(fee))
-    except ValueError as e:
-        raise DeserializationError(f'Failed to deserialize a fee entry due to: {e!s}') from e
-
-    return result
 
 
 def deserialize_timestamp(timestamp: float | (str | FVal)) -> Timestamp:
@@ -194,37 +176,47 @@ def deserialize_timestamp_from_floatstr(time: str | (FVal | float)) -> Timestamp
     )
 
 
-def deserialize_timestamp_from_intms(time: int) -> Timestamp:
-    """Deserializes a timestamp an integer in milliseconds
-
-
-    Can throw DeserializationError if the data is not as expected
+def deserialize_timestamp_ms_from_intms(value: Any) -> TimestampMS:
+    """Deserializes a TimestampMS from an integer timestamp in milliseconds.
+    May raise DeserializationError if the data is not as expected.
     """
-    if not isinstance(time, int):
+    if not isinstance(value, int):
         raise DeserializationError(
-            f'Failed to deserialize a timestamp entry from a {type(time)} entry',
+            f'Failed to deserialize a timestamp entry from a {type(value)} entry',
         )
 
-    return Timestamp(int(time / 1000))
+    return TimestampMS(value)
+
+
+def deserialize_timestamp_from_intms(value: Any) -> Timestamp:
+    """Deserializes a Timestamp from an integer timestamp in milliseconds.
+    May raise DeserializationError if the data is not as expected.
+    """
+    return Timestamp(int(deserialize_timestamp_ms_from_intms(value) / 1000))
 
 
 def deserialize_fval(
         value: AcceptableFValInitInput,
-        name: str,
-        location: str,
+        name: str | None = None,
+        location: str | None = None,
 ) -> FVal:
     try:
         result = FVal(value)
     except ValueError as e:
-        raise DeserializationError(f'Failed to deserialize value entry: {e!s} for {name} during {location}') from e  # noqa: E501
+        msg = f'Failed to deserialize value entry: {e!s}'
+        if name is not None:
+            msg += f' for {name}'
+        if location is not None:
+            msg += f' during {location}'
+        raise DeserializationError(msg) from e
 
     return result
 
 
 def deserialize_optional_to_optional_fval(
         value: AcceptableFValInitInput | None,
-        name: str,
-        location: str,
+        name: str | None = None,
+        location: str | None = None,
 ) -> FVal | None:
     """
     Deserializes an FVal from a field that was optional and if None returns None
@@ -237,8 +229,8 @@ def deserialize_optional_to_optional_fval(
 
 def deserialize_fval_or_zero(
         value: AcceptableFValInitInput | None,
-        name: str,
-        location: str,
+        name: str | None = None,
+        location: str | None = None,
 ) -> FVal:
     """
     Deserializes an FVal from a field that was optional and if None returns ZERO
@@ -249,17 +241,12 @@ def deserialize_fval_or_zero(
     return deserialize_fval(value=value, name=name, location=location)
 
 
-def deserialize_asset_amount(amount: AcceptableFValInitInput) -> AssetAmount:
-    try:
-        result = AssetAmount(FVal(amount))
-    except ValueError as e:
-        raise DeserializationError(f'Failed to deserialize an amount entry: {e!s}') from e
-
-    return result
-
-
-def deserialize_asset_amount_force_positive(amount: AcceptableFValInitInput) -> AssetAmount:
-    """Acts exactly like deserialize_asset_amount but also forces the number to be positive
+def deserialize_fval_force_positive(
+        value: AcceptableFValInitInput,
+        name: str | None = None,
+        location: str | None = None,
+) -> FVal:
+    """Acts exactly like deserialize_fval but also forces the number to be positive
 
     Is needed for some places like some exchanges that list the withdrawal amounts as
     negative numbers because it's a withdrawal.
@@ -267,9 +254,8 @@ def deserialize_asset_amount_force_positive(amount: AcceptableFValInitInput) -> 
     May raise:
     - DeserializationError
     """
-    result = deserialize_asset_amount(amount)
-    if result < ZERO:
-        result = AssetAmount(abs(result))
+    if (result := deserialize_fval(value=value, name=name, location=location)) < ZERO:
+        result = FVal(abs(result))
     return result
 
 

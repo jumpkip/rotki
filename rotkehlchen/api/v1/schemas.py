@@ -15,7 +15,6 @@ from marshmallow.exceptions import ValidationError
 from werkzeug.datastructures import FileStorage
 
 from rotkehlchen.accounting.structures.balance import BalanceType
-from rotkehlchen.accounting.structures.types import ActionType
 from rotkehlchen.accounting.types import SchemaEventType
 from rotkehlchen.assets.asset import Asset, AssetWithNameAndType, AssetWithOracles, EvmToken
 from rotkehlchen.assets.ignored_assets_handling import IgnoredAssetsHandling
@@ -62,6 +61,7 @@ from rotkehlchen.db.filtering import (
     AccountingRulesFilterQuery,
     AddressbookFilterQuery,
     AssetsFilterQuery,
+    CounterpartyAssetMappingsFilterQuery,
     CustomAssetsFilterQuery,
     Eth2DailyStatsFilterQuery,
     EthStakingEventFilterQuery,
@@ -73,7 +73,6 @@ from rotkehlchen.db.filtering import (
     NFTFilterQuery,
     PaginatedFilterQuery,
     ReportDataFilterQuery,
-    TradesFilterQuery,
     UserNotesFilterQuery,
 )
 from rotkehlchen.db.settings import ModifiableDBSettings
@@ -99,7 +98,8 @@ from rotkehlchen.history.events.structures.eth2 import (
     EthWithdrawalEvent,
 )
 from rotkehlchen.history.events.structures.evm_event import EvmEvent, EvmProduct
-from rotkehlchen.history.events.structures.swap import create_swap_events
+from rotkehlchen.history.events.structures.evm_swap import EvmSwapEvent
+from rotkehlchen.history.events.structures.swap import SwapEventExtraData, create_swap_events
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.history.types import HistoricalPriceOracle
 from rotkehlchen.icons import ALLOWED_ICON_EXTENSIONS
@@ -118,12 +118,15 @@ from rotkehlchen.types import (
     SUPPORTED_SUBSTRATE_CHAINS,
     AddressbookEntry,
     AddressbookType,
+    AssetAmount,
     BlockchainAddress,
     BTCAddress,
     ChainID,
     ChainType,
     ChecksumEvmAddress,
     CostBasisMethod,
+    CounterpartyAssetMappingDeleteEntry,
+    CounterpartyAssetMappingUpdateEntry,
     EvmlikeChain,
     ExchangeLocationID,
     ExternalService,
@@ -139,7 +142,6 @@ from rotkehlchen.types import (
     ProtocolsWithCache,
     SupportedBlockchain,
     Timestamp,
-    TradeType,
     UserNote,
 )
 from rotkehlchen.utils.hexbytes import hexstring_to_bytes
@@ -162,7 +164,6 @@ from .fields import (
     EvmChainNameField,
     EvmCounterpartyField,
     EVMTransactionHashField,
-    FeeField,
     FileField,
     FloatingPercentageField,
     HistoricalPriceOracleField,
@@ -177,7 +178,6 @@ from .fields import (
     TaxFreeAfterPeriodField,
     TimestampField,
     TimestampMSField,
-    TimestampUntilNowField,
     XpubField,
 )
 from .types import IncludeExcludeFilterData, ModuleWithBalances, ModuleWithStats
@@ -446,103 +446,6 @@ class EvmlikePendingTransactionDecodingSchema(AsyncIgnoreCacheQueryArgumentSchem
                 message='The list of chains should not be empty',
                 field_name='chains',
             )
-
-
-class TradesQuerySchema(
-        AsyncQueryArgumentSchema,
-        TimestampRangeSchema,
-        OnlyCacheQuerySchema,
-        DBPaginationSchema,
-        DBOrderBySchema,
-):
-    base_asset = AssetField(expected_type=Asset, load_default=None)
-    quote_asset = AssetField(expected_type=Asset, load_default=None)
-    trade_type = SerializableEnumField(enum_class=TradeType, load_default=None)
-    location = LocationField(load_default=None)
-    include_ignored_trades = fields.Boolean(load_default=True)
-    exclude_ignored_assets = fields.Boolean(load_default=True)
-
-    def __init__(self, db: 'DBHandler') -> None:
-        super().__init__()
-        self.db = db
-
-    @validates_schema
-    def validate_trades_query_schema(
-            self,
-            data: dict[str, Any],
-            **_kwargs: Any,
-    ) -> None:
-        valid_ordering_attr = {
-            None,
-            'timestamp',
-            'location',
-            'type',
-            'amount',
-            'rate',
-            'fee',
-        }
-        if (
-            data['order_by_attributes'] is not None and
-            not set(data['order_by_attributes']).issubset(valid_ordering_attr)
-        ):
-            error_msg = (
-                f'order_by_attributes for trades can not be '
-                f'{",".join(set(data["order_by_attributes"]) - valid_ordering_attr)}'
-            )
-            raise ValidationError(
-                message=error_msg,
-                field_name='order_by_attributes',
-            )
-
-    @post_load
-    def make_trades_query(
-            self,
-            data: dict[str, Any],
-            **_kwargs: Any,
-    ) -> dict[str, Any]:
-        base_assets: tuple[Asset, ...] | None = None
-        quote_assets: tuple[Asset, ...] | None = None
-        trades_idx_to_ignore = None
-        with self.db.conn.read_ctx() as cursor:
-            treat_eth2_as_eth = self.db.get_settings(cursor).treat_eth2_as_eth
-            if data['include_ignored_trades'] is not True:
-                ignored_action_ids = self.db.get_ignored_action_ids(cursor, ActionType.TRADE)
-                trades_idx_to_ignore = ignored_action_ids[ActionType.TRADE]
-
-        if data['base_asset'] is not None:
-            base_assets = (data['base_asset'],)
-        if data['quote_asset'] is not None:
-            quote_assets = (data['quote_asset'],)
-
-        if treat_eth2_as_eth is True and data['base_asset'] == A_ETH:
-            base_assets = (A_ETH, A_ETH2)
-        elif treat_eth2_as_eth is True and data['quote_asset'] == A_ETH:
-            quote_assets = (A_ETH, A_ETH2)
-
-        filter_query = TradesFilterQuery.make(
-            order_by_rules=create_order_by_rules_list(
-                data=data,
-                default_order_by_fields=['timestamp'],
-                default_ascending=[False],
-            ),
-            limit=data['limit'],
-            offset=data['offset'],
-            from_ts=data['from_timestamp'],
-            to_ts=data['to_timestamp'],
-            base_assets=base_assets,
-            quote_assets=quote_assets,
-            trade_type=[data['trade_type']] if data['trade_type'] is not None else None,
-            location=data['location'],
-            trades_idx_to_ignore=trades_idx_to_ignore,
-            exclude_ignored_assets=data['exclude_ignored_assets'],
-        )
-
-        return {
-            'async_query': data['async_query'],
-            'only_cache': data['only_cache'],
-            'filter_query': filter_query,
-            'include_ignored_trades': data['include_ignored_trades'],
-        }
 
 
 class BaseStakingQuerySchema(
@@ -845,9 +748,56 @@ class CreateHistoryEventSchema(Schema):
             required=True,
         )
         asset = AssetField(required=True, expected_type=Asset, form_with_incomplete_data=True)
-        notes = fields.String(load_default=None)
+        user_notes = fields.String(load_default=None)
         sequence_index = fields.Integer(required=True)
         location_label = fields.String(load_default=None)
+
+    class BaseEvmEventSchema(Schema):
+        """Base schema for EVM events. Used for EvmEvents and EvmSwapEvents."""
+        tx_hash = EVMTransactionHashField(required=True)
+        event_identifier = fields.String(required=False, load_default=None)
+        counterparty = fields.String(load_default=None)
+        product = SerializableEnumField(enum_class=EvmProduct, load_default=None)
+        address = EvmAddressField(load_default=None)
+        extra_data = fields.Dict(load_default=None)
+        location = LocationField(required=True, limit_to=EVM_EVMLIKE_LOCATIONS)
+
+    class BaseSwapEventSchema(Schema):
+        """Base schema for swap events. Used for SwapEvents and EvmSwapEvents."""
+        identifier = fields.Integer(required=True)
+        timestamp = TimestampMSField(required=True)
+        spend_amount = AmountField(required=True, validate=validate.Range(min=ZERO, min_inclusive=False))  # noqa: E501
+        spend_asset = AssetField(required=True, expected_type=Asset, form_with_incomplete_data=True)  # noqa: E501
+        receive_amount = AmountField(required=True, validate=validate.Range(min=ZERO, min_inclusive=False))  # noqa: E501
+        receive_asset = AssetField(required=True, expected_type=Asset, form_with_incomplete_data=True)  # noqa: E501
+        fee_amount = AmountField(required=False, load_default=None, validate=validate.Range(min=ZERO, min_inclusive=False))  # noqa: E501
+        fee_asset = AssetField(required=False, load_default=None, expected_type=Asset, form_with_incomplete_data=True)  # noqa: E501
+        location_label = fields.String(required=False, load_default=None)
+        unique_id = fields.String(required=False, load_default=None)
+        user_notes = fields.List(fields.String(), required=False, validate=validate.Length(min=2, max=3))  # noqa: E501
+        event_identifier = fields.String(required=False, load_default=None)
+
+        @staticmethod
+        def _validate_fee_and_get_notes(
+                data: dict[str, Any],
+        ) -> tuple[str | None, str | None, str | None]:
+            if ((fee_amount := data['fee_amount']) is None) ^ (data['fee_asset'] is None):
+                raise ValidationError(
+                    message='fee_amount and fee_asset must be provided together',
+                    field_name='fee_amount',
+                )
+            elif fee_amount is None and len(data.get('user_notes', [])) == 3:
+                raise ValidationError(
+                    message='fee_notes may only be provided when fee_amount is present',
+                    field_name='fee_notes',
+                )
+
+            if (notes := data.get('user_notes')) is None:
+                return None, None, None
+            elif len(notes) == 2:
+                return *notes, None
+            else:  # len == 3, enforced by validate.Length above
+                return notes
 
     class CreateBaseHistoryEventSchema(BaseEventSchema):
         event_identifier = fields.String(required=True)
@@ -859,17 +809,11 @@ class CreateHistoryEventSchema(Schema):
                 data: dict[str, Any],
                 **_kwargs: Any,
         ) -> dict[str, Any]:
+            data['notes'] = data.pop('user_notes')
             return {'events': [HistoryEvent(**data)]}
 
-    class CreateEvmEventSchema(BaseEventSchema):
+    class CreateEvmEventSchema(BaseEventSchema, BaseEvmEventSchema):
         """Schema used when adding a new event in the EVM transactions view"""
-        tx_hash = EVMTransactionHashField(required=True)
-        event_identifier = fields.String(required=False, load_default=None)
-        counterparty = fields.String(load_default=None)
-        product = SerializableEnumField(enum_class=EvmProduct, load_default=None)
-        address = EvmAddressField(load_default=None)
-        extra_data = fields.Dict(load_default=None)
-        location = LocationField(required=True, limit_to=EVM_EVMLIKE_LOCATIONS)
 
         @post_load
         def make_history_base_entry(
@@ -877,6 +821,7 @@ class CreateHistoryEventSchema(Schema):
                 data: dict[str, Any],
                 **_kwargs: Any,
         ) -> dict[str, Any]:
+            data['notes'] = data.pop('user_notes')
             return {'events': [EvmEvent(**data)]}
 
     class CreateEthBlockEventEventSchema(BaseSchema):
@@ -958,7 +903,7 @@ class CreateHistoryEventSchema(Schema):
             allow_only=[HistoryEventType.DEPOSIT, HistoryEventType.WITHDRAWAL],
             required=True,
         )
-        fee = FeeField(load_default=None, validate=validate.Range(min=ZERO, min_inclusive=False))
+        fee = AmountField(load_default=None, validate=validate.Range(min=ZERO, min_inclusive=False))  # noqa: E501
         location = LocationField(required=True)
         location_label = fields.String(load_default=None)
         blockchain = fields.String(load_default=None)
@@ -968,7 +913,7 @@ class CreateHistoryEventSchema(Schema):
         event_identifier = fields.String(required=False, load_default=None)
         asset = AssetField(required=True, expected_type=Asset, form_with_incomplete_data=True)
         fee_asset = AssetField(load_default=None, required=False, expected_type=Asset, form_with_incomplete_data=True)  # noqa: E501
-        notes = fields.List(fields.String(), required=False, validate=validate.Length(min=1, max=2))  # noqa: E501
+        user_notes = fields.List(fields.String(), required=False, validate=validate.Length(min=1, max=2))  # noqa: E501
 
         @post_load
         def make_history_base_entry(
@@ -976,7 +921,7 @@ class CreateHistoryEventSchema(Schema):
                 data: dict[str, Any],
                 **_kwargs: Any,
         ) -> dict[str, Any]:
-            if (notes := data.get('notes')) is None:
+            if (notes := data.get('user_notes')) is None:
                 movement_notes, fee_notes = None, None
             elif len(notes) == 1:
                 movement_notes, fee_notes = notes[0], None
@@ -1004,20 +949,24 @@ class CreateHistoryEventSchema(Schema):
             if (blockchain := data['blockchain']) is not None:
                 extra_data['blockchain'] = blockchain
 
+            if (unique_id := data['unique_id']) is not None:
+                extra_data['reference'] = unique_id
+
             events = create_asset_movement_with_fee(
-                fee=fee,
+                fee=AssetAmount(asset=data['fee_asset'], amount=fee),
                 asset=data['asset'],
                 location=data['location'],
-                unique_id=data['unique_id'],
+                unique_id=unique_id,
                 timestamp=data['timestamp'],
-                fee_asset=data['fee_asset'],
                 event_type=data['event_type'],
                 identifier=data.get('identifier'),
+                event_identifier=data['event_identifier'],
                 amount=data['amount'],
                 extra_data=extra_data,
                 fee_identifier=CreateHistoryEventSchema.history_event_context.get()['schema'].get_grouped_event_identifier(
                     data=data,
                     subtype=HistoryEventSubType.FEE,
+                    sequence_index_offset=1,
                 ),
                 location_label=data['location_label'],
                 movement_notes=movement_notes,
@@ -1027,7 +976,7 @@ class CreateHistoryEventSchema(Schema):
                 asset=data['asset'],
                 amount=data['amount'],
                 location=data['location'],
-                unique_id=data['unique_id'],
+                unique_id=unique_id,
                 timestamp=data['timestamp'],
                 identifier=data.get('identifier'),
                 event_type=data['event_type'],
@@ -1039,52 +988,24 @@ class CreateHistoryEventSchema(Schema):
 
             return {'events': events}
 
-    class CreateSwapEventSchema(Schema):
-        identifier = fields.Integer(required=True)
-        timestamp = TimestampMSField(required=True)
+    class CreateSwapEventSchema(BaseSwapEventSchema):
         location = LocationField(required=True)
-        spend_amount = AmountField(required=True, validate=validate.Range(min=ZERO, min_inclusive=False))  # noqa: E501
-        spend_asset = AssetField(required=True, expected_type=Asset, form_with_incomplete_data=True)  # noqa: E501
-        receive_amount = AmountField(required=True, validate=validate.Range(min=ZERO, min_inclusive=False))  # noqa: E501
-        receive_asset = AssetField(required=True, expected_type=Asset, form_with_incomplete_data=True)  # noqa: E501
-        fee_amount = FeeField(required=False, load_default=None, validate=validate.Range(min=ZERO, min_inclusive=False))  # noqa: E501
-        fee_asset = AssetField(required=False, load_default=None, expected_type=Asset, form_with_incomplete_data=True)  # noqa: E501
-        location_label = fields.String(required=False, load_default=None)
-        unique_id = fields.String(required=False, load_default=None)
-        notes = fields.List(fields.String(), required=False, validate=validate.Length(min=2, max=3))  # noqa: E501
-        event_identifier = fields.String(required=False, load_default=None)
 
         @post_load
         def make_history_base_entry(self, data: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
-            if (notes := data.get('notes')) is None:
-                spend_notes, receive_notes, fee_notes = None, None, None
-            elif len(notes) == 2:
-                spend_notes, receive_notes = notes
-                fee_notes = None
-            else:  # len == 3, enforced by validate.Length above
-                spend_notes, receive_notes, fee_notes = notes
+            spend_notes, receive_notes, fee_notes = self._validate_fee_and_get_notes(data)
 
-            if ((fee_amount := data['fee_amount']) is None) ^ (data['fee_asset'] is None):
-                raise ValidationError(
-                    message='fee_amount and fee_asset must be provided together',
-                    field_name='fee_amount',
-                )
-            elif fee_amount is None and fee_notes is not None:
-                raise ValidationError(
-                    message='fee_notes may only be provided when fee_amount is present',
-                    field_name='fee_notes',
-                )
+            extra_data: SwapEventExtraData = {}
+            if (unique_id := data['unique_id']) is not None:
+                extra_data['reference'] = unique_id
 
             context_schema = CreateHistoryEventSchema.history_event_context.get()['schema']
             events = create_swap_events(
                 timestamp=data['timestamp'],
                 location=data['location'],
-                spend_asset=data['spend_asset'],
-                spend_amount=data['spend_amount'],
-                receive_asset=data['receive_asset'],
-                receive_amount=data['receive_amount'],
-                fee_amount=fee_amount or ZERO,
-                fee_asset=data['fee_asset'],
+                spend=AssetAmount(asset=data['spend_asset'], amount=data['spend_amount']),
+                receive=AssetAmount(asset=data['receive_asset'], amount=data['receive_amount']),
+                fee=AssetAmount(asset=data['fee_asset'], amount=data['fee_amount']) if data['fee_asset'] is not None else None,  # noqa: E501
                 location_label=data['location_label'],
                 unique_id=data['unique_id'],
                 spend_notes=spend_notes,
@@ -1095,12 +1016,82 @@ class CreateHistoryEventSchema(Schema):
                 receive_identifier=context_schema.get_grouped_event_identifier(
                     data=data,
                     subtype=HistoryEventSubType.RECEIVE,
+                    sequence_index_offset=1,
                 ),
                 fee_identifier=context_schema.get_grouped_event_identifier(
                     data=data,
                     subtype=HistoryEventSubType.FEE,
+                    sequence_index_offset=2,
                 ),
+                extra_data=extra_data,
             )
+            return {'events': events}
+
+    class CreateEvmSwapEventSchema(BaseSwapEventSchema, BaseEvmEventSchema):
+        sequence_index = fields.Integer(required=True)
+
+        @post_load
+        def make_history_base_entry(self, data: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
+            spend_notes, receive_notes, fee_notes = self._validate_fee_and_get_notes(data)
+            context_schema = CreateHistoryEventSchema.history_event_context.get()['schema']
+            events = [EvmSwapEvent(
+                tx_hash=(tx_hash := data['tx_hash']),
+                sequence_index=(sequence_index := data['sequence_index']),
+                timestamp=(timestamp := data['timestamp']),
+                location=(location := data['location']),
+                event_subtype=HistoryEventSubType.SPEND,
+                asset=data['spend_asset'],
+                amount=data['spend_amount'],
+                location_label=(location_label := data['location_label']),
+                notes=spend_notes,
+                identifier=data.get('identifier'),
+                event_identifier=(event_identifier := data['event_identifier']),
+                extra_data=data['extra_data'],
+                counterparty=(counterparty := data['counterparty']),
+                product=(product := data['product']),
+                address=(address := data['address']),
+            ), EvmSwapEvent(
+                tx_hash=tx_hash,
+                sequence_index=sequence_index + 1,
+                timestamp=timestamp,
+                location=location,
+                event_subtype=HistoryEventSubType.RECEIVE,
+                asset=data['receive_asset'],
+                amount=data['receive_amount'],
+                location_label=location_label,
+                notes=receive_notes,
+                identifier=context_schema.get_grouped_event_identifier(
+                    data=data,
+                    subtype=HistoryEventSubType.RECEIVE,
+                    sequence_index_offset=1,
+                ),
+                event_identifier=event_identifier,
+                counterparty=counterparty,
+                product=product,
+                address=address,
+            )]
+            if (fee_asset := data['fee_asset']) is not None:
+                events.append(EvmSwapEvent(
+                    tx_hash=tx_hash,
+                    sequence_index=sequence_index + 2,
+                    timestamp=timestamp,
+                    location=location,
+                    event_subtype=HistoryEventSubType.FEE,
+                    asset=fee_asset,
+                    amount=data['fee_amount'],
+                    location_label=location_label,
+                    notes=fee_notes,
+                    identifier=context_schema.get_grouped_event_identifier(
+                        data=data,
+                        subtype=HistoryEventSubType.FEE,
+                        sequence_index_offset=2,
+                    ),
+                    event_identifier=event_identifier,
+                    counterparty=counterparty,
+                    product=product,
+                    address=address,
+                ))
+
             return {'events': events}
 
     ENTRY_TO_SCHEMA: Final[dict[HistoryBaseEntryType, type[Schema]]] = {
@@ -1111,12 +1102,14 @@ class CreateHistoryEventSchema(Schema):
         HistoryBaseEntryType.EVM_EVENT: CreateEvmEventSchema,
         HistoryBaseEntryType.ASSET_MOVEMENT_EVENT: CreateAssetMovementEventSchema,
         HistoryBaseEntryType.SWAP_EVENT: CreateSwapEventSchema,
+        HistoryBaseEntryType.EVM_SWAP_EVENT: CreateEvmSwapEventSchema,
     }
 
     def get_grouped_event_identifier(
             self,
             data: dict[str, Any],
             subtype: Literal[HistoryEventSubType.RECEIVE, HistoryEventSubType.FEE],
+            sequence_index_offset: int,
     ) -> int | None:
         """Retrieve grouped event's identifier, returns None for create."""
         return None
@@ -1144,58 +1137,23 @@ class EditHistoryEventSchema(CreateHistoryEventSchema):
             self,
             data: dict[str, Any],
             subtype: Literal[HistoryEventSubType.RECEIVE, HistoryEventSubType.FEE],
+            sequence_index_offset: int,
     ) -> int | None:
-        """Retrieve grouped event's identifier, returns None for create."""
+        """Retrieve grouped event's identifier, returns None for create.
+        Since there may be multiple groups with the same event_identifier, only select an event
+        that has the correct offset after the main event of this group. This works since grouped
+        event indexes increment consecutively from the main event's index.
+        """
         with self.database.conn.read_ctx() as cursor:
-            result = cursor.execute("""
-                SELECT identifier
-                FROM history_events
-                WHERE event_identifier = (
-                    SELECT event_identifier
-                    FROM history_events
-                    WHERE identifier = ?
-                )
-                AND subtype = ?
-            """, (data['identifier'], subtype.serialize())).fetchone()
+            result = cursor.execute(
+                'SELECT h2.identifier, h2.sequence_index FROM history_events h1 '
+                'JOIN history_events h2 ON h2.event_identifier = h1.event_identifier AND '
+                f'h2.sequence_index = h1.sequence_index + {sequence_index_offset} AND '
+                'h2.subtype = ? WHERE h1.identifier = ?',
+                (subtype.serialize(), data['identifier']),
+            ).fetchone()
 
             return result[0] if result else None
-
-
-class TradeSchema(Schema):
-    timestamp = TimestampUntilNowField(required=True)
-    location = LocationField(required=True)
-    base_asset = AssetField(expected_type=Asset, required=True)
-    quote_asset = AssetField(expected_type=Asset, required=True)
-    trade_type = SerializableEnumField(enum_class=TradeType, required=True)
-    amount = PositiveAmountField(required=True)
-    rate = PriceField(required=True)
-    fee = FeeField(load_default=None)
-    fee_currency = AssetField(expected_type=Asset, load_default=None)
-    link = fields.String(load_default=None)
-    notes = fields.String(load_default=None)
-
-    @validates_schema
-    def validate_trade(
-            self,
-            data: dict[str, Any],
-            **_kwargs: Any,
-    ) -> None:
-        """This validation checks that fee_currency is provided whenever fee is given and
-        vice versa. It also checks that fee is not a zero value when both fee and
-        fee_currency are provided. Also checks that the trade rate is not zero.
-        Negative rate is checked by price field.
-        """
-        fee = data.get('fee')
-        fee_currency = data.get('fee_currency')
-
-        if not all([fee, fee_currency]) and any([fee, fee_currency]):
-            raise ValidationError('fee and fee_currency must be provided', field_name='fee')
-
-        if fee is not None and fee == ZERO:
-            raise ValidationError('fee cannot be zero', field_name='fee')
-
-        if data['rate'] == ZERO:
-            raise ValidationError('A zero rate is not allowed', field_name='rate')
 
 
 class IntegerIdentifierSchema(Schema):
@@ -1261,14 +1219,6 @@ class ManuallyTrackedBalancesEditSchema(AsyncQueryArgumentSchema):
 
 class ManuallyTrackedBalancesDeleteSchema(AsyncQueryArgumentSchema):
     ids = fields.List(fields.Integer(required=True), required=True)
-
-
-class TradePatchSchema(TradeSchema):
-    trade_id = fields.String(required=True)
-
-
-class TradeDeleteSchema(Schema):
-    trades_ids = DelimitedOrNormalList(fields.String(required=True), required=True)
 
 
 class TagSchema(Schema):
@@ -2056,6 +2006,30 @@ def _transform_btc_or_bch_address(
     return address
 
 
+def _resolve_ens_name(
+        ethereum_inquirer: EthereumInquirer,
+        name: str,
+        field_name: str,
+) -> ChecksumEvmAddress:
+    try:
+        resolved_address = ethereum_inquirer.ens_lookup(name)
+    except (RemoteError, InputError) as e:
+        raise ValidationError(
+            f'Given ENS name {name} could not be resolved for Ethereum'
+            f' due to: {e!s}',
+            field_name=field_name,
+        ) from None
+
+    if resolved_address is None:
+        raise ValidationError(
+            f'Given ENS name {name} could not be resolved for Ethereum',
+            field_name=field_name,
+        ) from None
+
+    log.info(f'Resolved ENS {name} to {(address := to_checksum_address(resolved_address))}')
+    return address
+
+
 def _transform_evm_address(
         ethereum_inquirer: EthereumInquirer,
         given_address: str,
@@ -2063,25 +2037,12 @@ def _transform_evm_address(
     try:
         address = to_checksum_address(given_address)
     except ValueError:
-        # Validation will only let .eth names come here.
-        # So let's see if it resolves to anything
-        try:
-            resolved_address = ethereum_inquirer.ens_lookup(given_address)
-        except (RemoteError, InputError) as e:
-            raise ValidationError(
-                f'Given ENS address {given_address} could not be resolved for Ethereum'
-                f' due to: {e!s}',
-                field_name='address',
-            ) from None
-
-        if resolved_address is None:
-            raise ValidationError(
-                f'Given ENS address {given_address} could not be resolved for Ethereum',
-                field_name='address',
-            ) from None
-
-        address = to_checksum_address(resolved_address)
-        log.info(f'Resolved ENS {given_address} to {address}')
+        # Validation will only let .eth names come here. Let's see if it resolves to anything
+        address = _resolve_ens_name(
+            ethereum_inquirer=ethereum_inquirer,
+            name=given_address,
+            field_name='address',
+        )
 
     return address
 
@@ -2289,7 +2250,6 @@ class IgnoredAssetsSchema(Schema):
 
 
 class IgnoredActionsModifySchema(Schema):
-    action_type = SerializableEnumField(enum_class=ActionType, required=True)
     data = DelimitedOrNormalList(fields.String(required=True), required=True)
 
 
@@ -2545,12 +2505,85 @@ class LocationAssetMappingDeleteEntrySchema(LocationAssetMappingsBaseSchema):
             raise ValidationError(f'Could not deserialize data: {e!s}') from e
 
 
-class LocationAssetMappingsUpdateSchema(LocationAssetMappingsBaseSchema):
+class LocationAssetMappingsUpdateSchema(Schema):
     entries = NonEmptyList(fields.Nested(LocationAssetMappingUpdateEntrySchema), required=True)
 
 
-class LocationAssetMappingsDeleteSchema(LocationAssetMappingsBaseSchema):
+class LocationAssetMappingsDeleteSchema(Schema):
     entries = NonEmptyList(fields.Nested(LocationAssetMappingDeleteEntrySchema), required=True)
+
+
+class CounterpartyAssetMappingsBaseSchema(Schema):
+    counterparty = EvmCounterpartyField(required=True)
+
+    def __init__(self, chain_aggregator: 'ChainsAggregator') -> None:
+        super().__init__()
+        self.declared_fields['counterparty'].set_counterparties(  # type: ignore
+            counterparties={x.identifier for x in chain_aggregator.get_all_counterparties()},
+        )
+
+
+class CounterpartyAssetMappingUpdateEntrySchema(CounterpartyAssetMappingsBaseSchema):
+    asset = AssetField(required=True, expected_type=Asset, form_with_incomplete_data=True)
+    counterparty_symbol = fields.String(required=True)
+
+    @post_load()
+    def transform_data(
+            self,
+            data: dict[str, Any],
+            **_kwargs: Any,
+    ) -> CounterpartyAssetMappingUpdateEntry:
+        try:
+            return CounterpartyAssetMappingUpdateEntry.deserialize(data)
+        except DeserializationError as e:
+            raise ValidationError(f'Could not deserialize data: {e!s}') from e
+
+
+class CounterpartyAssetMappingsPostSchema(DBPaginationSchema, CounterpartyAssetMappingsBaseSchema):
+    counterparty = EvmCounterpartyField(load_default=None)
+    counterparty_symbol = fields.String(load_default=None)
+
+    @post_load
+    def make_counterparty_asset_mappings_post_query(
+            self,
+            data: dict[str, Any],
+            **_kwargs: Any,
+    ) -> dict[str, Any]:
+        filter_query = CounterpartyAssetMappingsFilterQuery.make(
+            limit=data['limit'],
+            offset=data['offset'],
+            counterparty=data['counterparty'],
+            counterparty_symbol=data['counterparty_symbol'],
+        )
+        return {'filter_query': filter_query}
+
+
+class CounterpartyAssetMappingDeleteEntrySchema(CounterpartyAssetMappingsBaseSchema):
+    counterparty_symbol = fields.String(required=True)
+
+    @post_load()
+    def transform_data(
+            self,
+            data: dict[str, Any],
+            **_kwargs: Any,
+    ) -> CounterpartyAssetMappingDeleteEntry:
+        try:
+            return CounterpartyAssetMappingDeleteEntry.deserialize(data)
+        except DeserializationError as e:
+            raise ValidationError(f'Could not deserialize data: {e!s}') from e
+
+
+def create_counterparty_asset_mappings_schema(
+        entry_schema_class: type[CounterpartyAssetMappingDeleteEntrySchema | CounterpartyAssetMappingUpdateEntrySchema],  # noqa: E501
+        chain_aggregator: 'ChainsAggregator',
+) -> Any:
+    class DynamicCounterpartyAssetMappingsSchema(Schema):
+        entries = NonEmptyList(
+            fields.Nested(entry_schema_class(chain_aggregator=chain_aggregator)),
+            required=True,
+        )
+
+    return DynamicCounterpartyAssetMappingsSchema()
 
 
 class EthStakingCommonFilterSchema(Schema):
@@ -2999,6 +3032,10 @@ class AssetsImportingFromFormSchema(AsyncQueryArgumentSchema):
 
 class ReverseEnsSchema(AsyncIgnoreCacheQueryArgumentSchema):
     ethereum_addresses = fields.List(EvmAddressField(), required=True)
+
+
+class ResolveEnsSchema(AsyncIgnoreCacheQueryArgumentSchema):
+    name = fields.String(required=True)
 
 
 class OptionalAddressesListSchema(Schema):
@@ -4009,13 +4046,13 @@ class HistoricalPricesPerAssetSchema(AsyncQueryArgumentSchema, TimestampRangeSch
         """Align timestamps to interval boundaries.
 
         - Rounds down `from_timestamp` to nearest multiple of interval
-        - Rounds up `to_timestamp` to nearest multiple of interval
+        - Rounds up `to_timestamp` to nearest multiple of interval but also makes
+        sure it's not in the future
         """
         interval = data['interval']
         data['exclude_timestamps'] = set(data['exclude_timestamps'])
         data['from_timestamp'] = (data['from_timestamp'] // interval) * interval
-        data['to_timestamp'] = ((data['to_timestamp'] + interval - 1) // interval) * interval
-
+        data['to_timestamp'] = min(((data['to_timestamp'] + interval - 1) // interval) * interval, ts_now())  # noqa: E501
         return data
 
 
@@ -4024,3 +4061,57 @@ class RefreshProtocolDataSchema(AsyncQueryArgumentSchema):
         enum_class=ProtocolsWithCache,
         required=True,
     )
+
+
+class RefetchEvmTransactionsSchema(AsyncQueryArgumentSchema, TimestampRangeSchema):
+    address = EvmAddressField(load_default=None)
+    evm_chain = EvmChainNameField(
+        load_default=None,
+        limit_to=list(EVM_CHAIN_IDS_WITH_TRANSACTIONS),
+    )
+
+    def __init__(self, db: 'DBHandler') -> None:
+        super().__init__()
+        self.db = db
+
+    @validates_schema
+    def validate_schema(
+            self,
+            data: dict[str, Any],
+            **_kwargs: Any,
+    ) -> None:
+        if data['to_timestamp'] <= data['from_timestamp']:
+            raise ValidationError(
+                message='from_timestamp must be smaller than to_timestamp',
+                field_name='from_timestamp',
+            )
+
+        if (address := data['address']) is not None:
+            with self.db.conn.read_ctx() as cursor:
+                query, bindings = 'SELECT COUNT(*) FROM blockchain_accounts WHERE account=?', [address]  # noqa: E501
+                if (evm_chain := data['evm_chain']) is not None:
+                    query += ' AND blockchain=?'
+                    bindings.append(evm_chain.to_blockchain().value)
+
+                if cursor.execute(query, bindings).fetchone()[0] == 0:
+                    raise ValidationError(
+                        message=f'Account {address} with chain {evm_chain.to_name()} is not tracked by rotki',  # noqa: E501
+                        field_name='address',
+                    )
+
+
+class AddressesInteraction(Schema):
+    from_address = EvmAddressField(required=True)
+    to_address = EvmAddressField(required=True)
+
+
+class AssetTransferSchema(AddressesInteraction):
+    amount = PositiveAmountField(required=True)
+
+
+class TokenTransfer(AssetTransferSchema):
+    token = AssetField(required=True, expected_type=EvmToken)
+
+
+class NativeAssetTransfer(AssetTransferSchema):
+    chain = EvmChainNameField(required=True, limit_to=list(EVM_CHAIN_IDS_WITH_TRANSACTIONS))

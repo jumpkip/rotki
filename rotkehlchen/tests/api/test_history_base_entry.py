@@ -6,16 +6,18 @@ from unittest.mock import patch
 import pytest
 import requests
 
-from rotkehlchen.accounting.structures.types import ActionType
+from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.types import string_to_evm_address
-from rotkehlchen.constants.assets import A_ETH, A_SUSHI, A_USD, A_USDT
+from rotkehlchen.constants import ZERO
+from rotkehlchen.constants.assets import A_ETH, A_SUSHI, A_USD, A_USDC, A_USDT, A_WBTC
 from rotkehlchen.db.evmtx import DBEvmTx
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.eth2 import EthWithdrawalEvent
-from rotkehlchen.history.events.structures.evm_event import SUB_SWAPS_DETAILS, EvmEvent
+from rotkehlchen.history.events.structures.evm_event import SUB_SWAPS_DETAILS, EvmEvent, EvmProduct
+from rotkehlchen.history.events.structures.evm_swap import EvmSwapEvent
 from rotkehlchen.history.events.structures.swap import SwapEvent
 from rotkehlchen.history.events.structures.types import (
     HistoryEventSubType,
@@ -34,7 +36,8 @@ from rotkehlchen.tests.utils.factories import generate_events_response
 from rotkehlchen.tests.utils.history_base_entry import (
     KEYS_IN_ENTRY_TYPE,
     add_entries,
-    entry_to_input_dict,
+    entries_to_input_dict,
+    maybe_group_entries,
     predefined_events_to_insert,
 )
 from rotkehlchen.types import (
@@ -107,7 +110,7 @@ def assert_editing_works(
 
     response = requests.patch(
         api_url_for(rotkehlchen_api_server, 'historyeventresource'),
-        json=entry_to_input_dict(entry, include_identifier=True),
+        json=entries_to_input_dict(entries=[entry], include_identifier=True),
     )
     assert_simple_ok_response(response)
     assert entry.identifier is not None
@@ -140,15 +143,16 @@ def test_add_edit_delete_entries(rotkehlchen_api_server: 'APIServer') -> None:
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
     db = DBHistoryEvents(rotki.data.db)
     entries = predefined_events_to_insert()
-    for entry in entries:
-        json_data = entry_to_input_dict(entry, include_identifier=False)
+    for group in (grouped_entries := maybe_group_entries(entries=entries.copy())):
+        json_data = entries_to_input_dict(group, include_identifier=False)
         response = requests.put(
             api_url_for(rotkehlchen_api_server, 'historyeventresource'),
             json=json_data,
         )
         result = assert_proper_sync_response_with_result(response)
         assert 'identifier' in result
-        entry.identifier = result['identifier']
+        for idx, entry in enumerate(group):
+            entry.identifier = result['identifier'] + idx
 
     with rotki.data.db.conn.read_ctx() as cursor:
         saved_events = db.get_history_events(
@@ -164,7 +168,7 @@ def test_add_edit_delete_entries(rotkehlchen_api_server: 'APIServer') -> None:
     assert isinstance(entry, EvmEvent)
     # test editing unknown fails
     unknown_id = 42
-    json_data = entry_to_input_dict(entry, include_identifier=True)
+    json_data = entries_to_input_dict(entries=[entry], include_identifier=True)
     json_data['identifier'] = unknown_id
     response = requests.patch(
         api_url_for(rotkehlchen_api_server, 'historyeventresource'),
@@ -177,7 +181,7 @@ def test_add_edit_delete_entries(rotkehlchen_api_server: 'APIServer') -> None:
     )
     # test editing by making sequence index same as an existing one fails
     entry.sequence_index = 3
-    json_data = entry_to_input_dict(entry, include_identifier=True)
+    json_data = entries_to_input_dict(entries=[entry], include_identifier=True)
     response = requests.patch(
         api_url_for(rotkehlchen_api_server, 'historyeventresource'),
         json=json_data,
@@ -189,7 +193,7 @@ def test_add_edit_delete_entries(rotkehlchen_api_server: 'APIServer') -> None:
     )
     # test adding event with sequence index same as an existing one fails
     entry.sequence_index = 3
-    json_data = entry_to_input_dict(entry, include_identifier=False)
+    json_data = entries_to_input_dict(entries=[entry], include_identifier=False)
     response = requests.put(
         api_url_for(rotkehlchen_api_server, 'historyeventresource'),
         json=json_data,
@@ -204,6 +208,7 @@ def test_add_edit_delete_entries(rotkehlchen_api_server: 'APIServer') -> None:
     assert_editing_works(entries[6], rotkehlchen_api_server, db, 6, {'notes': 'Exit validator 1001 with 1500.1 ETH', 'event_identifier': 'EW_1001_19460'})  # eth withdrawal event  # noqa: E501
     assert_editing_works(entries[7], rotkehlchen_api_server, db, 7, {'notes': 'Deposit 1500.1 ETH to validator 1001'})  # eth deposit event  # noqa: E501
     assert_editing_works(entries[8], rotkehlchen_api_server, db, 8, {'notes': 'Validator 1001 produced block 5. Relayer reported 1500.1 ETH as the MEV reward going to 0x9531C059098e3d194fF87FebB587aB07B30B1306', 'event_identifier': 'BP1_5'})  # eth block event  # noqa: E501
+    # Editing of AssetMovements and Swaps is tested in test_add_edit_asset_movements and test_add_edit_swap_events  # noqa: E501
 
     entries.sort(key=lambda x: x.timestamp)  # resort by timestamp
     with rotki.data.db.conn.read_ctx() as cursor:
@@ -213,7 +218,7 @@ def test_add_edit_delete_entries(rotkehlchen_api_server: 'APIServer') -> None:
             has_premium=True,
             group_by_event_ids=False,
         )
-        assert len(saved_events) == 9
+        assert len(saved_events) == 14
         for idx, event in enumerate(saved_events):
             assert event == entries[idx]
 
@@ -233,7 +238,7 @@ def test_add_edit_delete_entries(rotkehlchen_api_server: 'APIServer') -> None:
             has_premium=True,
             group_by_event_ids=False,
         )
-        assert len(saved_events) == 9
+        assert len(saved_events) == 14
         for idx, event in enumerate(saved_events):
             assert event == entries[idx]
 
@@ -250,7 +255,7 @@ def test_add_edit_delete_entries(rotkehlchen_api_server: 'APIServer') -> None:
             group_by_event_ids=False,
         )
         # entry is now last since the timestamp was modified
-        assert saved_events == [entries[0], entries[2], entries[4], entries[5], entries[6], entries[7], entries[8]]  # noqa: E501
+        assert saved_events == [entries[0], entries[2]] + entries[4:]
 
         # test that deleting last event of a transaction hash fails
         response = requests.delete(
@@ -268,14 +273,15 @@ def test_add_edit_delete_entries(rotkehlchen_api_server: 'APIServer') -> None:
             has_premium=True,
             group_by_event_ids=False,
         )
-        assert saved_events == [entries[0], entries[2], entries[4], entries[5], entries[6], entries[7], entries[8]]  # noqa: E501
+        assert saved_events == [entries[0], entries[2]] + entries[4:]
 
         # now let's try to edit event_identifier for all possible events.
-        for idx, entry in enumerate(entries):
-            if entry.identifier in {2, 4}:
+        for idx, group in enumerate(grouped_entries):
+            if group[0].identifier in {2, 4}:
                 continue  # we deleted those
-            entry.event_identifier = f'new_eventid{idx}'
-            json_data = entry_to_input_dict(entry, include_identifier=True)
+            for entry in group:
+                entry.event_identifier = f'new_eventid{idx}'
+            json_data = entries_to_input_dict(group, include_identifier=True)
             json_data['event_identifier'] = f'new_eventid{idx}'
             response = requests.patch(
                 api_url_for(rotkehlchen_api_server, 'historyeventresource'),
@@ -288,7 +294,7 @@ def test_add_edit_delete_entries(rotkehlchen_api_server: 'APIServer') -> None:
             has_premium=True,
             group_by_event_ids=False,
         )
-        assert saved_events == [entries[0], entries[2], entries[4], entries[5], entries[6], entries[7], entries[8]]  # noqa: E501
+        assert saved_events == [entries[0], entries[2]] + entries[4:]
 
 
 def test_event_with_details(rotkehlchen_api_server: 'APIServer') -> None:
@@ -411,7 +417,6 @@ def test_get_events(rotkehlchen_api_server: 'APIServer') -> None:
     with rotki.data.db.conn.write_ctx() as cursor:
         rotki.data.db.add_to_ignored_action_ids(
             write_cursor=cursor,
-            action_type=ActionType.HISTORY_EVENT,
             identifiers=[f'{entries[0].event_identifier}'],
         )
 
@@ -443,9 +448,9 @@ def test_get_events(rotkehlchen_api_server: 'APIServer') -> None:
         ),
     )
     result = assert_proper_sync_response_with_result(response)
-    assert result['entries_found'] == 9
+    assert result['entries_found'] == 14
     assert result['entries_limit'] == 100
-    assert result['entries_total'] == 9
+    assert result['entries_total'] == 14
     for event in result['entries']:
         assert event['entry'] in expected_entries
 
@@ -467,10 +472,10 @@ def test_get_events(rotkehlchen_api_server: 'APIServer') -> None:
         json={'group_by_event_ids': True},
     )
     result = assert_proper_sync_response_with_result(response)
-    assert result['entries_found'] == 6
+    assert result['entries_found'] == 8
     assert result['entries_limit'] == 100
-    assert result['entries_total'] == 6
-    assert len(result['entries']) == 6
+    assert result['entries_total'] == 8
+    assert len(result['entries']) == 8
 
     # check also that in groups we add the missing_accounting_rule key
     assert 'missing_accounting_rule' not in result['entries'][1]
@@ -485,9 +490,9 @@ def test_get_events(rotkehlchen_api_server: 'APIServer') -> None:
     )
     result = assert_proper_sync_response_with_result(response)
     assert len(result['entries']) == 1
-    assert result['entries_found'] == 6
+    assert result['entries_found'] == 8
     assert result['entries_limit'] == 100
-    assert result['entries_total'] == 6
+    assert result['entries_total'] == 8
 
     # now with grouping, pagination and a filter
     response = requests.post(
@@ -499,9 +504,9 @@ def test_get_events(rotkehlchen_api_server: 'APIServer') -> None:
     )
     result = assert_proper_sync_response_with_result(response)
     assert len(result['entries']) == 1
-    assert result['entries_found'] == 4
+    assert result['entries_found'] == 6
     assert result['entries_limit'] == 100
-    assert result['entries_total'] == 6
+    assert result['entries_total'] == 8
 
     # filter by location using kraken and ethereum
     response = requests.post(
@@ -515,7 +520,7 @@ def test_get_events(rotkehlchen_api_server: 'APIServer') -> None:
     assert len(result['entries']) == 1
     assert result['entries_found'] == 1
     assert result['entries_limit'] == 100
-    assert result['entries_total'] == 9
+    assert result['entries_total'] == 14
 
     response = requests.post(
         api_url_for(
@@ -528,11 +533,11 @@ def test_get_events(rotkehlchen_api_server: 'APIServer') -> None:
     assert len(result['entries']) == 8
     assert result['entries_found'] == 8
     assert result['entries_limit'] == 100
-    assert result['entries_total'] == 9
+    assert result['entries_total'] == 14
 
     # test pagination and exclude_ignored_assets and group by event ids works
     toggle_ignore_an_asset(rotkehlchen_api_server, A_ETH)
-    for exclude_ignored_assets, found in ((True, 2), (False, 6)):
+    for exclude_ignored_assets, found in ((True, 2), (False, 8)):
         response = requests.post(
             api_url_for(
                 rotkehlchen_api_server,
@@ -544,10 +549,10 @@ def test_get_events(rotkehlchen_api_server: 'APIServer') -> None:
         assert len(result['entries']) == min(found, 5)
         assert result['entries_found'] == found
         assert result['entries_limit'] == 100
-        assert result['entries_total'] == 6
+        assert result['entries_total'] == 8
 
     # test pagination and exclude_ignored_assets without group by event ids works
-    for exclude_ignored_assets, events_found, sub_events_found in ((True, 3, 3), (False, 9, 9)):
+    for exclude_ignored_assets, events_found, sub_events_found in ((True, 3, 3), (False, 14, 14)):
         response = requests.post(
             api_url_for(
                 rotkehlchen_api_server,
@@ -559,17 +564,17 @@ def test_get_events(rotkehlchen_api_server: 'APIServer') -> None:
         assert len(result['entries']) == min(sub_events_found, 5)
         assert result['entries_found'] == events_found
         assert result['entries_limit'] == 100
-        assert result['entries_total'] == 9
+        assert result['entries_total'] == 14
 
     # test pagination works fine with/without exclude_ignored_assets filter with/without premium
     db_history_events = DBHistoryEvents(rotkehlchen_api_server.rest_api.rotkehlchen.data.db)
     with db_history_events.db.user_write() as cursor:
         for limit, exclude_ignored, total, found in (
-            (None, False, 6, 6),  # premium without ignoring assets, we get all the events
+            (None, False, 8, 8),  # premium without ignoring assets, we get all the events
             (None, True, 2, 2),  # premium with ignoring assets (ETH), we get only 2 events
-            (3, False, 6, 3),  # free limit (3) without ignoring assets, total events are 6 but we get only 3 (limited)  # noqa: E501
+            (3, False, 8, 3),  # free limit (3) without ignoring assets, total events are 8 but we get only 3 (limited)  # noqa: E501
             (2, True, 2, 2),  # free limit (2) with ignoring assets, total events are 2, all shown (limit not exceeded)  # noqa: E501
-            (1, False, 6, 1),  # free limit (1) without ignoring assets, total events are 6 but we get only 1 (limited)  # noqa: E501
+            (1, False, 8, 1),  # free limit (1) without ignoring assets, total events are 8 but we get only 1 (limited)  # noqa: E501
             (1, True, 2, 1),  # free limit (1) with ignoring assets, total events are 2 but we get only 1 (limited)  # noqa: E501
         ):
             assert db_history_events.get_history_events_count(
@@ -663,7 +668,7 @@ def test_add_edit_asset_movements(rotkehlchen_api_server: 'APIServer') -> None:
             'unique_id': 'BITFINEX-344',
             'asset': 'ETH',
             'fee_asset': 'ETH',
-            'notes': ['Main event note', 'Fee event note'],
+            'user_notes': ['Main event note', 'Fee event note'],
         },
     ]
     for entry in entries:
@@ -686,8 +691,11 @@ def test_add_edit_asset_movements(rotkehlchen_api_server: 'APIServer') -> None:
         assert events[1].notes == 'Main event note'
         assert events[2].event_subtype == HistoryEventSubType.FEE
         assert events[2].notes == 'Fee event note'
+        # Check that references are set by the unique_id
+        assert events[0].extra_data == {'reference': 'BITFINEX-543'}
+        assert events[1].extra_data == {'reference': 'BITFINEX-344'}
 
-    # Check serialization and that the note is properly appended to the autogenerated description.
+    # Check event serialization.
     assert generate_events_response(data=[events[1]])[0]['entry'] == {
         'timestamp': 1669924575000,
         'event_type': 'withdrawal',
@@ -696,12 +704,13 @@ def test_add_edit_asset_movements(rotkehlchen_api_server: 'APIServer') -> None:
         'location_label': None,
         'asset': 'ETH',
         'amount': '0.0569',
-        'notes': 'Withdraw 0.0569 ETH from Bitfinex. Main event note',
+        'user_notes': 'Main event note',
         'identifier': 2,
         'entry_type': 'asset movement event',
         'event_identifier': '7e4d3805a88cbbcdc35badc4547044be803724146c7b9f0165cadd62c1616205',
         'sequence_index': 0,
-        'extra_data': None,
+        'extra_data': {'reference': 'BITFINEX-344'},
+        'auto_notes': 'Withdraw 0.0569 ETH from Bitfinex',
     }
 
     # test editing unknown fails
@@ -735,9 +744,9 @@ def test_add_edit_asset_movements(rotkehlchen_api_server: 'APIServer') -> None:
         ))
         assert len(saved_events) == 3
         fields_to_exclude = {
-            'notes', 'extra_data', 'event_subtype', 'sequence_index',
+            'user_notes', 'extra_data', 'event_subtype', 'sequence_index',
             'location_label', 'unique_id', 'event_identifier',
-            'fee', 'fee_asset', 'timestamp',
+            'fee', 'fee_asset', 'timestamp', 'auto_notes',
         }
         for idx, event in enumerate(saved_events):
             serialized_event = event.serialize()
@@ -774,6 +783,12 @@ def test_add_edit_asset_movements(rotkehlchen_api_server: 'APIServer') -> None:
         )
         assert cursor.execute(*query_for_events).fetchone()[0] == 2
 
+        # Check that the event_identifier is set correctly when editing an event with a fee
+        assert cursor.execute(
+            'SELECT event_identifier FROM history_events WHERE identifier=?',
+            (entries[0]['identifier'],),
+        ).fetchone()[0] == 'new_eventid1'
+
         # edit the same event to remove the fee
         response = requests.patch(
             api_url_for(rotkehlchen_api_server, 'historyeventresource'),
@@ -806,7 +821,19 @@ def test_add_edit_swap_events(rotkehlchen_api_server: 'APIServer') -> None:
             'fee_amount': '0.000004',
             'fee_asset': 'ETH',
             'unique_id': 'TRADE2',
-            'notes': ['Example note', '', ''],
+            'user_notes': ['Example note', '', ''],
+        }, {
+            'entry_type': 'swap event',
+            'timestamp': 1569954576000,
+            'location': 'coinbase',
+            'spend_amount': '0.02',
+            'spend_asset': 'ETH',
+            'receive_amount': '200',
+            'receive_asset': 'USD',
+            'fee_amount': '0.000044',
+            'fee_asset': 'ETH',
+            'unique_id': 'TRADE3',
+            'user_notes': ['Example note', 'Second note'],
         },
     ]
     for entry in entries:
@@ -824,11 +851,11 @@ def test_add_edit_swap_events(rotkehlchen_api_server: 'APIServer') -> None:
             filter_query=HistoryEventFilterQuery.make(),
             has_premium=True,
             group_by_event_ids=False,
-        )) == 5  # spend/receive (2) from first swap, and spend/receive/fee (3) from the second
+        )) == 8  # spend/receive (2) from first swap, and spend/receive/fee (3) from the second and third  # noqa: E501
 
     # Edit the event identifier of the first entry and add a fee
     entry = entries[0].copy()
-    entry['fee_amount'], entry['fee_asset'], entry['event_identifier'], entry['notes'] = '0.1', 'USD', 'test_id', ['Note1', 'Note2', 'Note3']  # noqa: E501
+    entry['fee_amount'], entry['fee_asset'], entry['event_identifier'], entry['user_notes'] = '0.1', 'USD', 'test_id', ['Note1', 'Note2', 'Note3']  # noqa: E501
     requests.patch(api_url_for(rotkehlchen_api_server, 'historyeventresource'), json=entry)
     with rotki.data.db.conn.read_ctx() as cursor:
         assert (events := db.get_history_events(
@@ -845,6 +872,7 @@ def test_add_edit_swap_events(rotkehlchen_api_server: 'APIServer') -> None:
             amount=FVal('50'),
             notes='Note1',
             event_identifier='test_id',
+            extra_data={'reference': 'TRADE1'},
         ), SwapEvent(
             identifier=2,
             timestamp=TimestampMS(1569924575000),
@@ -855,7 +883,7 @@ def test_add_edit_swap_events(rotkehlchen_api_server: 'APIServer') -> None:
             notes='Note2',
             event_identifier='test_id',
         ), SwapEvent(
-            identifier=6,  # highest id since it was added during edit
+            identifier=9,  # highest id since it was added during edit
             timestamp=TimestampMS(1569924575000),
             location=Location.BITFINEX,
             event_subtype=HistoryEventSubType.FEE,
@@ -872,6 +900,7 @@ def test_add_edit_swap_events(rotkehlchen_api_server: 'APIServer') -> None:
             amount=FVal('0.01'),
             unique_id='TRADE2',
             notes='Example note',
+            extra_data={'reference': 'TRADE2'},
         ), SwapEvent(
             identifier=4,
             timestamp=TimestampMS(1569924576000),
@@ -888,9 +917,36 @@ def test_add_edit_swap_events(rotkehlchen_api_server: 'APIServer') -> None:
             asset=A_ETH,
             amount=FVal('0.000004'),
             unique_id='TRADE2',
+        ), SwapEvent(
+            identifier=6,
+            timestamp=TimestampMS(1569954576000),
+            location=Location.COINBASE,
+            event_subtype=HistoryEventSubType.SPEND,
+            asset=A_ETH,
+            amount=FVal('0.02'),
+            unique_id='TRADE3',
+            notes='Example note',
+            extra_data={'reference': 'TRADE3'},
+        ), SwapEvent(
+            identifier=7,
+            timestamp=TimestampMS(1569954576000),
+            location=Location.COINBASE,
+            event_subtype=HistoryEventSubType.RECEIVE,
+            asset=A_USD,
+            amount=FVal('200'),
+            unique_id='TRADE3',
+            notes='Second note',
+        ), SwapEvent(
+            identifier=8,
+            timestamp=TimestampMS(1569954576000),
+            location=Location.COINBASE,
+            event_subtype=HistoryEventSubType.FEE,
+            asset=A_ETH,
+            amount=FVal('0.000044'),
+            unique_id='TRADE3',
         )]
 
-    # Check serialization and that the note is properly appended to the autogenerated description.
+    # Check event serialization.
     assert generate_events_response(data=[events[3]])[0]['entry'] == {
         'timestamp': 1569924576000,
         'event_type': 'trade',
@@ -899,10 +955,308 @@ def test_add_edit_swap_events(rotkehlchen_api_server: 'APIServer') -> None:
         'location_label': None,
         'asset': 'ETH',
         'amount': '0.01',
-        'notes': 'Swap 0.01 ETH in Bitfinex. Example note',
+        'user_notes': 'Example note',
         'identifier': 3,
         'entry_type': 'swap event',
         'event_identifier': '4074f41ac078988b05b7058775f111a3119888fc968f94ee9ed6a132918a3b83',
         'sequence_index': 0,
-        'extra_data': None,
+        'extra_data': {'reference': 'TRADE2'},
+        'auto_notes': 'Swap 0.01 ETH in Bitfinex',
     }
+
+
+def test_add_edit_evm_swap_events(rotkehlchen_api_server: 'APIServer') -> None:
+    rotki = rotkehlchen_api_server.rest_api.rotkehlchen
+    db = DBHistoryEvents(rotki.data.db)
+    entries = [{
+        'entry_type': 'evm swap event',
+        'timestamp': 1569924575000,
+        'location': 'ethereum',
+        'location_label': '0x6e15887E2CEC81434C16D587709f64603b39b545',
+        'spend_amount': '0.16',
+        'spend_asset': 'ETH',
+        'receive_amount': '0.003',
+        'receive_asset': A_WBTC.identifier,
+        'fee_amount': '0.0002',
+        'fee_asset': 'ETH',
+        'user_notes': ['Example note', '', ''],
+        'sequence_index': 0,
+        'tx_hash': '0x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f',
+        'counterparty': 'some counterparty',
+        'address': '0xA090e606E30bD747d4E6245a1517EbE430F0057e',
+    }, {
+        'entry_type': 'evm swap event',
+        'timestamp': 1569924576000,
+        'location': 'ethereum',
+        'location_label': '0x6e15887E2CEC81434C16D587709f64603b39b545',
+        'spend_amount': '50',
+        'spend_asset': A_USDT.identifier,
+        'receive_amount': '0.026',
+        'receive_asset': 'ETH',
+        'sequence_index': 123,
+        'tx_hash': '0x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f',
+        'counterparty': 'some counterparty',
+        'product': 'pool',
+        'address': '0xb5d85CBf7cB3EE0D56b3bB207D5Fc4B82f43F511',
+    }]
+    for entry in entries:
+        response = requests.put(
+            api_url_for(rotkehlchen_api_server, 'historyeventresource'),
+            json=entry,
+        )
+        result = assert_proper_sync_response_with_result(response)
+        assert 'identifier' in result
+        entry['identifier'] = result['identifier']
+
+    with rotki.data.db.conn.read_ctx() as cursor:
+        assert len(db.get_history_events(
+            cursor=cursor,
+            filter_query=HistoryEventFilterQuery.make(),
+            has_premium=True,
+            group_by_event_ids=False,
+        )) == 5  # spend/receive/fee (3) from first swap, and spend/receive (2) from the second
+
+    # Edit the event identifier of the second entry and add a fee
+    entry = entries[1].copy()
+    entry['fee_amount'], entry['fee_asset'], entry['event_identifier'] = '0.1', 'USD', 'test_id'
+    requests.patch(api_url_for(rotkehlchen_api_server, 'historyeventresource'), json=entry)
+    with rotki.data.db.conn.read_ctx() as cursor:
+        assert (events := db.get_history_events(
+            cursor=cursor,
+            filter_query=HistoryEventFilterQuery.make(),
+            has_premium=True,
+            group_by_event_ids=False,
+        )) == [EvmSwapEvent(
+            identifier=1,
+            sequence_index=0,
+            timestamp=TimestampMS(1569924575000),
+            location=Location.ETHEREUM,
+            event_subtype=HistoryEventSubType.SPEND,
+            asset=A_ETH,
+            amount=FVal('0.16'),
+            location_label=(location_label := '0x6e15887E2CEC81434C16D587709f64603b39b545'),
+            notes='Example note',
+            tx_hash=(tx_hash := deserialize_evm_tx_hash('0x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f')),  # noqa: E501
+            counterparty=(counterparty := 'some counterparty'),
+            address=(addr1 := string_to_evm_address('0xA090e606E30bD747d4E6245a1517EbE430F0057e')),
+        ), EvmSwapEvent(
+            identifier=2,
+            sequence_index=1,
+            timestamp=TimestampMS(1569924575000),
+            location=Location.ETHEREUM,
+            event_subtype=HistoryEventSubType.RECEIVE,
+            asset=A_WBTC,
+            amount=FVal('0.003'),
+            location_label=location_label,
+            tx_hash=tx_hash,
+            counterparty=counterparty,
+            address=addr1,
+        ), EvmSwapEvent(
+            identifier=3,
+            sequence_index=2,
+            timestamp=TimestampMS(1569924575000),
+            location=Location.ETHEREUM,
+            event_subtype=HistoryEventSubType.FEE,
+            asset=A_ETH,
+            amount=FVal('0.0002'),
+            location_label=location_label,
+            tx_hash=tx_hash,
+            counterparty=counterparty,
+            address=addr1,
+        ), EvmSwapEvent(
+            identifier=4,
+            event_identifier='test_id',
+            sequence_index=123,
+            timestamp=TimestampMS(1569924576000),
+            location=Location.ETHEREUM,
+            event_subtype=HistoryEventSubType.SPEND,
+            asset=A_USDT,
+            amount=FVal('50'),
+            location_label=location_label,
+            tx_hash=tx_hash,
+            counterparty='some counterparty',
+            product=(product := EvmProduct.POOL),
+            address=(addr2 := string_to_evm_address('0xb5d85CBf7cB3EE0D56b3bB207D5Fc4B82f43F511')),
+        ), EvmSwapEvent(
+            identifier=5,
+            event_identifier='test_id',
+            sequence_index=124,
+            timestamp=TimestampMS(1569924576000),
+            location=Location.ETHEREUM,
+            event_subtype=HistoryEventSubType.RECEIVE,
+            asset=A_ETH,
+            amount=FVal('0.026'),
+            location_label=location_label,
+            tx_hash=tx_hash,
+            counterparty=counterparty,
+            product=product,
+            address=addr2,
+        ), EvmSwapEvent(
+            identifier=6,
+            event_identifier='test_id',
+            sequence_index=125,
+            timestamp=TimestampMS(1569924576000),
+            location=Location.ETHEREUM,
+            event_subtype=HistoryEventSubType.FEE,
+            asset=A_USD,
+            amount=FVal('0.1'),
+            location_label=location_label,
+            tx_hash=tx_hash,
+            counterparty=counterparty,
+            product=product,
+            address=addr2,
+        )]
+
+    # Check event serialization.
+    assert generate_events_response(data=[events[3]])[0]['entry'] == {
+        'timestamp': 1569924576000,
+        'event_type': 'trade',
+        'event_subtype': 'spend',
+        'location': 'ethereum',
+        'location_label': '0x6e15887E2CEC81434C16D587709f64603b39b545',
+        'asset': A_USDT.identifier,
+        'amount': '50',
+        'identifier': 4,
+        'entry_type': 'evm swap event',
+        'event_identifier': 'test_id',
+        'sequence_index': 123,
+        'extra_data': None,
+        'tx_hash': '0x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f',
+        'counterparty': 'some counterparty',
+        'product': 'pool',
+        'address': '0xb5d85CBf7cB3EE0D56b3bB207D5Fc4B82f43F511',
+    }
+
+
+def test_event_grouping(rotkehlchen_api_server: 'APIServer') -> None:
+    """Test that events are properly grouped into sub-lists
+    when they are serialized for the api.
+
+    The test events are as follows:
+    - spend/fee gas event
+    - group of EvmSwapEvents: spend, receive, fee
+    - informational event
+    - group of MULTI_TRADE events: spend, spend, receive, receive, fee
+    """
+    rotki = rotkehlchen_api_server.rest_api.rotkehlchen
+
+    # First check that querying history events grouped by id with no events works correctly.
+    # Regression test for a problem that was introduced in the changes for event grouping.
+    assert assert_proper_sync_response_with_result(response=requests.post(
+        api_url_for(rotkehlchen_api_server, 'historyeventresource'),
+        json={'group_by_event_ids': True},
+    ))['entries_found'] == 0
+
+    db = DBHistoryEvents(rotki.data.db)
+    with rotki.data.db.conn.write_ctx() as write_cursor:
+        db.add_history_events(
+            write_cursor=write_cursor,
+            history=[EvmEvent(
+                tx_hash=(tx_hash := deserialize_evm_tx_hash('0x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f')),  # noqa: E501
+                sequence_index=0,
+                timestamp=(timestamp := TimestampMS(1569924575000)),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.SPEND,
+                event_subtype=HistoryEventSubType.FEE,
+                asset=A_WBTC,
+                amount=FVal('0.003'),
+                counterparty=CPT_GAS,
+            ), EvmSwapEvent(
+                sequence_index=1,
+                timestamp=timestamp,
+                location=Location.ETHEREUM,
+                event_subtype=HistoryEventSubType.SPEND,
+                asset=A_ETH,
+                amount=FVal('0.16'),
+                tx_hash=tx_hash,
+            ), EvmSwapEvent(
+                sequence_index=2,
+                timestamp=timestamp,
+                location=Location.ETHEREUM,
+                event_subtype=HistoryEventSubType.RECEIVE,
+                asset=A_WBTC,
+                amount=FVal('0.003'),
+                tx_hash=tx_hash,
+            ), EvmSwapEvent(
+                sequence_index=3,
+                timestamp=timestamp,
+                location=Location.ETHEREUM,
+                event_subtype=HistoryEventSubType.FEE,
+                asset=A_ETH,
+                amount=FVal('0.0002'),
+                tx_hash=tx_hash,
+            ), EvmEvent(
+                tx_hash=tx_hash,
+                sequence_index=4,
+                timestamp=timestamp,
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.INFORMATIONAL,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=ZERO,
+            ), EvmEvent(
+                tx_hash=tx_hash,
+                sequence_index=5,
+                timestamp=timestamp,
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.MULTI_TRADE,
+                event_subtype=HistoryEventSubType.SPEND,
+                asset=A_ETH,
+                amount=FVal(0.123),
+            ), EvmEvent(
+                tx_hash=tx_hash,
+                sequence_index=6,
+                timestamp=timestamp,
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.MULTI_TRADE,
+                event_subtype=HistoryEventSubType.SPEND,
+                asset=A_WBTC,
+                amount=FVal(0.0032),
+            ), EvmEvent(
+                tx_hash=tx_hash,
+                sequence_index=7,
+                timestamp=timestamp,
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.MULTI_TRADE,
+                event_subtype=HistoryEventSubType.RECEIVE,
+                asset=A_USDC,
+                amount=FVal(120),
+            ), EvmEvent(
+                tx_hash=tx_hash,
+                sequence_index=8,
+                timestamp=timestamp,
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.MULTI_TRADE,
+                event_subtype=HistoryEventSubType.RECEIVE,
+                asset=A_USDT,
+                amount=FVal(140),
+            ), EvmEvent(
+                tx_hash=tx_hash,
+                sequence_index=9,
+                timestamp=timestamp,
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.MULTI_TRADE,
+                event_subtype=HistoryEventSubType.FEE,
+                asset=A_ETH,
+                amount=FVal(0.0002),
+            )],
+        )
+        result = assert_proper_sync_response_with_result(
+            response=requests.post(api_url_for(rotkehlchen_api_server, 'historyeventresource')),
+        )
+        assert result['entries_found'] == 10
+        assert len(entries := result['entries']) == 4  # gas event, evm swap group, informational event, multi trade group  # noqa: E501
+        assert entries[0]['entry']['counterparty'] == 'gas'
+        assert len(entries[1]) == 3  # spend, receive, fee
+        assert entries[1][0]['entry']['event_type'] == 'trade'
+        assert entries[1][0]['entry']['event_subtype'] == 'spend'
+        assert entries[1][1]['entry']['event_subtype'] == 'receive'
+        assert entries[1][2]['entry']['event_subtype'] == 'fee'
+        assert entries[2]['entry']['event_type'] == 'informational'
+        assert len(entries[3]) == 5  # spend, spend, receive, receive, fee
+        assert entries[3][0]['entry']['event_type'] == 'multi trade'
+        assert entries[3][0]['entry']['event_subtype'] == 'spend'
+        assert entries[3][1]['entry']['event_subtype'] == 'spend'
+        assert entries[3][2]['entry']['event_subtype'] == 'receive'
+        assert entries[3][3]['entry']['event_subtype'] == 'receive'
+        assert entries[3][4]['entry']['event_subtype'] == 'fee'

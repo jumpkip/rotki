@@ -4,7 +4,7 @@ import type { AssetBalance } from '@rotki/common';
 import type { MaybeRef } from '@vueuse/core';
 import type * as Vue from 'vue';
 import { usePaginationFilters } from '@/composables/use-pagination-filter';
-import { useExchangeBalancesStore } from '@/store/balances/exchanges';
+import { useBinanceSavings } from '@/modules/balances/exchanges/use-binance-savings';
 import flushPromises from 'flush-promises';
 import { afterEach, assertType, beforeAll, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
 
@@ -43,7 +43,7 @@ describe('composables::history/filter-paginate', () => {
 
   beforeAll(() => {
     setActivePinia(createPinia());
-    fetchExchangeSavings = useExchangeBalancesStore().fetchExchangeSavings;
+    fetchExchangeSavings = useBinanceSavings().fetchExchangeSavings;
   });
 
   afterEach(() => {
@@ -154,6 +154,7 @@ describe('composables::history/filter-paginate', () => {
       await router.push({
         query,
       });
+      await nextTick();
 
       expect(pushSpy).toHaveBeenCalledOnce();
       expect(pushSpy).toHaveBeenCalledWith({ query });

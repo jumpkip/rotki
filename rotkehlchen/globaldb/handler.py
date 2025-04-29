@@ -1,8 +1,9 @@
 import logging
 import shutil
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Optional, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, Optional, Union, cast, overload
 
 from gevent.lock import Semaphore
 
@@ -41,6 +42,8 @@ from rotkehlchen.types import (
     SPAM_PROTOCOL,
     ChainID,
     ChecksumEvmAddress,
+    CounterpartyAssetMappingDeleteEntry,
+    CounterpartyAssetMappingUpdateEntry,
     EvmTokenKind,
     Location,
     LocationAssetMappingDeleteEntry,
@@ -59,7 +62,11 @@ from .utils import GLOBAL_DB_VERSION, globaldb_get_setting_value, initialize_glo
 
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
-    from rotkehlchen.db.filtering import AssetsFilterQuery, LocationAssetMappingsFilterQuery
+    from rotkehlchen.db.filtering import (
+        AssetsFilterQuery,
+        CounterpartyAssetMappingsFilterQuery,
+        LocationAssetMappingsFilterQuery,
+    )
     from rotkehlchen.user_messages import MessagesAggregator
 
 logger = logging.getLogger(__name__)
@@ -864,33 +871,41 @@ class GlobalDBHandler:
             chain_id: ChainID,
             exceptions: set[ChecksumEvmAddress],
             protocol: str | None = None,
-    ) -> list[EvmTokenDetectionData]:
+    ) -> tuple[list[EvmTokenDetectionData], list[EvmTokenDetectionData]]:
         """Query EVM token data from the database for token detection.
 
         Retrieves basic token information including identifier, address, and decimals.
         Tokens in the exceptions set are excluded from results. If a token doesn't have
         decimals we default to 18.
+
+        Returns a tuple of (erc20_tokens, erc721_tokens) with each list containing
+        token detection data for that type.
         """
-        result = []
-        query = 'SELECT identifier, address, decimals FROM evm_tokens WHERE chain=?'
+        erc20_tokens, erc721_tokens = [], []
+        query = 'SELECT identifier, address, token_kind, decimals FROM evm_tokens WHERE chain=?'
         bindings: list[int | str] = [chain_id.serialize_for_db()]
         if protocol is not None:
             query += ' AND protocol=?'
             bindings.append(protocol)
 
+        erc721_token_kind = EvmTokenKind.ERC721.serialize_for_db()
         with GlobalDBHandler().conn.read_ctx() as cursor:
             cursor.execute(query, bindings)
-            for identifier, address, decimals in cursor:
+            for identifier, address, token_kind, decimals in cursor:
                 if address in exceptions:
                     continue
 
-                result.append(EvmTokenDetectionData(
+                details = EvmTokenDetectionData(
                     identifier=identifier,
                     address=address,
                     decimals=decimals if decimals is not None else DEFAULT_TOKEN_DECIMALS,  # TODO: at least two tokens are missing the decimals in my DB and also the EvmToken class allows decimals to be None. We need to think if that is correct and if we should enforce or not for all the erc20s to have decimals.  # noqa: E501
-                ))
+                )
+                if token_kind == erc721_token_kind:
+                    erc721_tokens.append(details)
+                else:
+                    erc20_tokens.append(details)
 
-        return result
+        return erc20_tokens, erc721_tokens
 
     @staticmethod
     def get_addresses_by_protocol(chain_id: ChainID, protocol: str) -> tuple[ChecksumEvmAddress, ...]:  # noqa: E501
@@ -2010,31 +2025,84 @@ class GlobalDBHandler:
         return default if identifier is None else identifier[0]
 
     @staticmethod
-    def query_location_asset_mappings(
-            filter_query: 'LocationAssetMappingsFilterQuery',
+    def query_asset_mappings_by_type(
+            dict_keys: tuple[str, str, str],
+            mapping_type: Literal['location', 'counterparty'],
+            query_columns: Literal['local_id, location, exchange_symbol', 'local_id, counterparty, symbol'],  # noqa: E501
+            filter_query: Union['LocationAssetMappingsFilterQuery', 'CounterpartyAssetMappingsFilterQuery'],  # noqa: E501
+            location_or_counterparty_reader_callback: Callable,
     ) -> tuple[list[dict[str, str | Location | None]], int, int]:
-        """Returns a tuple with the mappings, their amount according to the filter_query, and total
-        amount without any filter. Mappings are in the form of a list of dicts with the keys,
-        asset, location, and location_symbol."""
+        """Query asset mappings based on the mapping type.
+
+        Returns:
+          - A list of mapping dictionaries.
+          - The count of mappings matching the filter.
+          - The total count of mappings.
+
+        For location mappings, keys are: 'asset', 'location', 'location_symbol'.
+        For counterparty mappings, keys are: 'asset', 'counterparty', 'counterparty_symbol'.
+        """
         with GlobalDBHandler().conn.read_ctx() as cursor:
             mappings_total = cursor.execute(
-                'SELECT COUNT(*) FROM location_asset_mappings',
+                f'SELECT COUNT(*) FROM {mapping_type}_asset_mappings',
             ).fetchone()[0]
 
             query, bindings = filter_query.prepare(with_pagination=False)
             mappings_count = cursor.execute(
-                f'SELECT COUNT(*) FROM location_asset_mappings {query}', bindings,
+                f'SELECT COUNT(*) FROM {mapping_type}_asset_mappings {query}', bindings,
             ).fetchone()[0]
 
             query, bindings = filter_query.prepare()
             cursor.execute(
-                f'SELECT local_id, location, exchange_symbol FROM location_asset_mappings {query}', bindings,  # noqa: E501
+                f'SELECT {query_columns} FROM {mapping_type}_asset_mappings {query}', bindings,
             )
-            return [{
-                'asset': identifier,
-                'location': None if location is None else str(Location.deserialize_from_db(location)),  # noqa: E501
-                'location_symbol': symbol,
-            } for identifier, location, symbol in cursor], mappings_count, mappings_total
+            return [
+                location_or_counterparty_reader_callback(dict(zip(dict_keys, entry, strict=False)))
+                for entry in cursor
+            ], mappings_count, mappings_total
+
+    @staticmethod
+    def _execute_mapping_operation(
+            entries: list[LocationAssetMappingUpdateEntry] | list[LocationAssetMappingDeleteEntry] | list[CounterpartyAssetMappingDeleteEntry] | list[CounterpartyAssetMappingUpdateEntry],  # noqa: E501
+            sql_query: str,
+            error_msg: str,
+            sql_bindings_fn: Callable,
+            skip_errors: bool = False,
+            pre_check_fn: Callable | None = None,
+    ) -> None:
+        """Generic function to handle asset mapping operations.
+
+        - entries: List of mapping entries to process.
+        - error_msg: Template for the error message in case of operation failure.
+        - sql_bindings_fn: A function that accepts an entry and returns a tuple of values to bind into sql_query.
+        - skip_errors: If True, errors during execution will be logged instead of stopping execution.
+        - pre_check_fn: Optional function to perform a pre-execution check.
+        - sql_query: SQL statement to execute. This should be a parameterized query (using placeholders)
+                     that works with the bindings provided by sql_bindings_fn.
+
+        May raise:
+            - InputError if operations fail and skip_errors is False
+        """  # noqa: E501
+        with (globaldb := GlobalDBHandler()).conn.write_ctx() as write_cursor:
+            for entry in entries:
+                msg = error_msg.format(entry=entry)
+                try:
+                    if pre_check_fn is not None:
+                        with globaldb.conn.read_ctx() as cursor:
+                            pre_check_fn(cursor, entry)
+
+                    write_cursor.execute(sql_query, sql_bindings_fn(entry))
+                    if sql_query.startswith(('UPDATE', 'DELETE')) and write_cursor.rowcount != 1:
+                        if skip_errors:
+                            log.error(msg)
+                        else:
+                            raise InputError(msg)
+
+                except sqlite3.IntegrityError as e:
+                    if skip_errors:
+                        log.error(msg)
+                    else:
+                        raise InputError(msg) from e
 
     @staticmethod
     def add_location_asset_mappings(
@@ -2046,31 +2114,25 @@ class GlobalDBHandler:
 
         May Raise (if skip_errors is False):
         - InputError if any of the pairs of location and exchange_symbol already exist"""
-        with GlobalDBHandler().conn.write_ctx() as cursor:
-            for entry in entries:
-                try:
-                    if entry.location is None and cursor.execute(
-                        'SELECT COUNT(*) FROM location_asset_mappings WHERE location IS NULL AND exchange_symbol=? AND local_id=?',  # noqa: E501
-                        (entry.location_symbol, entry.asset.serialize()),
-                    ).fetchone()[0] > 0:
-                        raise sqlite3.IntegrityError('Entry already exists in the DB')
+        GlobalDBHandler._execute_mapping_operation(
+            entries=entries,
+            skip_errors=skip_errors,
+            pre_check_fn=GlobalDBHandler._location_asset_mapping_null_precheck,
+            sql_bindings_fn=lambda entry: entry.serialize_for_db(),
+            sql_query='INSERT INTO location_asset_mappings(local_id, exchange_symbol, location) VALUES(?, ?, ?)',  # noqa: E501
+            error_msg='Failed to add the location asset mapping of {entry} because it already exists in the DB.',  # noqa: E501
+        )
 
-                    cursor.execute(
-                        'INSERT INTO location_asset_mappings(local_id, location, exchange_symbol) VALUES(?, ?, ?)', (  # noqa: E501
-                            entry.asset.serialize(),
-                            None if entry.location is None else entry.location.serialize_for_db(),
-                            entry.location_symbol,
-                        ),
-                    )
-                except sqlite3.IntegrityError as e:
-                    error_msg = (
-                        f'Failed to add the location asset mapping of {entry.location_symbol} '
-                        f'in {entry.location} because it already exists in the DB.'
-                    )
-                    if skip_errors:
-                        log.error(error_msg)
-                    else:
-                        raise InputError(error_msg) from e
+    @staticmethod
+    def _location_asset_mapping_null_precheck(cursor: 'DBCursor', entry: LocationAssetMappingUpdateEntry) -> None:  # noqa: E501
+        if (
+                entry.location is None and
+                cursor.execute(
+                    'SELECT COUNT(*) FROM location_asset_mappings WHERE location IS NULL AND local_id=? AND exchange_symbol=?',  # noqa: E501
+                    entry.serialize_for_db()[:2],  # the asset and the exchange symbol.
+                ).fetchone()[0] > 0
+        ):
+            raise sqlite3.IntegrityError('Entry already exists in the DB')
 
     @staticmethod
     def update_location_asset_mappings(
@@ -2082,24 +2144,13 @@ class GlobalDBHandler:
 
         May Raise (if skip_errors is False):
         - InputError if any of the pairs of location and exchange_symbol does not exist"""
-        with GlobalDBHandler().conn.write_ctx() as cursor:
-            for entry in entries:
-                cursor.execute(
-                    'UPDATE location_asset_mappings SET local_id=? WHERE location IS ? AND exchange_symbol=?', (  # noqa: E501
-                        entry.asset.serialize(),
-                        None if entry.location is None else entry.location.serialize_for_db(),
-                        entry.location_symbol,
-                    ),
-                )
-                if cursor.rowcount != 1:
-                    error_msg = (
-                        f'Failed to update the location asset mapping of {entry.location_symbol} '
-                        f'in {entry.location} because it does not exist in the DB.'
-                    )
-                    if skip_errors:
-                        log.error(error_msg)
-                    else:
-                        raise InputError(error_msg)
+        GlobalDBHandler._execute_mapping_operation(
+            entries=entries,
+            skip_errors=skip_errors,
+            sql_bindings_fn=lambda entry: entry.serialize_for_db(),
+            sql_query='UPDATE location_asset_mappings SET local_id=? WHERE exchange_symbol=? AND location IS ?',  # noqa: E501
+            error_msg='Failed to update the location asset mapping of {entry} because it does not exist in the DB.',  # noqa: E501
+        )
 
     @staticmethod
     def delete_location_asset_mappings(
@@ -2111,23 +2162,70 @@ class GlobalDBHandler:
 
         May Raise (if skip_errors is False):
         - InputError if any of the pairs of location and exchange_symbol does not exist"""
-        with GlobalDBHandler().conn.write_ctx() as cursor:
-            for entry in entries:
-                cursor.execute(
-                    'DELETE FROM location_asset_mappings WHERE location IS ? AND exchange_symbol=?', (  # noqa: E501
-                        None if entry.location is None else entry.location.serialize_for_db(),
-                        entry.location_symbol,
-                    ),
-                )
-                if cursor.rowcount != 1:
-                    error_msg = (
-                        f'Failed to delete the location asset mapping of {entry.location_symbol} '
-                        f'in {entry.location} because it does not exist in the DB.'
-                    )
-                    if skip_errors:
-                        log.error(error_msg)
-                    else:
-                        raise InputError(error_msg)
+        GlobalDBHandler._execute_mapping_operation(
+            entries=entries,
+            skip_errors=skip_errors,
+            sql_bindings_fn=lambda entry: entry.serialize_for_db(),
+            sql_query='DELETE FROM location_asset_mappings WHERE exchange_symbol=? AND location IS ?',  # noqa: E501
+            error_msg='Failed to delete the location asset mapping of {entry} because it does not exist in the DB.',  # noqa: E501
+        )
+
+    @staticmethod
+    def add_counterparty_asset_mappings(
+            entries: list[CounterpartyAssetMappingUpdateEntry],
+            skip_errors: bool = False,
+    ) -> None:
+        """Adds the given mapping entries of asset identifiers and their symbols for the given
+        counterparty to the counterparty_asset_mappings table.
+
+        May raise (if skip_errors is False):
+            - InputError if any of the pairs of counterparty and symbol already exist
+        """
+        GlobalDBHandler._execute_mapping_operation(
+            entries=entries,
+            skip_errors=skip_errors,
+            sql_bindings_fn=lambda entry: entry.serialize_for_db(),
+            sql_query='INSERT INTO counterparty_asset_mappings(local_id, symbol, counterparty) VALUES(?, ?, ?)',  # noqa: E501
+            error_msg='Failed to add the counterparty asset mapping of {entry} because it already exists in the DB.',  # noqa: E501
+        )
+
+    @staticmethod
+    def update_counterparty_asset_mappings(
+            entries: list[CounterpartyAssetMappingUpdateEntry],
+            skip_errors: bool = False,
+    ) -> None:
+        """Updates the mapped asset identifiers in the counterparty_asset_mappings table
+        based on their counterparty symbol.
+
+        May raise(if skip_errors is False):
+            - InputError if any of the pairs of counterparty and symbol does not exist
+        """
+        GlobalDBHandler._execute_mapping_operation(
+            entries=entries,
+            skip_errors=skip_errors,
+            sql_bindings_fn=lambda entry: entry.serialize_for_db(),
+            sql_query='UPDATE counterparty_asset_mappings SET local_id=? WHERE symbol=? AND counterparty=?',  # noqa: E501
+            error_msg='Failed to update the counterparty asset mapping of {entry} because it does not exist in the DB.',  # noqa: E501
+        )
+
+    @staticmethod
+    def delete_counterparty_asset_mappings(
+            entries: list[CounterpartyAssetMappingDeleteEntry],
+            skip_errors: bool = False,
+    ) -> None:
+        """Deletes the mappings of given asset identifiers for the given counterparty from the
+        counterparty_asset_mappings table.
+
+        May raise (if skip_errors is False):
+            - InputError if any of the pairs of counterparty and symbol does not exist
+        """
+        GlobalDBHandler._execute_mapping_operation(
+            entries=entries,
+            skip_errors=skip_errors,
+            sql_bindings_fn=lambda entry: entry.serialize_for_db(),
+            sql_query='DELETE FROM counterparty_asset_mappings WHERE symbol=? AND counterparty=?',
+            error_msg='Failed to delete the counterparty asset mapping of {entry} because it does not exist in the DB.',  # noqa: E501
+        )
 
     @staticmethod
     def get_protocol_for_asset(asset_identifier: str) -> str | None:

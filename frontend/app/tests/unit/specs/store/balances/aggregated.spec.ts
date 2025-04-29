@@ -3,11 +3,11 @@ import type { BlockchainTotals, BtcBalances } from '@/types/blockchain/balances'
 import { useBalances } from '@/composables/balances';
 import { useAggregatedBalances } from '@/composables/balances/aggregated';
 import { TRADE_LOCATION_BANKS } from '@/data/defaults';
-import { useExchangeBalancesStore } from '@/store/balances/exchanges';
-import { useManualBalancesStore } from '@/store/balances/manual';
+import { useBlockchainAccountsStore } from '@/modules/accounts/use-blockchain-accounts-store';
+import { useBlockchainAccountData } from '@/modules/balances/blockchain/use-blockchain-account-data';
+import { useBalancesStore } from '@/modules/balances/use-balances-store';
 import { useBalancePricesStore } from '@/store/balances/prices';
-import { useBlockchainStore } from '@/store/blockchain';
-import { useExchangesStore } from '@/store/exchanges';
+import { useSessionSettingsStore } from '@/store/settings/session';
 import { BalanceType } from '@/types/balances';
 import { useCurrencies } from '@/types/currencies';
 import { convertBtcAccounts, convertBtcBalances } from '@/utils/blockchain/accounts';
@@ -23,12 +23,10 @@ describe('store::balances/aggregated', () => {
   });
 
   it('aggregatedBalances', () => {
-    const { exchangeBalances } = storeToRefs(useExchangeBalancesStore());
-    const { connectedExchanges } = storeToRefs(useExchangesStore());
+    const { exchangeBalances, manualBalances, balances: ethBalances } = storeToRefs(useBalancesStore());
+    const { connectedExchanges } = storeToRefs(useSessionSettingsStore());
     const { prices } = storeToRefs(useBalancePricesStore());
-    const { manualBalancesData } = storeToRefs(useManualBalancesStore());
     const { balances } = useAggregatedBalances();
-    const { balances: ethBalances } = storeToRefs(useBlockchainStore());
 
     set(connectedExchanges, [
       {
@@ -60,39 +58,42 @@ describe('store::balances/aggregated', () => {
 
     set(prices, {
       DAI: {
+        oracle: 'coingecko',
         value: bigNumberify(1),
         isManualPrice: false,
       },
       EUR: {
+        oracle: 'coingecko',
         value: bigNumberify(1),
         isManualPrice: false,
       },
       SAI: {
+        oracle: 'coingecko',
         value: bigNumberify(1),
         isManualPrice: false,
       },
       ETH: {
+        oracle: 'coingecko',
         value: bigNumberify(3000),
         isManualPrice: false,
       },
       BTC: {
+        oracle: 'coingecko',
         value: bigNumberify(40000),
         isManualPrice: false,
       },
     });
 
-    set(manualBalancesData, [
-      {
-        identifier: 1,
-        usdValue: bigNumberify(50),
-        amount: bigNumberify(50),
-        asset: 'DAI',
-        label: '123',
-        tags: [],
-        location: TRADE_LOCATION_BANKS,
-        balanceType: BalanceType.ASSET,
-      },
-    ]);
+    set(manualBalances, [{
+      identifier: 1,
+      usdValue: bigNumberify(50),
+      amount: bigNumberify(50),
+      asset: 'DAI',
+      label: '123',
+      tags: [],
+      location: TRADE_LOCATION_BANKS,
+      balanceType: BalanceType.ASSET,
+    }]);
 
     set(ethBalances, {
       [Blockchain.ETH.toString()]: {
@@ -122,90 +123,72 @@ describe('store::balances/aggregated', () => {
 
     const actualResult = sortBy(get(balances()), ['asset']);
 
-    const expectedResult = sortBy(
-      [
-        {
-          asset: 'EUR',
-          amount: bigNumberify(50),
-          usdValue: bigNumberify(50),
-          usdPrice: bigNumberify(1),
-        },
-        {
-          asset: 'DAI',
-          amount: bigNumberify(200),
-          usdValue: bigNumberify(200),
-          usdPrice: bigNumberify(1),
-        },
-        {
-          asset: 'BTC',
-          amount: bigNumberify(150),
-          usdValue: bigNumberify(150),
-          usdPrice: bigNumberify(40000),
-        },
-        {
-          asset: 'ETH',
-          amount: bigNumberify(150),
-          usdValue: bigNumberify(150),
-          usdPrice: bigNumberify(3000),
-        },
-        {
-          asset: 'SAI',
-          amount: bigNumberify(100),
-          usdValue: bigNumberify(100),
-          usdPrice: bigNumberify(1),
-        },
-      ] satisfies AssetBalanceWithPrice[],
-      ['asset'],
-    );
+    const expectedResult = sortBy([{
+      asset: 'EUR',
+      amount: bigNumberify(50),
+      usdValue: bigNumberify(50),
+      usdPrice: bigNumberify(1),
+    }, {
+      asset: 'DAI',
+      amount: bigNumberify(200),
+      usdValue: bigNumberify(200),
+      usdPrice: bigNumberify(1),
+    }, {
+      asset: 'BTC',
+      amount: bigNumberify(150),
+      usdValue: bigNumberify(150),
+      usdPrice: bigNumberify(40000),
+    }, {
+      asset: 'ETH',
+      amount: bigNumberify(150),
+      usdValue: bigNumberify(150),
+      usdPrice: bigNumberify(3000),
+    }, {
+      asset: 'SAI',
+      amount: bigNumberify(100),
+      usdValue: bigNumberify(100),
+      usdPrice: bigNumberify(1),
+    }] satisfies AssetBalanceWithPrice[], ['asset']);
 
     expect(actualResult).toMatchObject(expectedResult);
   });
 
   it('btcAccounts', async () => {
     const accounts: BitcoinAccounts = {
-      standalone: [
-        {
-          address: '123',
+      standalone: [{
+        address: '123',
+        tags: null,
+        label: null,
+      }],
+      xpubs: [{
+        xpub: 'xpub123',
+        addresses: [{
+          address: '1234',
           tags: null,
           label: null,
-        },
-      ],
-      xpubs: [
-        {
-          xpub: 'xpub123',
-          addresses: [
-            {
-              address: '1234',
-              tags: null,
-              label: null,
-            },
-          ],
-          tags: null,
-          label: null,
-          derivationPath: 'm',
-        },
-        {
-          xpub: 'xpub1234',
-          derivationPath: null,
-          label: '123',
-          tags: ['a'],
-          addresses: null,
-        },
-      ],
+        }],
+        tags: null,
+        label: null,
+        derivationPath: 'm',
+      }, {
+        xpub: 'xpub1234',
+        derivationPath: null,
+        label: '123',
+        tags: ['a'],
+        addresses: null,
+      }],
     };
     const btcBalances: BtcBalances = {
       standalone: {
         123: { usdValue: bigNumberify(10), amount: bigNumberify(10) },
       },
-      xpubs: [
-        {
-          xpub: 'xpub123',
-          derivationPath: 'm',
-          addresses: {
-            1234: { usdValue: bigNumberify(10), amount: bigNumberify(10) },
-          },
+      xpubs: [{
+        xpub: 'xpub123',
+        derivationPath: 'm',
+        addresses: {
+          1234: { usdValue: bigNumberify(10), amount: bigNumberify(10) },
         },
-      ],
+      }],
     };
 
     const totals: BlockchainTotals = {
@@ -218,7 +201,10 @@ describe('store::balances/aggregated', () => {
       liabilities: {},
     };
 
-    const { updateAccounts, updateBalances, getBlockchainAccounts, fetchAccounts } = useBlockchainStore();
+    const { fetchAccounts } = useBlockchainAccountData();
+    const { updateAccounts } = useBlockchainAccountsStore();
+    const { updateBalances } = useBalancesStore();
+    const { getBlockchainAccounts } = useBlockchainAccountData();
 
     updateAccounts(
       Blockchain.BTC,
@@ -226,98 +212,90 @@ describe('store::balances/aggregated', () => {
     );
     updateBalances(Blockchain.BTC, convertBtcBalances(Blockchain.BTC, totals, btcBalances));
 
-    expect(getBlockchainAccounts(Blockchain.BTC)).toEqual([
-      {
-        type: 'account',
-        data: {
-          type: 'address',
-          address: '1234',
-        },
-        amount: bigNumberify(10),
-        usdValue: bigNumberify(10),
-        chain: Blockchain.BTC,
-        nativeAsset: 'BTC',
-        groupId: 'xpub123#m#btc',
-        label: undefined,
-        expansion: undefined,
-        tags: undefined,
+    expect(getBlockchainAccounts(Blockchain.BTC)).toEqual([{
+      type: 'account',
+      data: {
+        type: 'address',
+        address: '1234',
       },
-      {
-        type: 'account',
-        data: {
-          type: 'address',
-          address: '123',
-        },
-        amount: bigNumberify(10),
-        usdValue: bigNumberify(10),
-        chain: Blockchain.BTC,
-        groupId: '123',
-        nativeAsset: 'BTC',
-        expansion: undefined,
-        label: undefined,
-        tags: undefined,
+      amount: bigNumberify(10),
+      usdValue: bigNumberify(10),
+      chain: Blockchain.BTC,
+      nativeAsset: 'BTC',
+      groupId: 'xpub123#m#btc',
+      label: undefined,
+      expansion: undefined,
+      tags: undefined,
+    }, {
+      type: 'account',
+      data: {
+        type: 'address',
+        address: '123',
       },
-    ]);
+      amount: bigNumberify(10),
+      usdValue: bigNumberify(10),
+      chain: Blockchain.BTC,
+      groupId: '123',
+      nativeAsset: 'BTC',
+      expansion: undefined,
+      label: undefined,
+      tags: undefined,
+    }]);
 
     const knownGroups = await fetchAccounts({ limit: 10, offset: 0 });
 
     const chain = Blockchain.BTC.toString();
 
-    const groups: BlockchainAccountGroupWithBalance[] = [
-      {
-        type: 'group',
-        data: {
-          type: 'address',
-          address: '123',
-        },
-        usdValue: bigNumberify(10),
-        chains: [chain],
-        label: '123',
-        tags: undefined,
+    const groups: BlockchainAccountGroupWithBalance[] = [{
+      type: 'group',
+      data: {
+        type: 'address',
+        address: '123',
       },
-      {
-        type: 'group',
-        data: {
-          type: 'xpub',
-          xpub: 'xpub123',
-          derivationPath: 'm',
-        },
-        nativeAsset: 'BTC',
-        chains: [chain],
-        expansion: 'accounts',
-        label: undefined,
-        tags: undefined,
-        amount: bigNumberify(10),
-        usdValue: bigNumberify(10),
+      usdValue: bigNumberify(10),
+      chains: [chain],
+      label: '123',
+      tags: undefined,
+    }, {
+      type: 'group',
+      data: {
+        type: 'xpub',
+        xpub: 'xpub123',
+        derivationPath: 'm',
       },
-      {
-        type: 'group',
-        data: {
-          type: 'xpub',
-          xpub: 'xpub1234',
-          derivationPath: undefined,
-        },
-        amount: Zero,
-        usdValue: Zero,
-        nativeAsset: 'BTC',
-        chains: [chain],
-        label: '123',
-        tags: ['a'],
+      nativeAsset: 'BTC',
+      chains: [chain],
+      expansion: 'accounts',
+      label: undefined,
+      tags: undefined,
+      amount: bigNumberify(10),
+      usdValue: bigNumberify(10),
+    }, {
+      type: 'group',
+      data: {
+        type: 'xpub',
+        xpub: 'xpub1234',
+        derivationPath: undefined,
       },
-    ];
+      amount: Zero,
+      usdValue: Zero,
+      nativeAsset: 'BTC',
+      chains: [chain],
+      label: '123',
+      tags: ['a'],
+    }];
 
     expect(knownGroups.data).toEqual(groups);
   });
 
   it('aggregatedBalances, make sure `isCurrentCurrency` do not break the calculation', () => {
-    const { exchangeBalances } = storeToRefs(useExchangeBalancesStore());
-    const { connectedExchanges } = storeToRefs(useExchangesStore());
-    set(connectedExchanges, [
-      {
-        location: 'kraken',
-        name: 'Bitrex Acc',
-      },
-    ]);
+    const { exchangeBalances } = storeToRefs(useBalancesStore());
+    const { connectedExchanges } = storeToRefs(useSessionSettingsStore());
+
+    set(connectedExchanges, [{
+      location: 'kraken',
+      name: 'Bitrex Acc',
+    }]);
 
     set(exchangeBalances, {
       kraken: {
@@ -353,43 +331,47 @@ describe('store::balances/aggregated', () => {
 
     set(prices, {
       DAI: {
+        oracle: 'coingecko',
         value: bigNumberify(1),
         isManualPrice: false,
       },
       EUR: {
+        oracle: 'coingecko',
         value: bigNumberify(1),
         isManualPrice: false,
       },
       SAI: {
+        oracle: 'coingecko',
         value: bigNumberify(1),
         isManualPrice: false,
       },
       ETH: {
+        oracle: 'coingecko',
         value: bigNumberify(3000),
         isManualPrice: false,
       },
       BTC: {
+        oracle: 'coingecko',
         value: bigNumberify(40000),
         isManualPrice: false,
       },
     });
 
-    const { manualBalancesData } = storeToRefs(useManualBalancesStore());
-    set(manualBalancesData, [
-      {
-        identifier: 1,
-        usdValue: bigNumberify(50),
-        amount: bigNumberify(50),
-        asset: 'DAI',
-        label: '123',
-        tags: [],
-        location: TRADE_LOCATION_BANKS,
-        balanceType: BalanceType.ASSET,
-      },
-    ]);
+    const { manualBalances } = storeToRefs(useBalancesStore());
+
+    set(manualBalances, [{
+      identifier: 1,
+      usdValue: bigNumberify(50),
+      amount: bigNumberify(50),
+      asset: 'DAI',
+      label: '123',
+      tags: [],
+      location: TRADE_LOCATION_BANKS,
+      balanceType: BalanceType.ASSET,
+    }]);
 
     const { balances } = useAggregatedBalances();
-    const { balances: allBalances } = storeToRefs(useBlockchainStore());
+    const { balances: allBalances } = storeToRefs(useBalancesStore());
 
     set(allBalances, {
       [Blockchain.ETH]: {
@@ -416,43 +398,36 @@ describe('store::balances/aggregated', () => {
         },
       },
     });
+
     adjustPrices(get(prices));
+
     const actualResult = sortBy(get(balances()), ['asset']);
-    const expectedResult = sortBy(
-      [
-        {
-          asset: 'EUR',
-          amount: bigNumberify(50),
-          usdValue: bigNumberify(50),
-          usdPrice: bigNumberify(1),
-        },
-        {
-          asset: 'DAI',
-          amount: bigNumberify(200),
-          usdValue: bigNumberify(200),
-          usdPrice: bigNumberify(1),
-        },
-        {
-          asset: 'BTC',
-          amount: bigNumberify(150),
-          usdValue: bigNumberify(6000000),
-          usdPrice: bigNumberify(40000),
-        },
-        {
-          asset: 'ETH',
-          amount: bigNumberify(150),
-          usdValue: bigNumberify(450000),
-          usdPrice: bigNumberify(3000),
-        },
-        {
-          asset: 'SAI',
-          amount: bigNumberify(100),
-          usdValue: bigNumberify(100),
-          usdPrice: bigNumberify(1),
-        },
-      ] as AssetBalanceWithPrice[],
-      ['asset'],
-    );
+    const expectedResult = sortBy([{
+      asset: 'EUR',
+      amount: bigNumberify(50),
+      usdValue: bigNumberify(50),
+      usdPrice: bigNumberify(1),
+    }, {
+      asset: 'DAI',
+      amount: bigNumberify(200),
+      usdValue: bigNumberify(200),
+      usdPrice: bigNumberify(1),
+    }, {
+      asset: 'BTC',
+      amount: bigNumberify(150),
+      usdValue: bigNumberify(6000000),
+      usdPrice: bigNumberify(40000),
+    }, {
+      asset: 'ETH',
+      amount: bigNumberify(150),
+      usdValue: bigNumberify(450000),
+      usdPrice: bigNumberify(3000),
+    }, {
+      asset: 'SAI',
+      amount: bigNumberify(100),
+      usdValue: bigNumberify(100),
+      usdPrice: bigNumberify(1),
+    }] as AssetBalanceWithPrice[], ['asset']);
 
     expect(actualResult).toMatchObject(expectedResult);
   });

@@ -41,6 +41,10 @@
       "loading": "Please wait while rotki queries the blockchain..."
     },
     "detect_tokens": {
+      "confirmation": {
+        "message": "Are you sure you want to redetect tokens for all chains? It might take some time.",
+        "title": "Re-detect tokens for all chains"
+      },
       "selection": {
         "redetect": "Re-detect",
         "redetect_selected": " Re-detect {length} selected chain(s)",
@@ -447,6 +451,15 @@
       }
     },
     "defi": {
+      "airdrops": {
+        "error": {
+          "description": "Failed to retrieve airdrops: {error}",
+          "title": "Airdrops"
+        },
+        "task": {
+          "title": "Querying airdrops"
+        }
+      },
       "liquity": {
         "task": {
           "title": "Querying Liquity Balances"
@@ -687,6 +700,21 @@
         }
       }
     },
+    "repulling_transaction": {
+      "error": {
+        "description": "Failed to re-pull transactions for {address} ({chain}).",
+        "no_address_or_chain_transaction": "Failed to re-pull transactions"
+      },
+      "success": {
+        "description": "{length} transactions re-pulled",
+        "no_tx_description": "No transactions re-pulled"
+      },
+      "task": {
+        "description": "Re-pulling transactions for {address} ({chain}) from {from} to {to}.",
+        "no_address_or_chain_transaction": "Re-pulling transactions from {from} to {to}",
+        "title": "Re-pulling transactions"
+      }
+    },
     "session": {
       "add_queriable_address": {
         "error": {
@@ -802,16 +830,6 @@
           "message": "Failed: {message}",
           "title": "Retrieving net value data"
         }
-      }
-    },
-    "trades": {
-      "error": {
-        "description": "Failed query for {exchange}: {error}",
-        "title": "Trades for {exchange}"
-      },
-      "task": {
-        "description": "Retrieving trades for {exchange}",
-        "title": "Trades"
       }
     },
     "transactions": {
@@ -1030,6 +1048,7 @@
       "add_mapping": "Add Mapping",
       "add_title": "Add a new mapping",
       "all_exchanges": "All exchanges",
+      "asset_symbol": "Asset symbol",
       "confirm_delete": {
         "message": "Are you sure you want to delete the asset mapping for the symbol {asset} in {location}?",
         "title": "Delete Exchange Asset Mapping"
@@ -1045,14 +1064,25 @@
         "location_non_empty": "The location field cannot be empty",
         "location_symbol_non_empty": "The asset symbol field cannot be empty"
       },
-      "location_symbol": "Asset symbol",
+      "location_symbol": "Asset symbol in the exchange",
       "recognized_as": "Recognized as",
-      "save_for_all": "Save this mapping for all exchange",
+      "save_for_all": "Save this mapping for all exchanges",
       "subtitle": "You can link asset symbols on a centralized exchange with assets recognized by rotki. This is necessary for rotki to process assets on the exchanges."
     },
     "confirm_delete": {
       "message": "Are you sure you want to delete {asset} from the asset database?",
       "title": "Delete asset"
+    },
+    "counterparty_mapping": {
+      "confirm_delete": {
+        "title": "Delete Counterparty Asset Mapping"
+      },
+      "counterparty_symbol": "Asset symbol in the counterparty",
+      "filter_by_counterparty": "Filter by counterparty",
+      "form": {
+        "counterparty_non_empty": "The counterparty field cannot be empty"
+      },
+      "subtitle": "You can link asset symbols on a counterparty with assets recognized by rotki. This is necessary for rotki to process assets on certain counterparty."
     },
     "delete_error": "Could not delete {address}: {message}",
     "edit_error": "Could not edit asset: {message}",
@@ -1186,6 +1216,7 @@
     },
     "ignore": "Ignore Asset",
     "multi_chain_assets": "Multi Chain Assets",
+    "refresh_price": "Refresh price",
     "value": "Value"
   },
   "back_button": {
@@ -1498,53 +1529,6 @@
       "password_mismatch": "The password confirmation does not match the provided password"
     }
   },
-  "closed_trades": {
-    "confirmation": {
-      "message": "Are you sure you want to delete the following trade: {action} of {amount} {pair}",
-      "multiple_message": "Are you sure you want to delete these {length} trades?",
-      "title": "Delete Trade"
-    },
-    "delete_tooltip": "Delete trade",
-    "description": {
-      "for": "for",
-      "with": "with"
-    },
-    "details": {
-      "link": "Link",
-      "title": "Trade Details"
-    },
-    "dialog": {
-      "add": {
-        "title": "Add an external trade"
-      },
-      "edit": {
-        "subtitle": "Edit an existing trade",
-        "title": "Edit External Trade"
-      }
-    },
-    "edit_tooltip": "Edit trade",
-    "filter": {
-      "base_asset": "filter by the base asset of the trade",
-      "date_hint": "format {format} HH:mm:ss (time/seconds are optional)",
-      "end_date": "filter by the end date of the trade period",
-      "location": "filter by the trade location",
-      "quote_asset": "filter by the quote asset of the trade",
-      "start_date": "filter by the start date of the trade period",
-      "trade_type": "filter by the trade action (buy or sell)"
-    },
-    "headers": {
-      "action": "Action",
-      "base": "Base",
-      "quote": "Quote",
-      "quote_amount": "Quote Amount",
-      "rate": "Rate"
-    },
-    "hide_ignored_trades": "Hide ignored trades",
-    "label": "trades",
-    "refresh_tooltip": "Refresh trades",
-    "selected": "{count} trade(s) selected",
-    "title": "Exchange Trades"
-  },
   "collapsed_pending_tasks": {
     "cancel_task": "Cancel task",
     "cancel_task_info": "This action will leave the running process ({title}) in an unfinished state, are you sure you want to cancel?",
@@ -1593,7 +1577,6 @@
     "amount": "Amount",
     "asset": "Asset",
     "assets": "Assets",
-    "available_to_premium": "only available to premium users.",
     "balance": "Balance",
     "category": "Category",
     "chain": "Chains",
@@ -1620,7 +1603,6 @@
     "multi_chain": "Multi Chain",
     "name": "Name",
     "never": "Never",
-    "no_premium": "No premium subscription detected. ",
     "notes": "Notes",
     "of": "of",
     "optional": "Optional",
@@ -1643,8 +1625,6 @@
     "unknown": "Unknown",
     "validator_index": "Validator Index",
     "value_in_symbol": "{symbol} Value",
-    "visit_website": "To get a premium subscription please visit our {0}.",
-    "website": "website",
     "xpub": "XPUB"
   },
   "conflict_dialog": {
@@ -1679,6 +1659,7 @@
     "default": "Connect to default",
     "message": "A connection to the rotki backend was not possible, would you like to retry again?",
     "retry": "Retry",
+    "retry_with_debug": "Retry with debug",
     "title": "Connection failure"
   },
   "connection_loading": {
@@ -2117,7 +2098,7 @@
     }
   },
   "eth2_page": {
-    "no_premium": "ETH Staking statistic is",
+    "no_premium": "The ETH staking statistic page is not included in the FREE version",
     "setting": {
       "refresh_validator_daily_stats_on_load": {
         "hint": "Disable this setting to avoid getting rate limited. rotki will only show cached data.",
@@ -2385,64 +2366,6 @@
       "title": "The Graph"
     }
   },
-  "external_trade_form": {
-    "amount": {
-      "hint": "Amount bought/sold"
-    },
-    "base_asset": {
-      "hint": "The base asset of the trade",
-      "label": "Base Asset"
-    },
-    "buy_quote": "With",
-    "date": {
-      "hint": "Time the trade took place"
-    },
-    "fee": {
-      "hint": "[Optional] Fee if any of the trade that occurred"
-    },
-    "fee_currency": {
-      "hint": "[Optional] The currency used for the fee",
-      "label": "Fee Currency"
-    },
-    "link": {
-      "hint": "[Optional] A link to the trade. e.g. in an explorer",
-      "label": "Link"
-    },
-    "notes": {
-      "hint": "[Optional] Additional notes to store for the trade",
-      "label": "Additional notes"
-    },
-    "quote_amount": {
-      "label": "Quote amount bought/sold"
-    },
-    "quote_asset": {
-      "hint": "The quote asset of the trade",
-      "label": "Quote Asset"
-    },
-    "rate": {
-      "label": "Rate of the trade"
-    },
-    "rate_not_found": "We could not find a rate for the specified pair.",
-    "sell_quote": "For",
-    "summary": {
-      "buy": "{label}: Buy {amount} {base} with {quote} for {rate} {quote} per {base}",
-      "label": "Summary",
-      "sell": "{label}: Sell {amount} {base} for {quote} for {rate} {quote} per {base}"
-    },
-    "trade_type": {
-      "buy": "Buy",
-      "label": "Trade type",
-      "sell": "Sell"
-    },
-    "validation": {
-      "non_empty_amount": "The amount cannot be empty",
-      "non_empty_base": "The base asset cannot be empty",
-      "non_empty_fee": "The fee cannot be empty when fee currency is inputted",
-      "non_empty_fee_currency": "The fee currency cannot be empty when fee is inputted",
-      "non_empty_quote": "The quote asset cannot be empty",
-      "non_empty_rate": "The rate cannot be empty"
-    }
-  },
   "file_upload": {
     "click_to_upload": "Click to upload",
     "date_input_format": {
@@ -2500,6 +2423,13 @@
         "error": "Error setting query period",
         "invalid_period": "Period must be between {start} and {end}",
         "non_empty": "Please enter the number of seconds"
+      }
+    },
+    "persist_table_sorting": {
+      "subtitle": "Save your sorting preferences so they're still there when you come back to the page.",
+      "title": "Keep table sorting",
+      "validation": {
+        "error": "Error setting table sorting persistence: {message}"
       }
     },
     "refresh_balance": {
@@ -2849,6 +2779,10 @@
     "hint_zero": "All the assets without price will be hidden",
     "lt": "<"
   },
+  "history_events_list_swap": {
+    "fee_description": "{notes} with fee {feeAmount} {feeAsset}",
+    "swap_description": "Swap {spendAmount} {spendAsset} for {receiveAmount} {receiveAsset}"
+  },
   "ignore": {
     "confirm": {
       "message": "Are you sure you want to ignore {asset}?\n\nIgnoring {asset} will prevent rotki from displaying any balances across all locations and will hide all events related to it.",
@@ -3052,7 +2986,7 @@
     "title": "Earned Per Asset"
   },
   "liquity_page": {
-    "no_premium": "Liquity Staking"
+    "no_premium": "The Liquity staking statistic page is not included in the FREE version"
   },
   "liquity_pools": {
     "liquidation_gains": "Unclaimed liquidation gains",
@@ -3103,6 +3037,7 @@
   "login": {
     "button_create_account": "Create account",
     "button_no_account": "Don’t have an account?",
+    "button_refresh_profiles": "Refresh Profiles",
     "credential_error": {
       "description": "If you have not yet created an app account, you will need to do so in order to unlock your account.",
       "support": "If you need assistance, please contact us in our support channel on discord.",
@@ -3138,7 +3073,8 @@
       "title": "Data Migration",
       "warning": "Data migration {currentVersion} is running. Please don't close the app until it's finished."
     },
-    "no_profiles_found": "No profiles were found on this machine. {create_account} ",
+    "no_profiles_found": "No profiles were found on this machine.",
+    "no_profiles_found_action": "{refresh_profiles} or {create_account} ",
     "remember_password": "Remember Password",
     "remember_password_tooltip": "The password will be saved on password management tool on your local machine (e.g. Keychain in MacOS)",
     "remember_username": "Remember Profile Name",
@@ -3332,19 +3268,16 @@
       "airdrops": "Airdrops"
     },
     "history": "History",
-    "history_sub": {
-      "history_events": "History Events",
-      "trades": "Exch. Trades"
-    },
     "import_data": "Import Data",
     "locations": "Locations",
     "manage_address_book": "Manage Address Book",
     "manage_assets": "Manage Assets",
     "manage_assets_sub": {
       "assets": "Assets",
-      "cex_mapping": "Manage CEX Mapping",
+      "cex_mapping": "CEX Mappings",
+      "counterparty_mapping": "Counterparty Mappings",
       "custom_assets": "Custom Assets",
-      "missing_mappings": "Manage Missing Mappings",
+      "missing_mappings": "Missing CEX Mappings",
       "more": "More",
       "newly_detected": "Newly Detected Tokens"
     },
@@ -3354,6 +3287,10 @@
       "latest_prices": "Latest Prices"
     },
     "nfts": "NFTs Gallery",
+    "onchain": "Onchain",
+    "onchain_sub": {
+      "send": "Send"
+    },
     "profit_loss_report": "Profit and Loss Report",
     "settings": "Settings",
     "settings_sub": {
@@ -3372,7 +3309,8 @@
       "graphs": "Graphs",
       "history_events": "Events Analysis"
     },
-    "tag_manager": "Tag Manager"
+    "tag_manager": "Tag Manager",
+    "wallet_bridge": "Wallet Bridge"
   },
   "net_worth_chart": {
     "current_balance": "Current balance"
@@ -3404,11 +3342,6 @@
       "collection": "Collection"
     },
     "upgrade": "Displaying {limit} NFTs. To view more please upgrade to {link}"
-  },
-  "no_premium_placeholder": {
-    "get_premium": "@:common.visit_website",
-    "no_premium": "@:common.no_premium",
-    "premium_only": " {text} @:common.available_to_premium"
   },
   "no_task_running": {
     "description": "No Pending tasks"
@@ -3584,6 +3517,7 @@
     "to_asset": "To Asset"
   },
   "oracles": {
+    "manual_current": "Custom price",
     "uniswap_v2": "Uniswap V2",
     "uniswap_v3": "Uniswap V3"
   },
@@ -3732,6 +3666,20 @@
         },
         "title": "There is a mismatch between the amount of asset in the last event and the amount in the current balance."
       },
+      "failed_daily_prices": {
+        "dialog_title": "Some prices were not retrieved for the asset: {name}",
+        "missing_prices": {
+          "description": "We cannot find prices for {length} dates. You can add manual historical prices.",
+          "end": "You need to click \"Fetch Prices\" again to apply saved manual historical prices.",
+          "title": "Missing prices"
+        },
+        "rate_limited": {
+          "description": "Prices query for {length} dates were rate-limited. You can try to fetch the prices again by clicking the \"Fetch Prices\" button outside.",
+          "title": "Prices rate-limited"
+        },
+        "see_detail": "See detail",
+        "title": "Some prices cannot be found or were rate-limited."
+      },
       "fallback_to_snapshot": "Use snapshot data instead",
       "fetch_prices": "Fetch prices",
       "fetch_prices_hint": "rotki will try to get the daily prices of the assets to fill the gap between events.",
@@ -3773,12 +3721,6 @@
       "text": "App theme",
       "text_hint": "Manage colors for the app theme",
       "title": "Theme"
-    },
-    "theme_switch": {
-      "auto": "Auto (Detect Device Theme)",
-      "dark": "Dark",
-      "light": "Light",
-      "tooltip": "Switch to {mode} mode"
     },
     "unsupported_app_version": {
       "minimum_supported": "The minimum supported version is v{v}",
@@ -4193,6 +4135,17 @@
     "refresh_tooltip": "Refresh {name} balances",
     "title": "{name} balances"
   },
+  "swap_event_form": {
+    "fee_notes": "Fee notes",
+    "receive_amount": "Receive Amount",
+    "receive_asset": "Receive Asset",
+    "receive_notes": "Receive notes",
+    "spend_amount": "Spend Amount",
+    "spend_asset": "Spend Asset",
+    "spend_notes": "Spend notes",
+    "unique_id": "Unique Identifier",
+    "unique_id_hint": "It is combined with the event location to create a unique event identifier"
+  },
   "sync_buttons": {
     "download_tooltip": "Pull the saved data from the server and replace your local database",
     "upload_tooltip": "Push your local database to the server and replace all data there"
@@ -4283,13 +4236,12 @@
   "task_manager": {
     "error": "An error occurred while processing task [{taskId}] '{title}': {error}"
   },
-  "theme_manager_lock": {
-    "description": "Theme customization is only available with a premium subscription",
-    "subtitle": "Manage colors for the app theme",
-    "title": "Theme"
-  },
-  "theme_switch_lock": {
-    "tooltip": "Switching to dark mode is only available under a premium subscription"
+  "theme_manager_lock": "The theme manager is not included in the FREE version",
+  "theme_switch": {
+    "auto": "Auto (Detect Device Theme)",
+    "dark": "Dark",
+    "light": "Light",
+    "tooltip": "Switch to {mode} mode"
   },
   "timeframe_settings": {
     "default_timeframe": "Dashboard graph default timeframe",
@@ -4297,8 +4249,70 @@
     "inactive_timeframes": "Inactive Timeframes",
     "visible_timeframes": "Visible Timeframes"
   },
-  "trade_history": {
-    "loading": "Please wait while your trades are getting loaded..."
+  "trade": {
+    "actions": {
+      "change_network": "Change Network",
+      "change_network_in_your_wallet": "Change network in your wallet!",
+      "connect_wallet": "Connect Wallet",
+      "disconnect": "Disconnect",
+      "open_wallet": "Open Wallet",
+      "send": "Send",
+      "track": "Track Address"
+    },
+    "amount": {
+      "insufficient": "Insufficient Funds",
+      "sending": "I'm sending"
+    },
+    "available_balances": "Available Balances",
+    "bridge": {
+      "connect_browser_wallet": "Open Browser Wallet Bridge",
+      "connecting": "Connecting...",
+      "connection_logs": "Connection Logs",
+      "disconnect_session": "Disconnect Session",
+      "hint": "In Electron App, choose \"Wallet Connect\" and then \"Copy link\"",
+      "label": "Paste the Pair URI here",
+      "start_pairing": "Start Pairing",
+      "subtitle": "Paste Wallet Connect Pair URI from Electron App:",
+      "title": "Browser Wallet Bridge"
+    },
+    "never_interacted": "You have never interacted with this address before.",
+    "recent_transactions": {
+      "no_data": "No recent transactions",
+      "title": "Transactions this session"
+    },
+    "recipient": {
+      "from_private_address_book": "Addresses from private address book",
+      "no_addresses_found": "No addresses found",
+      "select_recipient_address": "Select recipient address",
+      "tracked_addresses": "Tracked Addresses"
+    },
+    "select_asset": {
+      "balance": "Balance",
+      "max": "Max",
+      "no_assets_found": "No assets found",
+      "select_token": "Select a token",
+      "title": "Select Asset"
+    },
+    "to_address": {
+      "error": "Please input valid ETH address",
+      "label": "To address"
+    },
+    "waiting_for_confirmation": {
+      "not_wallet_connect": "Check your wallet to sign the transaction",
+      "wallet_connect": "Check your browser / wallet to sign the transaction"
+    },
+    "warning": {
+      "not_tracked": "This wallet address is not tracked in rotki, so you can't see your tokens.",
+      "query_on_progress": "The balance query is still in progress, you may not see all of your tokens yet."
+    }
+  },
+  "trade_history_view": {
+    "labels": {
+      "all": "All",
+      "completed": "Completed",
+      "failed": "Failed",
+      "pending": "Pending"
+    }
   },
   "transactions": {
     "actions": {
@@ -4355,11 +4369,13 @@
         }
       },
       "export": {
-        "confirmation_message": "Are you sure you want to export this document with the selected filters applied?"
+        "confirmation_message": "Are you sure you want to export the list of events with the selected filters applied?"
       },
       "form": {
+        "account_address": {
+          "label": "Account Address"
+        },
         "address": {
-          "label": "Address",
           "validation": {
             "valid": "The address is invalid, fill it with valid address"
           }
@@ -4384,6 +4400,9 @@
           "validation": {
             "non_empty": "The block number field cannot be empty."
           }
+        },
+        "contract_address": {
+          "label": "Contract Address"
         },
         "counterparty": {
           "validation": {
@@ -4478,6 +4497,9 @@
             "valid": "The tx hash is invalid, fill it with valid tx hash"
           }
         },
+        "unique_id": {
+          "label": "Unique Id"
+        },
         "validator_index": {
           "label": "Validator Index",
           "validation": {
@@ -4501,7 +4523,8 @@
         "eth_withdrawal_event": "Withdrawal for validator {validatorIndex}",
         "event_identifier": "Event information",
         "evm_event": "Transaction {txHash}",
-        "history_event": "{location} event"
+        "history_event": "{location} event",
+        "swap_event": "Swap on {location}"
       },
       "loading": "Loading events...",
       "no_data": "Events are hidden because they contain ignored assets",
@@ -4528,9 +4551,11 @@
         }
       },
       "view": {
+        "compact_view": "Compact view",
         "hide": "Hide events",
         "load_more": "Load more events ({length})",
-        "show": "Show events ({length})"
+        "show": "Show events ({length})",
+        "view_detail": "View events details"
       }
     },
     "events_decoding": {
@@ -4634,6 +4659,11 @@
       "title": "History Events Query Status"
     },
     "refresh_tooltip": "Fetch latest events",
+    "repulling": {
+      "action": "Re-Pull Transaction",
+      "address_hint": "Leave it empty to re-pull transactions from all addresses",
+      "title": "Re-Pulling Transactions"
+    },
     "title": "History Events",
     "unignore": "Unignore events in Accounting"
   },

@@ -233,6 +233,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+          workspaces: colibri
 
       - run: cargo check --workspace && cargo clippy --workspace
         working-directory: ./colibri
@@ -271,7 +272,7 @@ jobs:
       - name: Set up uv
         run: |
           pip install --upgrade pip
-          pip install --no-cache uv
+          pip install --no-cache uv=="${UV_VERSION}"
 
       - name: Install dependencies
         run: |

@@ -3,18 +3,14 @@ import random
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 from unittest.mock import _patch, patch
-from urllib.parse import urlencode
 
 import pytest
 import requests
 
-from rotkehlchen.constants import ONE
-from rotkehlchen.constants.assets import A_BTC, A_ETH, A_EUR
-from rotkehlchen.constants.limits import FREE_TRADES_LIMIT
+from rotkehlchen.constants.assets import A_BTC, A_ETH
 from rotkehlchen.db.constants import KRAKEN_ACCOUNT_TYPE_KEY
-from rotkehlchen.db.filtering import HistoryEventFilterQuery, TradesFilterQuery
+from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import HISTORY_BASE_ENTRY_FIELDS, DBHistoryEvents
-from rotkehlchen.db.settings import ModifiableDBSettings
 from rotkehlchen.exchanges.bitfinex import API_KEY_ERROR_MESSAGE as BITFINEX_API_KEY_ERROR_MESSAGE
 from rotkehlchen.exchanges.bitstamp import (
     API_KEY_ERROR_CODE_ACTION as BITSTAMP_API_KEY_ERROR_CODE_ACTION,
@@ -24,7 +20,6 @@ from rotkehlchen.exchanges.constants import (
     EXCHANGES_WITHOUT_API_SECRET,
     SUPPORTED_EXCHANGES,
 )
-from rotkehlchen.exchanges.data_structures import Trade
 from rotkehlchen.exchanges.kraken import DEFAULT_KRAKEN_ACCOUNT_TYPE, KrakenAccountType
 from rotkehlchen.exchanges.kucoin import API_KEY_ERROR_CODE_ACTION as KUCOIN_API_KEY_ERROR_CODE
 from rotkehlchen.fval import FVal
@@ -36,12 +31,10 @@ from rotkehlchen.history.events.structures.types import HistoryEventSubType, His
 from rotkehlchen.tests.utils.api import (
     api_url_for,
     assert_error_response,
-    assert_ok_async_response,
     assert_proper_response,
     assert_proper_response_with_result,
     assert_proper_sync_response_with_result,
     assert_simple_ok_response,
-    wait_for_async_task,
 )
 from rotkehlchen.tests.utils.exchanges import (
     assert_binance_balances_result,
@@ -51,26 +44,15 @@ from rotkehlchen.tests.utils.exchanges import (
     try_get_first_exchange,
 )
 from rotkehlchen.tests.utils.factories import make_random_uppercasenumeric_string
-from rotkehlchen.tests.utils.history import (
-    assert_binance_trades_result,
-    assert_poloniex_trades_result,
-    mock_history_processing_and_exchanges,
-)
 from rotkehlchen.tests.utils.kraken import MockKraken
 from rotkehlchen.tests.utils.mock import MockResponse
 from rotkehlchen.types import (
-    AssetAmount,
-    Fee,
     Location,
-    Price,
     Timestamp,
     TimestampMS,
-    TradeType,
 )
 
 if TYPE_CHECKING:
-    from requests import Response
-
     from rotkehlchen.api.server import APIServer
 
 
@@ -637,124 +619,12 @@ def test_exchange_query_balances_errors(
 
 
 @pytest.mark.parametrize('number_of_eth_accounts', [0])
-@pytest.mark.parametrize('added_exchanges', [(Location.BINANCE, Location.POLONIEX)])
-def test_exchange_query_trades(rotkehlchen_api_server_with_exchanges: 'APIServer') -> None:
-    """Test that using the exchange trades query endpoint works fine"""
-    async_query = random.choice([False, True])
-    server = rotkehlchen_api_server_with_exchanges
-    setup = mock_history_processing_and_exchanges(server.rest_api.rotkehlchen)
-    # query trades of one specific exchange
-    with setup.binance_patch:
-        response = requests.get(
-            api_url_for(
-                server,
-                'tradesresource',
-            ), json={'location': 'binance', 'async_query': async_query},
-        )
-        if async_query:
-            task_id = assert_ok_async_response(response)
-            outcome = wait_for_async_task(rotkehlchen_api_server_with_exchanges, task_id)
-            result = outcome['result']
-        else:
-            result = assert_proper_sync_response_with_result(response)
-    assert result['entries_found'] > 0
-    assert result['entries_limit'] == FREE_TRADES_LIMIT
-    assert_binance_trades_result([x['entry'] for x in result['entries']])
-
-    # query trades of all exchanges
-    with setup.binance_patch, setup.polo_patch:
-        response = requests.get(
-            api_url_for(server, 'tradesresource'),
-            json={'async_query': async_query},
-        )
-        if async_query:
-            task_id = assert_ok_async_response(response)
-            outcome = wait_for_async_task(rotkehlchen_api_server_with_exchanges, task_id)
-            result = outcome['result']
-        else:
-            result = assert_proper_sync_response_with_result(response)
-
-    trades = result['entries']
-    assert_binance_trades_result([x['entry'] for x in trades if x['entry']['location'] == 'binance'])  # noqa: E501
-    assert_poloniex_trades_result([x['entry'] for x in trades if x['entry']['location'] == 'poloniex'])  # noqa: E501
-
-    def assert_okay(response: 'Response') -> None:
-        """Helper function for DRY checking below assertions"""
-        if async_query:
-            task_id = assert_ok_async_response(response)
-            outcome = wait_for_async_task(rotkehlchen_api_server_with_exchanges, task_id)
-            result = outcome['result']
-        else:
-            result = assert_proper_sync_response_with_result(response)
-        trades = result['entries']
-        assert_binance_trades_result([x['entry'] for x in trades if x['entry']['location'] == 'binance'])  # noqa: E501
-        assert_poloniex_trades_result(
-            trades=[x['entry'] for x in trades if x['entry']['location'] == 'poloniex'],
-            trades_to_check=(2,),
-        )
-
-    # and now query them in a specific time range excluding two of poloniex's trades
-    data = {'from_timestamp': 1499865548, 'to_timestamp': 1539713118, 'async_query': async_query}
-    with setup.binance_patch, setup.polo_patch:
-        response = requests.get(api_url_for(server, 'tradesresource'), json=data)
-        assert_okay(response)
-    # do the same but with query args. This serves as test of from/to timestamp with query args
-    with setup.binance_patch, setup.polo_patch:
-        response = requests.get(
-            api_url_for(server, 'tradesresource') + '?' + urlencode(data))
-        assert_okay(response)
-
-    # check that for poloniex we have information
-    with setup.binance_patch, setup.polo_patch:
-        response = requests.get(
-            url=api_url_for(server, 'tradesresource'),
-            json={'location': 'poloniex'},
-        )
-
-    result = assert_proper_sync_response_with_result(response)
-    assert len(result['entries']) != 0
-
-    # exclude poloniex as location and delete the trades from there
-    db = server.rest_api.rotkehlchen.data.db
-    poloniex_exchange = server.rest_api.rotkehlchen.exchange_manager.connected_exchanges[Location.POLONIEX][0]  # noqa: E501
-    with db.user_write() as cursor:
-        db.set_settings(cursor, ModifiableDBSettings(
-            non_syncing_exchanges=[poloniex_exchange.location_id()],
-        ))
-        # delete poloniex information to verify that when querying the location no new
-        # trades are queried
-        db.purge_exchange_data(cursor, Location.POLONIEX)
-
-    # query the API and check that information is not queried again
-    with setup.binance_patch, setup.polo_patch:
-        response = requests.get(
-            url=api_url_for(server, 'tradesresource'),
-            json={'location': 'poloniex'},
-        )
-    result = assert_proper_sync_response_with_result(response)
-    assert len(result['entries']) == 0
-
-
-@pytest.mark.parametrize('number_of_eth_accounts', [0])
 def test_delete_external_exchange_data_works(
         rotkehlchen_api_server_with_exchanges: 'APIServer',
 ) -> None:
     server = rotkehlchen_api_server_with_exchanges
     rotki = server.rest_api.rotkehlchen
 
-    trades = [Trade(
-        timestamp=Timestamp(0),
-        location=x,
-        base_asset=A_ETH,
-        quote_asset=A_EUR,
-        trade_type=TradeType.BUY,
-        amount=AssetAmount(ONE),
-        rate=Price(ONE),
-        fee=Fee(ONE),
-        fee_currency=A_EUR,
-        link='',
-        notes='',
-    ) for x in (Location.CRYPTOCOM, Location.KRAKEN)]
     events = [AssetMovement(
         location=x,
         event_type=HistoryEventType.DEPOSIT,
@@ -764,10 +634,8 @@ def test_delete_external_exchange_data_works(
     ) for x in (Location.CRYPTOCOM, Location.KRAKEN)]
     history_db = DBHistoryEvents(rotki.data.db)
     with rotki.data.db.user_write() as write_cursor:
-        rotki.data.db.add_trades(write_cursor, trades)
         history_db.add_history_events(write_cursor=write_cursor, history=events)
 
-        assert len(rotki.data.db.get_trades(cursor=write_cursor, filter_query=TradesFilterQuery.make(), has_premium=True)) == 2  # noqa: E501
         assert len(history_db.get_history_events(
             cursor=write_cursor,
             filter_query=HistoryEventFilterQuery.make(),
@@ -783,7 +651,6 @@ def test_delete_external_exchange_data_works(
     result = assert_proper_sync_response_with_result(response)  # check no validation error happens
     assert result is True
     with rotki.data.db.conn.read_ctx() as cursor:
-        assert len(rotki.data.db.get_trades(cursor, filter_query=TradesFilterQuery.make(), has_premium=True)) == 1  # noqa: E501
         assert len(history_db.get_history_events(
             cursor=cursor,
             filter_query=HistoryEventFilterQuery.make(),
@@ -823,12 +690,10 @@ def test_edit_exchange_account(rotkehlchen_api_server_with_exchanges: 'APIServer
     # add some exchanges ranges
     start_ts, end_ts = Timestamp(0), Timestamp(9999)
     with db.user_write() as cursor:
-        db.update_used_query_range(cursor, name=f'{Location.KRAKEN!s}_trades_mockkraken', start_ts=start_ts, end_ts=end_ts)  # noqa: E501
         db.update_used_query_range(cursor, name=f'{Location.KRAKEN!s}_margins_mockkraken', start_ts=start_ts, end_ts=end_ts)  # noqa: E501
         db.update_used_query_range(cursor, name=f'{Location.KRAKEN!s}_history_events_mockkraken', start_ts=start_ts, end_ts=end_ts)  # noqa: E501
         db.update_used_query_range(cursor, name=f'{Location.KRAKEN!s}_margins_kraken_boi', start_ts=start_ts, end_ts=end_ts)  # noqa: E501
         db.update_used_query_range(cursor, name=f'{Location.KRAKEN!s}_history_events_kraken_boi', start_ts=start_ts, end_ts=end_ts)  # noqa: E501
-        db.update_used_query_range(cursor, name=f'{Location.POLONIEX!s}_trades_poloniex', start_ts=start_ts, end_ts=end_ts)  # noqa: E501
         db.update_used_query_range(cursor, name=f'{Location.POLONIEX!s}_margins_poloniex', start_ts=start_ts, end_ts=end_ts)  # noqa: E501
         db.update_used_query_range(cursor, name=f'{Location.POLONIEX!s}_history_events_poloniex', start_ts=start_ts, end_ts=end_ts)  # noqa: E501
         db.update_used_query_range(cursor, name='uniswap_trades', start_ts=start_ts, end_ts=end_ts)
@@ -850,13 +715,10 @@ def test_edit_exchange_account(rotkehlchen_api_server_with_exchanges: 'APIServer
     # check that queryranges were successfully updated and the others were unmodified
     expected_ranges_tuple = (start_ts, end_ts)
     with db.conn.read_ctx() as cursor:
-        assert db.get_used_query_range(cursor, 'kraken_trades_mockkraken') is None
         assert db.get_used_query_range(cursor, 'kraken_margins_mockkraken') is None
         assert db.get_used_query_range(cursor, 'kraken_history_events_mockkraken') is None
-        assert db.get_used_query_range(cursor, 'kraken_trades_my_kraken') == expected_ranges_tuple
         assert db.get_used_query_range(cursor, 'kraken_margins_my_kraken') == expected_ranges_tuple
         assert db.get_used_query_range(cursor, 'kraken_history_events_my_kraken') == expected_ranges_tuple  # noqa: E501
-        assert db.get_used_query_range(cursor, 'poloniex_trades_poloniex') == expected_ranges_tuple
         assert db.get_used_query_range(cursor, 'poloniex_margins_poloniex') == expected_ranges_tuple  # noqa: E501
         assert db.get_used_query_range(cursor, 'poloniex_history_events_poloniex') == expected_ranges_tuple  # noqa: E501
 
@@ -867,7 +729,6 @@ def test_edit_exchange_account(rotkehlchen_api_server_with_exchanges: 'APIServer
         poloniex = try_get_first_exchange(rotki.exchange_manager, Location.POLONIEX)
         assert poloniex is not None
         assert poloniex.name == 'my_poloniex'
-        assert db.get_used_query_range(cursor, 'poloniex_trades_my_poloniex') == expected_ranges_tuple  # noqa: E501
         assert db.get_used_query_range(cursor, 'poloniex_margins_my_poloniex') == expected_ranges_tuple  # noqa: E501
         assert db.get_used_query_range(cursor, 'poloniex_history_events_my_poloniex') == expected_ranges_tuple  # noqa: E501
         assert db.get_used_query_range(cursor, 'poloniex_history_events_poloniex') is None

@@ -121,10 +121,25 @@ EVENT_CATEGORY_MAPPINGS = {  # possible combinations of types and subtypes mappe
     },
     HistoryEventType.MINT: {
         HistoryEventSubType.NFT: {DEFAULT: EventCategory.MINT_NFT},
+        HistoryEventSubType.FEE: {DEFAULT: EventCategory.FEE},
     },
     HistoryEventType.BURN: {
         HistoryEventSubType.NFT: {DEFAULT: EventCategory.BURN_NFT},
     },
+    HistoryEventType.MULTI_TRADE: {
+        HistoryEventSubType.SPEND: {DEFAULT: EventCategory.SWAP_OUT},
+        HistoryEventSubType.RECEIVE: {DEFAULT: EventCategory.SWAP_IN},
+        HistoryEventSubType.FEE: {DEFAULT: EventCategory.FEE},
+    },
+}
+
+EVENT_GROUPING_ORDER = {  # Determines how to group events when serializing for the api
+    HistoryEventType.TRADE: (spend_receive_fee := {
+        HistoryEventSubType.SPEND: 0,
+        HistoryEventSubType.RECEIVE: 1,
+        HistoryEventSubType.FEE: 2,
+    }),
+    HistoryEventType.MULTI_TRADE: spend_receive_fee,
 }
 
 # possible color values

@@ -1,5 +1,4 @@
 import logging
-from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -7,20 +6,17 @@ from rotkehlchen.constants import ZERO
 from rotkehlchen.db.filtering import (
     EvmTransactionsFilterQuery,
     HistoryEventFilterQuery,
-    TradesFilterQuery,
 )
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.errors.misc import RemoteError
-from rotkehlchen.exchanges.data_structures import Trade
-from rotkehlchen.exchanges.manager import SUPPORTED_EXCHANGES, ExchangeManager
+from rotkehlchen.exchanges.manager import ExchangeManager
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.base import HistoryBaseEntry, HistoryEvent
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.premium.premium import has_premium_check
-from rotkehlchen.tasks.manager import TaskManager
 from rotkehlchen.types import EVM_CHAINS_WITH_TRANSACTIONS, Location, Timestamp
 from rotkehlchen.user_messages import MessagesAggregator
-from rotkehlchen.utils.misc import timestamp_to_date
+from rotkehlchen.utils.misc import timestamp_to_date, ts_sec_to_ms
 
 if TYPE_CHECKING:
     from rotkehlchen.accounting.mixins.event import AccountingEventMixin
@@ -88,101 +84,11 @@ class HistoryQueryingManager:
         self.progress = FVal(step / total_steps) * 100
         return step
 
-    def _query_services_for_trades(self, filter_query: TradesFilterQuery) -> None:
-        """Queries all services requested for trades and writes them to the DB"""
-        location = filter_query.location
-        from_ts = filter_query.from_ts
-        to_ts = filter_query.to_ts
-        excluded_instances: dict[Location, set[str]] = defaultdict(set[str])
-
-        with self.db.conn.read_ctx() as cursor:
-            for exchange_id in self.db.get_settings(cursor).non_syncing_exchanges:
-                excluded_instances[exchange_id.location].add(exchange_id.name)
-
-        if location is not None:
-            self.query_location_latest_trades(
-                location=location,
-                excluded_instances=excluded_instances[location],
-                from_ts=from_ts,
-                to_ts=to_ts,
-            )
-
-            return
-
-        # else query all CEXes
-        for exchange in self.exchange_manager.iterate_exchanges():
-            exchange.query_trade_history(
-                start_ts=from_ts,
-                end_ts=to_ts,
-                only_cache=False,
-            )
-
-    def query_trades(
-            self,
-            filter_query: TradesFilterQuery,
-            only_cache: bool,
-    ) -> tuple[list[Trade], int]:
-        """Queries trades for the given location and time range.
-        If no location is given then all external, all exchange and DEX trades are queried.
-
-        If only_cache is given then only trades cached in the DB are returned.
-        No service is queried.
-
-        DEX Trades are queried only if the user has premium
-        If the user does not have premium then a trade limit is applied.
-
-        Returns all trades and the full amount of trades that got found for the filter.
-        May be less than returned trades if user is non premium.
-
-        May raise:
-        - RemoteError: If there are problems connecting to any of the remote exchanges
-        """
-        if only_cache is False:
-            self._query_services_for_trades(filter_query=filter_query)
-
-        has_premium = has_premium_check(self.chains_aggregator.premium)
-        with self.db.conn.read_ctx() as cursor:
-            trades, filter_total_found = self.db.get_trades_and_limit_info(
-                cursor=cursor,
-                filter_query=filter_query,
-                has_premium=has_premium,
-            )
-        return trades, filter_total_found
-
-    def query_location_latest_trades(
-            self,
-            location: Location,
-            excluded_instances: set[str],
-            from_ts: Timestamp,
-            to_ts: Timestamp,
-    ) -> None:
-        """Queries the service of a specific location for latest trades and saves them in the DB.
-        Services whose names are present in the excluded_instances set are not queried.
-        May raise:
-
-        - RemoteError if there is a problem with reaching the service
-        """
-        if location not in SUPPORTED_EXCHANGES:
-            return  # nothing to do
-
-        exchanges_list = self.exchange_manager.connected_exchanges.get(location)
-        if exchanges_list is None:
-            return
-
-        for exchange in exchanges_list:
-            if exchange.name not in excluded_instances:
-                exchange.query_trade_history(
-                    start_ts=from_ts,
-                    end_ts=to_ts,
-                    only_cache=False,
-                )
-
     def query_history_events(
             self,
             cursor: 'DBCursor',
             location: Literal[Location.KRAKEN, Location.BINANCE, Location.BINANCEUS],
             filter_query: HistoryEventFilterQuery,
-            task_manager: TaskManager | None,
             only_cache: bool,
     ) -> tuple[list[HistoryEvent], int]:
         """
@@ -194,19 +100,12 @@ class HistoryQueryingManager:
             exchange_names = []
             for exchange_instance in exchanges_list:
                 if location == Location.KRAKEN:
-                    with_errors = exchange_instance.query_kraken_ledgers(  # type: ignore
-                        cursor=cursor,
-                        start_ts=filter_query.from_ts,
-                        end_ts=filter_query.to_ts,
-                    )
-                else:
-                    with_errors = exchange_instance.query_lending_interests_history(  # type: ignore
-                        cursor=cursor,
-                        start_ts=filter_query.from_ts,
-                        end_ts=filter_query.to_ts,
-                    )
-
-                if with_errors:
+                    exchange_instance.query_history_events()
+                elif exchange_instance.query_lending_interests_history(  # type: ignore
+                    cursor=cursor,
+                    start_ts=filter_query.from_ts,
+                    end_ts=filter_query.to_ts,
+                ) is True:  # has errors
                     exchange_names.append(exchange_instance.name)
 
             if len(exchange_names) != 0:
@@ -276,14 +175,6 @@ class HistoryQueryingManager:
         # possible locations.
         self.processing_state_name = 'Reading trades, asset movements and margin positions from the DB'  # noqa: E501
         with self.db.conn.read_ctx() as cursor:
-            # Include all trades
-            trades = self.db.get_trades(
-                cursor,
-                filter_query=TradesFilterQuery.make(to_ts=end_ts),
-                has_premium=True,  # we need all trades for accounting -- limit happens later
-            )
-            history.extend(trades)
-
             # Include all margin positions
             margin_positions = self.db.get_margin_positions(cursor, to_ts=end_ts)
             history.extend(margin_positions)
@@ -357,10 +248,10 @@ class HistoryQueryingManager:
         history.extend(base_entries)
         self._increase_progress(step, total_steps)
 
-        history.sort(  # sort events first by timestamp and if history base by sequence index
+        history.sort(  # sort events first by timestamp (in milliseconds) and by sequence index if HistoryBaseEntry  # noqa: E501
             key=lambda x: (
-                x.get_timestamp(),
-                x.sequence_index if isinstance(x, HistoryBaseEntry) else 1,
+                (x.timestamp, x.sequence_index) if isinstance(x, HistoryBaseEntry)
+                else (ts_sec_to_ms(x.get_timestamp()), 1)
             ),
         )
         return empty_or_error, history

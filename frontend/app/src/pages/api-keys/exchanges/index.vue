@@ -8,12 +8,14 @@ import LocationDisplay from '@/components/history/LocationDisplay.vue';
 import TablePageLayout from '@/components/layout/TablePageLayout.vue';
 import ExchangeKeysFormDialog from '@/components/settings/api-keys/exchange/ExchangeKeysFormDialog.vue';
 import { useLocations } from '@/composables/locations';
+import { useExchanges } from '@/modules/balances/exchanges/use-exchanges';
+import { TableId, useRememberTableSorting } from '@/modules/table/use-remember-table-sorting';
 import { useConfirmStore } from '@/store/confirm';
-import { useExchangesStore } from '@/store/exchanges';
 import { useLocationStore } from '@/store/locations';
 import { useNotificationsStore } from '@/store/notifications';
 import { useSettingsStore } from '@/store/settings';
 import { useGeneralSettingsStore } from '@/store/settings/general';
+import { useSessionSettingsStore } from '@/store/settings/session';
 import { externalLinks } from '@shared/external-links';
 
 const nonSyncingExchanges = ref<Exchange[]>([]);
@@ -24,9 +26,8 @@ const sort = ref<DataTableSortColumn<Exchange>>({
 });
 
 const { exchangesWithKey } = storeToRefs(useLocationStore());
-const store = useExchangesStore();
-const { removeExchange } = store;
-const { connectedExchanges: rows } = storeToRefs(store);
+const { removeExchange } = useExchanges();
+const { connectedExchanges: rows } = storeToRefs(useSessionSettingsStore());
 const { nonSyncingExchanges: current } = storeToRefs(useGeneralSettingsStore());
 const { update } = useSettingsStore();
 const { show } = useConfirmStore();
@@ -36,29 +37,28 @@ const router = useRouter();
 const route = useRoute('/api-keys/exchanges/');
 const { exchangeName } = useLocations();
 
-const cols = computed<DataTableColumn<Exchange>[]>(() => [
-  {
-    align: 'center',
-    cellClass: 'py-0 w-32',
-    key: 'location',
-    label: t('common.location'),
-  },
-  {
-    key: 'name',
-    label: t('common.name'),
-  },
-  {
-    cellClass: 'w-32',
-    key: 'syncEnabled',
-    label: t('exchange_settings.header.sync_enabled'),
-  },
-  {
-    align: 'center',
-    cellClass: 'w-32',
-    key: 'actions',
-    label: t('common.actions_text'),
-  },
-]);
+const cols = computed<DataTableColumn<Exchange>[]>(() => [{
+  align: 'center',
+  cellClass: 'py-0 w-32',
+  key: 'location',
+  label: t('common.location'),
+  sortable: true,
+}, {
+  key: 'name',
+  label: t('common.name'),
+  sortable: true,
+}, {
+  cellClass: 'w-32',
+  key: 'syncEnabled',
+  label: t('exchange_settings.header.sync_enabled'),
+}, {
+  align: 'center',
+  cellClass: 'w-32',
+  key: 'actions',
+  label: t('common.actions_text'),
+}]);
+
+useRememberTableSorting<Exchange>(TableId.EXCHANGE, sort, cols);
 
 function createNewExchange(): ExchangeFormData {
   return {
@@ -202,12 +202,12 @@ onMounted(async () => {
       </div>
 
       <RuiDataTable
+        v-model:sort="sort"
         outlined
         row-attr="name"
         data-cy="exchange-table"
         :rows="rows"
         :cols="cols"
-        :sort="sort"
       >
         <template #item.location="{ row }">
           <LocationDisplay :identifier="row.location" />

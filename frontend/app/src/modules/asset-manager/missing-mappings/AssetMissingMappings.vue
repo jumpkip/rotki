@@ -8,6 +8,7 @@ import LocationDisplay from '@/components/history/LocationDisplay.vue';
 import TablePageLayout from '@/components/layout/TablePageLayout.vue';
 import { usePaginationFilters } from '@/composables/use-pagination-filter';
 import { useMissingMappingsDB } from '@/modules/asset-manager/missing-mappings/use-missing-mappings-db';
+import { TableId, useRememberTableSorting } from '@/modules/table/use-remember-table-sorting';
 import z from 'zod';
 
 const QuerySchema = z.object({
@@ -34,13 +35,14 @@ const cols = computed<DataTableColumn<MissingMapping>[]>(() => [{
   sortable: true,
 }, {
   cellClass: 'py-3 border-x border-default',
+  class: 'border-x border-default',
   key: 'details',
   label: t('common.details'),
 }, {
   align: 'center',
   cellClass: 'py-3 w-24',
   key: 'actions',
-  label: '',
+  label: t('common.actions_text'),
 }]);
 
 const { getData, remove } = useMissingMappingsDB();
@@ -72,6 +74,8 @@ const {
   },
 });
 
+useRememberTableSorting<MissingMapping>(TableId.ASSET_MISSING_MAPPINGS, sort, cols);
+
 function onAddClick(item: MissingMapping) {
   set(mapping, {
     asset: '',
@@ -96,7 +100,8 @@ onMounted(async () => {
 <template>
   <TablePageLayout
     child
-    class="md:-mt-[4.5rem]"
+    hide-header
+    class="lg:!-mt-5"
   >
     <RuiCard>
       <div class="mb-4 flex justify-end">
@@ -112,6 +117,8 @@ onMounted(async () => {
         v-model:pagination.external="pagination"
         v-model:sort.external="sort"
         outlined
+        dense
+        stripped
         :cols="cols"
         row-attr="id"
         :rows="mappings.data"
