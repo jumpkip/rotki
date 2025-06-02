@@ -1,43 +1,37 @@
 <script setup lang="ts">
 import type { TradableAsset } from '@/modules/onchain/types';
+import type { BigNumber } from '@rotki/common';
 import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
-import AssetIcon from '@/components/helper/display/icons/AssetIcon.vue';
+import AssetDetails from '@/components/helper/AssetDetails.vue';
 import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
 import { useSupportedChains } from '@/composables/info/chains';
-import { isEvmNativeToken } from '@/types/asset';
 
 const props = defineProps<{
   data: TradableAsset;
   list?: boolean;
+  amount?: BigNumber;
 }>();
 
-const { t } = useI18n();
+const emit = defineEmits<{
+  refresh: [];
+}>();
+
+const { t } = useI18n({ useScope: 'global' });
 
 const { assetName, assetSymbol } = useAssetInfoRetrieval();
-const { getChainName, getEvmChainName } = useSupportedChains();
+const { getEvmChainName } = useSupportedChains();
 
 const symbol = assetSymbol(props.data.asset, { collectionParent: false });
 const name = assetName(props.data.asset, { collectionParent: false });
-
-const mainName = computed(() => {
-  const asset = props.data.asset;
-  const isNative = isEvmNativeToken(asset);
-  const symbolVal = get(symbol);
-
-  if (isNative && props.list) {
-    const chain = props.data.chain;
-    const chainName = get(getChainName(chain));
-    return `${symbolVal} (in ${chainName} chain)`;
-  }
-  return symbolVal;
-});
 </script>
 
 <template>
   <div class="flex gap-2 items-center">
-    <AssetIcon
+    <AssetDetails
+      icon-only
       size="32px"
-      :identifier="data.asset"
+      :asset="data.asset"
+      hide-actions
       :force-chain="getEvmChainName(data.chain) || undefined"
       :resolution-options="{
         collectionParent: false,
@@ -51,7 +45,7 @@ const mainName = computed(() => {
     >
       <div class="font-medium text-sm -mb-0.5 overflow-hidden truncate">
         <div class="truncate">
-          {{ mainName }}
+          {{ symbol }}
         </div>
         <div
           v-if="list || !(data.price && data.fiatValue)"
@@ -61,23 +55,41 @@ const mainName = computed(() => {
         </div>
       </div>
       <div
-        v-if="data.price && data.fiatValue"
-        class="text-xs text-rui-text-secondary flex gap-1 whitespace-nowrap"
-        :class="{
-          '!text-sm !text-rui-text': list,
-        }"
+        v-if="!list && data.price"
+        class="text-sm text-rui-text flex items-center gap-1 whitespace-nowrap"
       >
-        <span v-if="!list">{{ t('trade.select_asset.balance') }}:</span>
-        <div>
-          <AmountDisplay :value="data.amount" />
-        </div>
-        <div>
-          (<AmountDisplay
-            force-currency
-            show-currency="symbol"
-            :value="data.fiatValue"
-          />)
-        </div>
+        <span>{{ t('trade.select_asset.balance') }}:</span>
+        <RuiSkeletonLoader
+          v-if="!amount"
+          class="w-28 flex"
+        />
+
+        <template v-else>
+          <div>
+            <AmountDisplay :value="amount" />
+          </div>
+          <div>
+            (<AmountDisplay
+              force-currency
+              show-currency="symbol"
+              :value="data.price.multipliedBy(amount)"
+            />)
+          </div>
+          <div>
+            <RuiButton
+              icon
+              variant="text"
+              size="sm"
+              class="!p-1"
+              @click.stop="emit('refresh')"
+            >
+              <RuiIcon
+                name="lu-refresh-ccw"
+                size="12"
+              />
+            </RuiButton>
+          </div>
+        </template>
       </div>
     </div>
   </div>

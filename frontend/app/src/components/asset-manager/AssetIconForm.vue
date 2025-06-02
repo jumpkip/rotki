@@ -28,7 +28,7 @@ const { getPath } = useInterop();
 const { setMessage } = useMessageStore();
 const { refreshIcon: refresh, setIcon, uploadIcon } = useAssetIconApi();
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const { setLastRefreshedAssetIcon } = useAssetIconStore();
 
@@ -143,6 +143,7 @@ defineExpose({
           :identifier="preview"
           size="72px"
           changeable
+          no-tooltip
           :show-chain="false"
         />
       </RuiCard>

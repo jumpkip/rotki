@@ -1,10 +1,10 @@
+import type { HistoryEventRequestPayload } from '@/modules/history/events/request-types';
 import type { ActionStatus } from '@/types/action';
 import type { Collection } from '@/types/collection';
 import type { AddressBookSimplePayload } from '@/types/eth-names';
 import type {
   AddHistoryEventPayload,
   HistoryEventCollectionRow,
-  HistoryEventRequestPayload,
   HistoryEventRow,
   HistoryEventsCollectionResponse,
   ModifyHistoryEventPayload,
@@ -29,7 +29,7 @@ interface UseHistoryEventsReturn {
 }
 
 export function useHistoryEvents(): UseHistoryEventsReturn {
-  const { t } = useI18n();
+  const { t } = useI18n({ useScope: 'global' });
   const { notify } = useNotificationsStore();
 
   const {

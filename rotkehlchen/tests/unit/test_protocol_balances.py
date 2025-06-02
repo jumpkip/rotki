@@ -11,11 +11,10 @@ from rotkehlchen.accounting.structures.balance import Balance, BalanceSheet
 from rotkehlchen.assets.asset import Asset, EvmToken
 from rotkehlchen.assets.utils import get_or_create_evm_token
 from rotkehlchen.chain.aggregator import CHAIN_TO_BALANCE_PROTOCOLS
-from rotkehlchen.chain.arbitrum_one.constants import ARBITRUM_ONE_ETHERSCAN_NODE
 from rotkehlchen.chain.arbitrum_one.modules.gearbox.balances import (
     GearboxBalances as GearboxBalancesArbitrumOne,
 )
-from rotkehlchen.chain.arbitrum_one.modules.gearbox.constants import GEAR_IDENTIFIER_ARB
+from rotkehlchen.chain.arbitrum_one.modules.gearbox.constants import GEAR_TOKEN_ARB
 from rotkehlchen.chain.arbitrum_one.modules.gmx.balances import GmxBalances
 from rotkehlchen.chain.arbitrum_one.modules.hyperliquid.balances import HyperliquidBalances
 from rotkehlchen.chain.arbitrum_one.modules.hyperliquid.constants import CPT_HYPER
@@ -34,7 +33,7 @@ from rotkehlchen.chain.ethereum.modules.curve.balances import CurveBalances
 from rotkehlchen.chain.ethereum.modules.curve.crvusd.balances import CurveCrvusdBalances
 from rotkehlchen.chain.ethereum.modules.eigenlayer.balances import EigenlayerBalances
 from rotkehlchen.chain.ethereum.modules.gearbox.balances import GearboxBalances
-from rotkehlchen.chain.ethereum.modules.gearbox.constants import GEAR_IDENTIFIER
+from rotkehlchen.chain.ethereum.modules.gearbox.constants import GEAR_TOKEN
 from rotkehlchen.chain.ethereum.modules.hedgey.balances import HedgeyBalances
 from rotkehlchen.chain.ethereum.modules.octant.balances import OctantBalances
 from rotkehlchen.chain.ethereum.modules.pendle.balances import PendleBalances
@@ -337,22 +336,16 @@ def test_thegraph_balances_arbitrum_one(
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('ethereum_accounts', [['0x9531C059098e3d194fF87FebB587aB07B30B1306']])
 @pytest.mark.parametrize('arbitrum_one_accounts', [['0x9531C059098e3d194fF87FebB587aB07B30B1306']])
-@pytest.mark.parametrize('arbitrum_one_manager_connect_at_start', [(ARBITRUM_ONE_ETHERSCAN_NODE,)])
 def test_thegraph_balances_vested_arbitrum_one(
         arbitrum_one_inquirer: 'ArbitrumOneInquirer',
         arbitrum_one_transaction_decoder: 'ArbitrumOneTransactionDecoder',
         ethereum_inquirer: 'EthereumInquirer',
         arbitrum_one_accounts: list[ChecksumEvmAddress],
-        arbitrum_one_manager_connect_at_start,
         inquirer: 'Inquirer',  # pylint: disable=unused-argument
 ) -> None:
     """Check that balances of GRT currently vested are properly detected."""
     expected_grt_balance = FVal('246914.881548572905')
     # decode the delegation transfer event which has the vested contract address as delegator_l2
-    wait_until_all_nodes_connected(
-        connect_at_start=arbitrum_one_manager_connect_at_start,
-        evm_inquirer=arbitrum_one_inquirer,
-    )
     for tx_hash in (
         '0x48321bb00e5c5b67f080991864606dbc493051d20712735a579d7ae31eca3d78',
         '0xed80711e4cb9c428790f0d9b51f79473bf5253d5d03c04d958d411e7fa34a92e',
@@ -380,7 +373,7 @@ def test_thegraph_balances_vested_arbitrum_one(
     with patch(
         'rotkehlchen.chain.arbitrum_one.modules.thegraph.balances.ThegraphBalances.process_staking_events',
         new=mock_process_staking_events,
-    ) as mock_process_staking_events:
+    ):
         thegraph_balances_inquirer = ThegraphBalancesArbitrumOne(
             evm_inquirer=arbitrum_one_inquirer,
             tx_decoder=arbitrum_one_transaction_decoder,
@@ -866,7 +859,7 @@ def test_gearbox_balances(
     )
     protocol_balances = protocol_balances_inquirer.query_balances()
     user_balance = protocol_balances[ethereum_accounts[0]]
-    assert user_balance.assets[Asset(GEAR_IDENTIFIER)] == Balance(
+    assert user_balance.assets[GEAR_TOKEN] == Balance(
         amount=amount,
         usd_value=amount * FVal(1.5),
     )
@@ -892,7 +885,7 @@ def test_gearbox_balances_arb(
     )
     protocol_balances = protocol_balances_inquirer.query_balances()
     user_balance = protocol_balances[arbitrum_one_accounts[0]]
-    assert user_balance.assets[Asset(GEAR_IDENTIFIER_ARB)] == Balance(
+    assert user_balance.assets[GEAR_TOKEN_ARB] == Balance(
         amount=amount,
         usd_value=amount * FVal(1.5),
     )
@@ -1047,6 +1040,7 @@ def test_extrafi_cache(optimism_inquirer: 'OptimismInquirer', freezer):
         inquirer=optimism_inquirer,
         cache_type=CacheType.EXTRAFI_NEXT_RESERVE_ID,
         msg_aggregator=optimism_inquirer.database.msg_aggregator,
+        reload_all=False,
     )
     chain = str(optimism_inquirer.chain_id.serialize_for_db())
     with GlobalDBHandler().conn.read_ctx() as cursor:
@@ -1057,6 +1051,7 @@ def test_extrafi_cache(optimism_inquirer: 'OptimismInquirer', freezer):
             key_parts=(CacheType.EXTRAFI_NEXT_RESERVE_ID, chain),
         )
         assert should_update_protocol_cache(
+            userdb=optimism_inquirer.database,
             cache_key=CacheType.EXTRAFI_NEXT_RESERVE_ID,
             args=(chain,),
         ) is False
@@ -1066,6 +1061,7 @@ def test_extrafi_cache(optimism_inquirer: 'OptimismInquirer', freezer):
         inquirer=optimism_inquirer,
         cache_type=CacheType.EXTRAFI_NEXT_RESERVE_ID,
         msg_aggregator=optimism_inquirer.database.msg_aggregator,
+        reload_all=False,
     )
     with GlobalDBHandler().conn.read_ctx() as cursor:
         assert globaldb_get_unique_cache_last_queried_ts_by_key(

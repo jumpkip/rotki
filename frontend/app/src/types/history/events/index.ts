@@ -1,5 +1,3 @@
-import type { PaginationRequestPayload } from '@/types/common';
-import type { FilterObjectWithBehaviour } from '@/types/filtering';
 import { CollectionCommonFields } from '@/types/collection';
 import { EntryMeta } from '@/types/history/meta';
 import { type BigNumber, HistoryEventEntryType, NumericString } from '@rotki/common';
@@ -23,6 +21,18 @@ export interface PullEvmTransactionPayload {
   readonly transactions: EvmChainAndTxHash[];
   readonly deleteCustom?: boolean;
 }
+
+export interface PullEthBlockEventPayload {
+  readonly blockNumbers: number[];
+}
+
+export type PullEventPayload = {
+  type: typeof HistoryEventEntryType.ETH_BLOCK_EVENT;
+  data: number [];
+} | {
+  type: typeof HistoryEventEntryType.EVM_SWAP_EVENT | typeof HistoryEventEntryType.EVM_EVENT;
+  data: EvmChainAndTxHash;
+};
 
 export interface PullEvmLikeTransactionPayload {
   readonly transactions: ChainAndTxHash[];
@@ -178,6 +188,14 @@ export type StandaloneEditableEvents = EvmHistoryEvent | OnlineHistoryEvent | Et
 
 export type HistoryEvent = StandaloneEditableEvents | GroupEditableHistoryEvents;
 
+export interface SwapSubEventModel {
+  identifier?: number;
+  amount: string;
+  asset: string;
+  userNotes?: string;
+  locationLabel?: string;
+}
+
 export interface AddSwapEventPayload {
   entryType: typeof HistoryEventEntryType.SWAP_EVENT;
   feeAmount?: string;
@@ -197,39 +215,21 @@ export interface EditSwapEventPayload extends Omit<AddSwapEventPayload, 'uniqueI
   identifier: number;
 }
 
-export interface AddEvmSwapEventPayload extends Omit<AddSwapEventPayload, 'entryType' | 'uniqueId'> {
+export interface AddEvmSwapEventPayload {
   entryType: typeof HistoryEventEntryType.EVM_SWAP_EVENT;
   address?: string;
-  locationLabel: string;
+  location: string;
+  timestamp: number;
+  fee?: SwapSubEventModel[];
+  spend: SwapSubEventModel[];
+  receive: SwapSubEventModel[];
   counterparty: string;
   sequenceIndex: string;
   txHash: string;
-  eventIdentifier?: string;
 }
 
 export interface EditEvmSwapEventPayload extends AddEvmSwapEventPayload {
-  identifier: number;
-  eventIdentifier: string;
-}
-
-export interface HistoryEventRequestPayload extends PaginationRequestPayload<{ timestamp: number }> {
-  readonly fromTimestamp?: string | number;
-  readonly toTimestamp?: string | number;
-  readonly groupByEventIds: boolean;
-  readonly eventIdentifiers?: string | string[];
-  readonly eventTypes?: string | string[];
-  readonly eventSubtypes?: string | string[];
-  readonly locationLabels?: string | string[];
-  readonly asset?: string;
-  readonly counterparties?: string | string[];
-  readonly location?: string | string[];
-  readonly products?: string | string[];
-  readonly entryTypes?: FilterObjectWithBehaviour<string | string[]>;
-  readonly txHashes?: string | string[];
-  readonly validatorIndices?: string | string[];
-  readonly customizedEventsOnly?: boolean;
-  readonly excludeIgnoredAssets?: boolean;
-  readonly identifiers?: string[];
+  identifiers: number[];
 }
 
 export type EditEvmHistoryEventPayload = Omit<
@@ -299,7 +299,7 @@ export interface EditAssetMovementEventPayload {
   asset: string;
   fee: string | null;
   feeAsset: string | null;
-  userNotes: string | null;
+  userNotes: [string, string] | [string];
   uniqueId: string;
 }
 
@@ -345,11 +345,7 @@ export const HistoryEventMeta = EntryMeta.merge(
 
 export type HistoryEventMeta = z.infer<typeof HistoryEventMeta>;
 
-const HistoryEventEntryWithMeta = z
-  .object({
-    entry: HistoryEvent,
-  })
-  .merge(HistoryEventMeta);
+const HistoryEventEntryWithMeta = z.object({ entry: HistoryEvent }).merge(HistoryEventMeta);
 
 export type HistoryEventEntryWithMeta = z.infer<typeof HistoryEventEntryWithMeta>;
 
@@ -367,10 +363,12 @@ export type HistoryEventEntry = HistoryEvent & HistoryEventMeta;
 
 export type HistoryEventRow = HistoryEventEntry | HistoryEventEntry[];
 
-export enum OnlineHistoryEventsQueryType {
-  ETH_WITHDRAWALS = 'eth_withdrawals',
-  BLOCK_PRODUCTIONS = 'block_productions',
-}
+export const OnlineHistoryEventsQueryType = {
+  BLOCK_PRODUCTIONS: 'block_productions',
+  ETH_WITHDRAWALS: 'eth_withdrawals',
+} as const;
+
+export type OnlineHistoryEventsQueryType = typeof OnlineHistoryEventsQueryType[keyof typeof OnlineHistoryEventsQueryType];
 
 export interface OnlineHistoryEventsRequestPayload {
   readonly asyncQuery: boolean;

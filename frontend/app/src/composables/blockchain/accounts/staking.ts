@@ -35,10 +35,10 @@ export function useEthStaking(): UseEthStakingReturn {
     deleteEth2Validators: deleteEth2ValidatorsCaller,
     editEth2Validator: editEth2ValidatorCaller,
   } = useBlockchainAccountsApi();
-  const { updateAccounts } = useBlockchainAccountsStore();
-  const { getAccounts } = useBlockchainAccountsStore();
-  const { balances } = storeToRefs(useBalancesStore());
-  const { updateBalances } = useBalancesStore();
+  const { getAccounts, updateAccounts } = useBlockchainAccountsStore();
+  const balancesStore = useBalancesStore();
+  const { balances } = storeToRefs(balancesStore);
+  const { updateBalances } = balancesStore;
 
   const blockchainValidatorsStore = useBlockchainValidatorsStore();
   const { ethStakingValidators, stakingValidatorsLimits } = storeToRefs(blockchainValidatorsStore);
@@ -47,7 +47,7 @@ export function useEthStaking(): UseEthStakingReturn {
   const premium = usePremium();
   const { awaitTask } = useTaskStore();
   const { setMessage } = useMessageStore();
-  const { t } = useI18n();
+  const { t } = useI18n({ useScope: 'global' });
   const { resetStatus } = useStatusUpdater(Section.STAKING_ETH2);
 
   const isEth2Enabled = (): boolean => get(activeModules).includes(Module.ETH2);

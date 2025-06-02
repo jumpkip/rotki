@@ -23,6 +23,7 @@ export enum NotificationGroup {
 
 export const NotificationCategory = {
   ADDRESS_MIGRATION: 'address_migration',
+  CALENDAR_REMINDER: 'calendar_reminder',
   DEFAULT: 'default',
   ETHERSCAN: 'etherscan',
 } as const;
@@ -58,6 +59,7 @@ interface NotificationBase {
   readonly groupCount?: number;
   readonly i18nParam?: I18nParam;
   readonly priority?: Priority;
+  readonly extras?: Record<string, unknown>;
 }
 
 export interface NotificationPayload extends NotificationBase {

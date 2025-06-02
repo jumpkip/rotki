@@ -134,12 +134,6 @@ class ExternalService(SerializableEnumNameMixin):
     BEACONCHAIN = auto()
     LOOPRING = auto()
     OPENSEA = auto()
-    OPTIMISM_ETHERSCAN = auto()
-    POLYGON_POS_ETHERSCAN = auto()
-    ARBITRUM_ONE_ETHERSCAN = auto()
-    BASE_ETHERSCAN = auto()
-    GNOSIS_ETHERSCAN = auto()
-    SCROLL_ETHERSCAN = auto()
     BINANCE_SC_ETHERSCAN = auto()
     BLOCKSCOUT = auto()
     MONERIUM = auto()
@@ -153,10 +147,7 @@ class ExternalService(SerializableEnumNameMixin):
     DEFILLAMA = auto()
     COINGECKO = auto()
     ALCHEMY = auto()
-
-    def get_chain_for_etherscan(self) -> Optional['ChainID']:
-        """If the service is an etherscan service return its chain"""
-        return ETHERSCAN_TO_CHAINID.get(self)
+    SCROLL_BLOCKSCOUT = auto()
 
     def get_chain_for_blockscout(self) -> Optional['ChainID']:
         """If the service is a blockscout service return its chain"""
@@ -263,6 +254,7 @@ class ChainID(Enum):
     ZKSYNC_ERA = 324
     PULSECHAIN = 369
     SCROLL = 534352
+    SONIC = 146
 
     @classmethod
     def deserialize_from_db(cls, value: int) -> 'ChainID':
@@ -355,17 +347,7 @@ BLOCKSCOUT_TO_CHAINID = {
     ExternalService.ARBITRUM_ONE_BLOCKSCOUT: ChainID.ARBITRUM_ONE,
     ExternalService.BASE_BLOCKSCOUT: ChainID.BASE,
     ExternalService.GNOSIS_BLOCKSCOUT: ChainID.GNOSIS,
-}
-
-ETHERSCAN_TO_CHAINID = {
-    ExternalService.ETHERSCAN: ChainID.ETHEREUM,
-    ExternalService.OPTIMISM_ETHERSCAN: ChainID.OPTIMISM,
-    ExternalService.POLYGON_POS_ETHERSCAN: ChainID.POLYGON_POS,
-    ExternalService.ARBITRUM_ONE_ETHERSCAN: ChainID.ARBITRUM_ONE,
-    ExternalService.BASE_ETHERSCAN: ChainID.BASE,
-    ExternalService.GNOSIS_ETHERSCAN: ChainID.GNOSIS,
-    ExternalService.SCROLL_ETHERSCAN: ChainID.SCROLL,
-    ExternalService.BINANCE_SC_ETHERSCAN: ChainID.BINANCE_SC,
+    ExternalService.SCROLL_BLOCKSCOUT: ChainID.SCROLL,
 }
 
 
@@ -373,6 +355,16 @@ class EvmlikeChain(StrEnum):
     """This is an enum for EvmLike chains that are not fully compatible with evm chains.
     For example have no chain id"""
     ZKSYNC_LITE = auto()
+
+
+class EvmTransactionAuthorization(NamedTuple):
+    """EIP-7702 authorization to delegate EOA execution to a contract.
+
+    When applied, sets EOA code to a delegation indicator pointing to the
+    delegated address, redirecting all calls to that contract's code.
+    """
+    nonce: int
+    delegated_address: ChecksumEvmAddress
 
 
 @dataclass(frozen=True)
@@ -391,6 +383,7 @@ class EvmTransaction:
     input_data: bytes
     nonce: int
     db_id: int = -1
+    authorization_list: list[EvmTransactionAuthorization] | None = None
 
     def __hash__(self) -> int:
         return hash(self.identifier)
@@ -428,12 +421,16 @@ class EvmInternalTransaction(NamedTuple):
     from_address: ChecksumEvmAddress
     to_address: ChecksumEvmAddress | None
     value: int
+    gas: int
+    gas_used: int
 
     def serialize(self) -> dict[str, Any]:
         result = self._asdict()  # pylint: disable=no-member
         result['tx_hash'] = result['tx_hash'].hex()
         result['chain_id'] = result['chain_id'].serialize()
         result['value'] = str(result['value'])
+        result['gas'] = str(result['gas'])
+        result['gas_used'] = str(result['gas_used'])
         return result
 
     def __hash__(self) -> int:
@@ -579,9 +576,9 @@ class SupportedBlockchain(SerializableEnumValueMixin):
         """
         return getattr(cls, location.name)
 
-    def to_chain_id(self) -> ChainID:
+    def to_chain_id(self) -> SUPPORTED_CHAIN_IDS:
         """Warning: Caller has to make sure this is an evm blockchain"""
-        return SUPPORTED_BLOCKCHAIN_TO_CHAINID[self]
+        return SUPPORTED_BLOCKCHAIN_TO_CHAINID[self]  # type: ignore
 
     def to_range_prefix(self, range_type: Literal['txs', 'internaltxs', 'tokentxs']) -> str:
         """Provide the appropriate range prefix for the DB for this chain"""
@@ -1238,6 +1235,10 @@ class ProtocolsWithCache(SerializableEnumNameMixin):
     CONVEX = auto()
     GEARBOX = auto()
     SPARK = auto()
+    # TODO: ETH_WITHDRAWALS and ETH_BLOCKS should be removed
+    #  once https://github.com/rotki/rotki/issues/9302 is implemented
+    ETH_WITHDRAWALS = auto()
+    ETH_BLOCKS = auto()
 
 
 UniqueCacheType = Literal[

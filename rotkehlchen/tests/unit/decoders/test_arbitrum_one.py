@@ -4,20 +4,17 @@ from rotkehlchen.chain.arbitrum_one.constants import CPT_ARBITRUM_ONE
 from rotkehlchen.chain.arbitrum_one.modules.airdrops.decoder import ARBITRUM_ONE_AIRDROP
 from rotkehlchen.chain.arbitrum_one.modules.arbitrum_governor.constants import GOVERNOR_ADDRESSES
 from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
-from rotkehlchen.constants import ONE
 from rotkehlchen.constants.assets import A_ARB, A_ETH
 from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
-from rotkehlchen.tests.utils.arbitrum_one import get_arbitrum_allthatnode
 from rotkehlchen.tests.utils.ethereum import get_decoded_events_of_transaction
 from rotkehlchen.types import Location, TimestampMS, deserialize_evm_tx_hash
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('arbitrum_one_accounts', [['0x0c5b7A89b3689d86Ed473caE4E7CB00381949861']])
-@pytest.mark.parametrize('arbitrum_one_manager_connect_at_start', [(get_arbitrum_allthatnode(ONE),)])  # noqa: E501
 def test_arbitrum_airdrop_claim(arbitrum_one_inquirer, arbitrum_one_accounts):
     """Data taken from
     https://arbiscan.io/tx/0xa230fc4d5e61db1d9be044215b00cb6ad1775b413a240ea23a98117153f6264e

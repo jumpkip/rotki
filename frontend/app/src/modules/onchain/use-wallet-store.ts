@@ -6,6 +6,7 @@ import type {
   TransactionParams,
 } from '@/modules/onchain/types';
 import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
+import { useInterop } from '@/composables/electron-interop';
 import { useSupportedChains } from '@/composables/info/chains';
 import { useWalletHelper } from '@/modules/onchain/use-wallet-helper';
 import { WagmiAdapter } from '@reown/appkit-adapter-wagmi';
@@ -13,7 +14,7 @@ import { type AppKitNetwork, arbitrum, base, bsc, gnosis, mainnet, optimism, pol
 import { type AppKit, createAppKit, useAppKitProvider } from '@reown/appkit/vue';
 import { assert, bigNumberify } from '@rotki/common';
 import { startPromise } from '@shared/utils';
-import { BrowserProvider, formatUnits, type TransactionResponse } from 'ethers';
+import { BrowserProvider, formatUnits, getAddress, type TransactionResponse } from 'ethers';
 import { useTradeApi } from './send/use-trade-api';
 
 export const ROTKI_DAPP_METADATA = {
@@ -38,8 +39,8 @@ export const supportedNetworks: [AppKitNetwork, ...AppKitNetwork[]] = [
 
 const DEFAULT_GAS_LIMIT = 21000n; // for native transfers
 
-function buildAppKit(): AppKit {
-  const projectId = import.meta.env.VITE_WALLET_CONNECT_PROJECT_ID as string;
+function buildAppKit(isPackaged: boolean): AppKit {
+  const projectId = isPackaged ? import.meta.env.VITE_WALLET_CONNECT_PROJECT_ID as string : 'a8a07e2bdf6f30c0f749ba31504766bf';
 
   const wagmiAdapter = new WagmiAdapter({
     networks: supportedNetworks,
@@ -72,8 +73,9 @@ export const useWalletStore = defineStore('wallet', () => {
   const preparing = ref<boolean>(false);
   const waitingForWalletConfirmation = ref<boolean>(false);
   const isWalletConnect = ref<boolean>(false);
+  const { isPackaged } = useInterop();
 
-  let appKit: AppKit | undefined;
+  const appKit: AppKit = buildAppKit(isPackaged);
 
   const { assetSymbol } = useAssetInfoRetrieval();
   const { getChainFromChainId, getChainIdFromNamespace, updateStatePostTransaction } = useWalletHelper();
@@ -101,13 +103,19 @@ export const useWalletStore = defineStore('wallet', () => {
     }
   };
 
+  const getBrowserProvider = (): BrowserProvider => {
+    const { walletProvider } = useAppKitProvider(EIP155);
+    return new BrowserProvider(walletProvider as any);
+  };
+
   const setupAppKitListener = (): void => {
     assert(appKit);
 
     appKit.subscribeAccount((account) => {
       assert(appKit);
+
       set(connected, account.isConnected);
-      set(connectedAddress, account.isConnected ? account.address : undefined);
+      set(connectedAddress, account.isConnected && account.address ? getAddress(account.address) : undefined);
 
       if (account.isConnected) {
         const provider: any = appKit.getProvider(EIP155);
@@ -127,7 +135,6 @@ export const useWalletStore = defineStore('wallet', () => {
     });
   };
 
-  appKit = buildAppKit();
   setupAppKitListener();
 
   const open = async (): Promise<void> => {
@@ -160,11 +167,6 @@ export const useWalletStore = defineStore('wallet', () => {
     }
   };
 
-  const getBrowserProvider = (): BrowserProvider => {
-    const { walletProvider } = useAppKitProvider(EIP155);
-    return new BrowserProvider(walletProvider as any);
-  };
-
   const getGasFeeForChain = async (): Promise<GasFeeEstimation> => {
     try {
       const provider = getBrowserProvider();
@@ -173,6 +175,7 @@ export const useWalletStore = defineStore('wallet', () => {
       const gasPrice = feeData.gasPrice ?? feeData.maxFeePerGas ?? 0n;
 
       let maxAmount = '0';
+      let gasFee = '0';
       const address = get(connectedAddress);
       if (address) {
         const balance = await provider.getBalance(address);
@@ -181,14 +184,16 @@ export const useWalletStore = defineStore('wallet', () => {
         if (balance > gasCost) {
           // Add 10% buffer for gas price fluctuations
           const buffer = gasCost * 10n / 100n;
-          const maxSendable = balance - gasCost - buffer;
+          const diff = gasCost + buffer;
+
+          const maxSendable = balance - diff;
+          gasFee = formatUnits(diff);
           maxAmount = formatUnits(maxSendable, 18);
         }
       }
 
       return {
-        formatted: formatUnits(gasPrice, 'gwei'),
-        gasPrice,
+        gasFee,
         maxAmount,
       };
     }
@@ -205,7 +210,7 @@ export const useWalletStore = defineStore('wallet', () => {
       ? params.assetIdentifier
       : get(assetSymbol(params.assetIdentifier));
 
-    return `Send ${amount} ${asset} from ${fromAddress} to ${params.to}`;
+    return `Send ${amount} ${asset || params.assetIdentifier} from ${fromAddress} to ${params.to}`;
   };
 
   const addRecentTransaction = (hash: string, chain: string, params: TransactionParams): void => {

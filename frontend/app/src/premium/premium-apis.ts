@@ -5,8 +5,8 @@ import { useStatisticsApi } from '@/composables/api/statistics/statistics-api';
 import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
 import { useAggregatedBalances } from '@/composables/balances/aggregated';
 import { useLocationBalancesBreakdown } from '@/modules/balances/use-location-balances-breakdown';
+import { usePriceUtils } from '@/modules/prices/use-price-utils';
 import { useIgnoredAssetsStore } from '@/store/assets/ignored';
-import { useBalancePricesStore } from '@/store/balances/prices';
 import { useHistoricCachePriceStore } from '@/store/prices/historic';
 import { useFrontendSettingsStore } from '@/store/settings/frontend';
 import { useGeneralSettingsStore } from '@/store/settings/general';
@@ -133,7 +133,7 @@ export function userSettings(): UserSettingsApi {
 }
 
 export function balancesApi(): BalancesApi {
-  const { assetPrice, exchangeRate } = useBalancePricesStore();
+  const { assetPriceInCurrentCurrency, useExchangeRate } = usePriceUtils();
   const { balancesByLocation } = useLocationBalancesBreakdown();
   const { balances } = useAggregatedBalances();
   const { createKey, isPending } = useHistoricCachePriceStore();
@@ -141,10 +141,10 @@ export function balancesApi(): BalancesApi {
   const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
 
   return {
-    assetPrice: (asset: string) => computed(() => get(assetPrice(asset)) ?? One),
+    assetPrice: (asset: string) => computed(() => get(assetPriceInCurrentCurrency(asset)) ?? One),
     balances: (groupMultiChain = false, exclude = []) => balances(false, groupMultiChain, exclude),
     byLocation: balancesByLocation,
-    exchangeRate: (currency: string) => computed(() => get(exchangeRate(currency)) ?? One),
+    exchangeRate: (currency: string) => computed(() => get(useExchangeRate(currency)) ?? One),
     isHistoricPricePending: (asset: string, timestamp: number) => isPending(createKey(asset, timestamp)),
     queryOnlyCacheHistoricalRates: async (asset: string, timestamp: number[]): Promise<Record<string, BigNumber>> => {
       const data = await queryOnlyCacheHistoricalRates({

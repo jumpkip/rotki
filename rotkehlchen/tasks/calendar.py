@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from eth_typing import ChecksumAddress
 
@@ -62,39 +62,51 @@ class CalendarNotification(BaseReminderData):
     """Basic reminder information along the calendar event linked to it"""
     event: CalendarEntry
 
-    def serialize(self) -> dict[str, str | int]:
-        return self.event.serialize()
+    def serialize(self) -> dict[str, Any]:
+        return self.event.serialize() | {'reminder': super().serialize()}
 
 
 def notify_reminders(
-        reminders: list[CalendarNotification],
+        reminders: dict[int, list[CalendarNotification]],
         database: DBHandler,
         msg_aggregator: MessagesAggregator,
 ) -> None:
-    """Send a ws notification for the calendar reminders and delete them once processed"""
-    notified_events = set()
-    for reminder in reminders:
-        if reminder.event.identifier in notified_events:
-            continue  # avoid sending notifications for the same event multiple times
+    """Send websocket notifications for calendar reminders.
+
+    The reminders dictionary maps each calendar event ID to a list of associated
+    notifications, with the most recent reminder listed first.
+
+    For events with multiple reminders, only the newest reminder (closest to event time)
+    is processed and older ones are deleted. This ensures users don't get redundant
+    notifications for the same event.
+    """
+    reminders_to_delete = []
+    for event_reminders in reminders.values():
+        if len(event_reminders) > 1:
+            reminders_to_delete.extend([(r.identifier,) for r in event_reminders[1:]])
 
         msg_aggregator.add_message(
             message_type=WSMessageType.CALENDAR_REMINDER,
-            data=reminder.serialize(),
+            data=event_reminders[0].serialize(),
         )
-        notified_events.add(reminder.event.identifier)
 
     with database.conn.write_ctx() as write_cursor:
         write_cursor.executemany(
             'DELETE FROM calendar_reminders WHERE identifier=?',
-            [(event.identifier,) for event in reminders],
+            reminders_to_delete,
         )
 
 
 def delete_past_calendar_entries(database: DBHandler) -> None:
-    """delete old calendar entries that the user has allowed to delete"""
+    """Delete past calendar events that are marked for auto-deletion,
+    but only if all associated reminders (if any) have been acknowledged."""
     now = ts_now()
     with database.conn.write_ctx() as write_cursor:
-        write_cursor.execute('DELETE FROM calendar WHERE timestamp < ? AND auto_delete=1', (now,))
+        write_cursor.execute(
+            'DELETE FROM calendar WHERE timestamp < ? AND auto_delete = 1 '
+            'AND identifier IN (SELECT event_id FROM calendar_reminders WHERE acknowledged = 1);',
+            (now,),
+        )
         write_cursor.execute(  # remember last time this task ran
             'INSERT OR REPLACE INTO key_value_cache (name, value) VALUES (?, ?)',
             (DBCacheStatic.LAST_DELETE_PAST_CALENDAR_EVENTS.value, str(now)),
@@ -114,23 +126,17 @@ class CalendarReminderCreator(CustomizableDateMixin):
 
     def get_history_events(self, event_types: list[tuple[HistoryEventType, HistoryEventSubType]], counterparties: list[str]) -> list['EvmEvent']:  # noqa: E501
         """Get history events by event_type, event_subtype, and counterparty"""
-        db_history_events = DBHistoryEvents(database=self.database)
-        events: list[EvmEvent] = []
         with self.database.conn.read_ctx() as cursor:
-            for event_type, event_subtype in event_types:
-                events.extend(db_history_events.get_history_events(
-                    cursor=cursor,
-                    has_premium=True,  # not limiting here
-                    group_by_event_ids=False,
-                    filter_query=EvmEventFilterQuery.make(
-                        and_op=True,
-                        counterparties=counterparties,
-                        event_types=[event_type],
-                        event_subtypes=[event_subtype],
-                    ),
-                ))
-
-        return events
+            return DBHistoryEvents(database=self.database).get_history_events(
+                cursor=cursor,
+                has_premium=True,  # not limiting here
+                group_by_event_ids=False,
+                filter_query=EvmEventFilterQuery.make(
+                    and_op=True,
+                    counterparties=counterparties,
+                    type_and_subtype_combinations=event_types,
+                ),
+            )
 
     def get_existing_calendar_entry(
             self,
@@ -274,6 +280,7 @@ class CalendarReminderCreator(CustomizableDateMixin):
                 identifier=calendar_identifier,  # this is only used for logging below, it's auto generated in db  # noqa: E501
                 event_id=calendar_identifier,
                 secs_before=entry,
+                acknowledged=False,
             )
             for calendar_identifier in calendar_identifiers
             for entry in secs_before

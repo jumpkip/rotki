@@ -1,6 +1,5 @@
 import logging
 from collections.abc import Sequence
-from contextlib import suppress
 from typing import TYPE_CHECKING, Literal, overload
 
 from ens.abis import PUBLIC_RESOLVER_2 as ENS_RESOLVER_ABI
@@ -15,7 +14,6 @@ from rotkehlchen.chain.ethereum.constants import (
     ARCHIVE_NODE_CHECK_ADDRESS,
     ARCHIVE_NODE_CHECK_BLOCK,
     ARCHIVE_NODE_CHECK_EXPECTED_BALANCE,
-    ETHEREUM_ETHERSCAN_NODE,
     PRUNED_NODE_CHECK_TX_HASH,
 )
 from rotkehlchen.chain.evm.constants import BALANCE_SCANNER_ADDRESS
@@ -26,7 +24,7 @@ from rotkehlchen.chain.evm.node_inquirer import (
 )
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants.assets import A_ETH
-from rotkehlchen.errors.misc import InputError, RemoteError
+from rotkehlchen.errors.misc import InputError
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.externalapis.blockscout import Blockscout
 from rotkehlchen.fval import FVal
@@ -38,15 +36,14 @@ from rotkehlchen.types import (
     ChecksumEvmAddress,
     EVMTxHash,
     SupportedBlockchain,
-    Timestamp,
 )
 from rotkehlchen.utils.misc import get_chunks
 
-from .constants import ETH2_DEPOSIT_ADDRESS, ETHEREUM_ETHERSCAN_NODE_NAME, WeightedNode
-from .etherscan import EthereumEtherscan
+from .constants import ETH2_DEPOSIT_ADDRESS, WeightedNode
 
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
+    from rotkehlchen.externalapis.etherscan import Etherscan
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -60,20 +57,15 @@ class EthereumInquirer(DSProxyInquirerWithCacheData):
             self,
             greenlet_manager: GreenletManager,
             database: 'DBHandler',
+            etherscan: 'Etherscan',
             rpc_timeout: int = DEFAULT_EVM_RPC_TIMEOUT,
     ) -> None:
-        etherscan = EthereumEtherscan(
-            database=database,
-            msg_aggregator=database.msg_aggregator,
-        )
         contracts = EvmContracts[Literal[ChainID.ETHEREUM]](chain_id=ChainID.ETHEREUM)
         super().__init__(
             greenlet_manager=greenlet_manager,
             database=database,
             etherscan=etherscan,
             blockchain=SupportedBlockchain.ETHEREUM,
-            etherscan_node=ETHEREUM_ETHERSCAN_NODE,
-            etherscan_node_name=ETHEREUM_ETHERSCAN_NODE_NAME,
             contracts=contracts,
             rpc_timeout=rpc_timeout,
             contract_multicall=contracts.contract(string_to_evm_address('0x5BA1e12693Dc8F9c48aAD8770482f4739bEeD696')),
@@ -86,7 +78,6 @@ class EthereumInquirer(DSProxyInquirerWithCacheData):
                 msg_aggregator=database.msg_aggregator,
             ),
         )
-        self.etherscan: EthereumEtherscan
         self.ens_reverse_records = self.contracts.contract(string_to_evm_address('0x3671aE578E63FdF66ad4F3E12CC0c0d71Ac7510C'))  # noqa: E501
         self.blockscout: Blockscout  # for ethereum blockscout is never None since it's used for the withdrawals  # noqa: E501
 
@@ -261,21 +252,6 @@ class EthereumInquirer(DSProxyInquirerWithCacheData):
             ARCHIVE_NODE_CHECK_BLOCK,
             ARCHIVE_NODE_CHECK_EXPECTED_BALANCE,
         )
-
-    def get_blocknumber_by_time(
-            self,
-            ts: Timestamp,
-            closest: Literal['before', 'after'] = 'before',
-    ) -> int:
-        """Searches for the blocknumber of a specific timestamp
-        - Performs the etherscan api call by default first
-        - If RemoteError raised or etherscan flag set to false
-            -> queries blocks subgraph
-        """
-        with suppress(RemoteError):
-            return self.etherscan.get_blocknumber_by_time(ts, closest)
-
-        return self.blockscout.get_blocknumber_by_time(ts, closest)
 
     # -- Implementation of EvmNodeInquirer optional methods --
 

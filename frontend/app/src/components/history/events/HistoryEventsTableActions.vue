@@ -1,21 +1,25 @@
 <script lang="ts" setup>
+import type { HistoryEventRequestPayload } from '@/modules/history/events/request-types';
 import type { AddressData, BlockchainAccount } from '@/types/blockchain/accounts';
-import type { HistoryEventRequestPayload } from '@/types/history/events';
 import BlockchainAccountSelector from '@/components/helper/BlockchainAccountSelector.vue';
 import TableStatusFilter from '@/components/helper/TableStatusFilter.vue';
 import HistoryEventsExport from '@/components/history/events/HistoryEventsExport.vue';
 import HistoryTableActions from '@/components/history/HistoryTableActions.vue';
 import TableFilter from '@/components/table-filter/TableFilter.vue';
 import { useSupportedChains } from '@/composables/info/chains';
+import HistoryRedecodeButton from '@/modules/history/redecode/HistoryRedecodeButton.vue';
 import { type MatchedKeywordWithBehaviour, SavedFilterLocation, type SearchMatcher } from '@/types/filtering';
 import { useRefPropVModel } from '@/utils/model';
-import { checkIfDevelopment } from '@shared/utils';
 
 const filters = defineModel<MatchedKeywordWithBehaviour<any>>('filters', { required: true });
 
 const accounts = defineModel<BlockchainAccount<AddressData>[]>('accounts', { required: true });
 
-const toggles = defineModel<{ customizedEventsOnly: boolean; showIgnoredAssets: boolean }>('toggles', { required: true });
+const toggles = defineModel<{
+  customizedEventsOnly: boolean;
+  showIgnoredAssets: boolean;
+  matchExactEvents: boolean;
+}>('toggles', { required: true });
 
 withDefaults(defineProps<{
   matchers: SearchMatcher<any, any>[];
@@ -28,24 +32,17 @@ withDefaults(defineProps<{
 });
 
 const emit = defineEmits<{
-  'redecode': [];
-  'redecode-page': [];
+  redecode: [payload: 'all' | 'page' | string[]];
 }>();
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const customizedEventsOnly = useRefPropVModel(toggles, 'customizedEventsOnly');
+const matchExactEvents = useRefPropVModel(toggles, 'matchExactEvents');
 const showIgnoredAssets = useRefPropVModel(toggles, 'showIgnoredAssets');
 
 const { txChains } = useSupportedChains();
 const txChainIds = useArrayMap(txChains, x => x.id);
-
-const isDemoMode = import.meta.env.VITE_DEMO_MODE !== undefined;
-const isDevelopment = checkIfDevelopment();
-
-function redecodePageTransactions(): void {
-  emit('redecode-page');
-}
 </script>
 
 <template>
@@ -68,6 +65,14 @@ function redecodePageTransactions(): void {
             hide-details
             :label="t('transactions.filter.show_ignored_assets')"
           />
+          <RuiDivider />
+          <RuiSwitch
+            v-model="matchExactEvents"
+            color="primary"
+            class="p-4"
+            :label="t('transactions.filter.match_exact_filter')"
+            :hint="t('transactions.filter.match_exact_filter_hint')"
+          />
         </div>
       </TableStatusFilter>
       <TableFilter
@@ -78,30 +83,15 @@ function redecodePageTransactions(): void {
       />
     </template>
 
-    <RuiButtonGroup
-      color="primary"
-      :disabled="processing"
-      :class="{
-        '!divide-rui-grey-200 dark:!divide-rui-grey-800': processing,
-      }"
-    >
-      <RuiButton
-        class="!py-2"
-        @click="emit('redecode')"
-      >
-        {{ t('transactions.events_decoding.redecode_all') }}
-      </RuiButton>
+    <HistoryRedecodeButton
+      :processing="processing"
+      @redecode="emit('redecode', $event)"
+    />
 
-      <RuiButton
-        v-if="isDevelopment && !isDemoMode"
-        class="!py-2"
-        @click="redecodePageTransactions()"
-      >
-        {{ t('transactions.actions.redecode_page') }}
-      </RuiButton>
-    </RuiButtonGroup>
-
-    <HistoryEventsExport :filters="exportParams" />
+    <HistoryEventsExport
+      :match-exact-events="toggles.matchExactEvents"
+      :filters="exportParams"
+    />
 
     <BlockchainAccountSelector
       v-if="!hideAccountSelector"

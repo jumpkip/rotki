@@ -12,7 +12,9 @@ from rotkehlchen.chain.base.decoding.decoder import BaseTransactionDecoder
 from rotkehlchen.chain.base.transactions import BaseTransactions
 from rotkehlchen.chain.binance_sc.decoding.decoder import BinanceSCTransactionDecoder
 from rotkehlchen.chain.binance_sc.transactions import BinanceSCTransactions
-from rotkehlchen.chain.ethereum.constants import ETHEREUM_ETHERSCAN_NODE
+from rotkehlchen.chain.ethereum.constants import (
+    ETHEREUM_ETHERSCAN_NODE,
+)
 from rotkehlchen.chain.ethereum.decoding.decoder import EthereumTransactionDecoder
 from rotkehlchen.chain.ethereum.transactions import EthereumTransactions
 from rotkehlchen.chain.evm.structures import EvmTxReceipt, EvmTxReceiptLog
@@ -30,6 +32,7 @@ from rotkehlchen.constants import ONE
 from rotkehlchen.db.dbhandler import DBHandler
 from rotkehlchen.db.evmtx import DBEvmTx
 from rotkehlchen.db.filtering import EvmTransactionsFilterQuery
+from rotkehlchen.externalapis.beaconchain.service import BeaconChain
 from rotkehlchen.history.events.structures.types import HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.tests.utils.decoders import patch_decoder_reload_data
@@ -146,7 +149,6 @@ ETHEREUM_NODES_SET_WITH_PRUNED_AND_NOT_ARCHIVED = (
     [(
         PRUNED_AND_NOT_ARCHIVED_NODE,
         INFURA_ETH_NODE,
-        ETHEREUM_ETHERSCAN_NODE,
         ETHERSCAN_AND_INFURA_AND_ALCHEMY[1][2][0][0],
     )],
 )
@@ -171,7 +173,6 @@ def wait_until_all_nodes_connected(
         timeout: int = NODE_CONNECTION_TIMEOUT,
 ):
     """Wait until all ethereum nodes are connected or until a timeout is hit"""
-    connect_at_start = [x for x in connect_at_start if x.node_info.name != evm_inquirer.etherscan_node_name]  # noqa: E501
     connected = [False] * len(connect_at_start)
     try:
         with gevent.Timeout(timeout):
@@ -466,7 +467,14 @@ def get_decoded_events_of_transaction(
         if transactions is None:
             transactions = mappings_result[0](evm_inquirer, evm_inquirer.database)
         if evm_decoder is None:
-            decoder: EVMTransactionDecoder = mappings_result[1](evm_inquirer.database, evm_inquirer, transactions)  # noqa: E501
+            decoder_args = [evm_inquirer.database, evm_inquirer, transactions]
+            if evm_inquirer.chain_id == ChainID.ETHEREUM:
+                decoder_args.append(BeaconChain(
+                    database=evm_inquirer.database,
+                    msg_aggregator=evm_inquirer.database.msg_aggregator,
+                ))
+
+            decoder: EVMTransactionDecoder = mappings_result[1](*decoder_args)
         else:
             decoder = evm_decoder
 

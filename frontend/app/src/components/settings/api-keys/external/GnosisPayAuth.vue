@@ -5,7 +5,7 @@ import ServiceKeyCard from '@/components/settings/api-keys/ServiceKeyCard.vue';
 import { useExternalApiKeys, useServiceKeyHandler } from '@/composables/settings/api-keys/external';
 import { externalLinks } from '@shared/external-links';
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const understand = ref<boolean>(false);
 
@@ -16,34 +16,19 @@ const { saveHandler, serviceKeyRef } = useServiceKeyHandler<InstanceType<typeof 
 const key = apiKey(name);
 const status = actionStatus(name);
 
-const serviceKeyCardRef = useTemplateRef<InstanceType<typeof ServiceKeyCard>>('serviceKeyCardRef');
-
-const route = useRoute();
-const router = useRouter();
-
 const link = externalLinks.usageGuideSection.gnosisPayKey;
 
 watchImmediate(key, (value) => {
   if (value)
     set(understand, true);
 });
-
-watch(route, async (route) => {
-  const { query } = route;
-  if (query?.service === 'gnosisPay') {
-    nextTick(() => {
-      get(serviceKeyCardRef)?.setOpen(true);
-    });
-    await router.replace({ query: {} });
-  }
-}, { immediate: true });
 </script>
 
 <template>
   <ServiceKeyCard
-    ref="serviceKeyCardRef"
     need-premium
     rounded-icon
+    :name="name"
     :key-set="!!key"
     :title="t('external_services.gnosispay.title')"
     :subtitle="t('external_services.gnosispay.description')"
@@ -102,6 +87,7 @@ watch(route, async (route) => {
       @save="save($event)"
     >
       <i18n-t
+        scope="global"
         tag="div"
         class="text-rui-text-secondary text-body-2"
         keypath="external_services.gnosispay.session_token_instructions"

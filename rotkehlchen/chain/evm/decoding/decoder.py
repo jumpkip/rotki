@@ -18,6 +18,7 @@ from web3.exceptions import Web3Exception
 from rotkehlchen.api.websockets.typedefs import ProgressUpdateSubType, WSMessageType
 from rotkehlchen.assets.utils import TokenEncounterInfo, get_or_create_evm_token, get_token
 from rotkehlchen.chain.ethereum.utils import token_normalized_value
+from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
 from rotkehlchen.chain.evm.decoding.interfaces import ReloadableDecoderMixin
 from rotkehlchen.chain.evm.decoding.oneinch.v5.decoder import Oneinchv5Decoder
 from rotkehlchen.chain.evm.decoding.oneinch.v6.decoder import Oneinchv6Decoder
@@ -74,6 +75,7 @@ from rotkehlchen.utils.mixins.customizable_date import CustomizableDateMixin
 
 from .base import BaseDecoderTools, BaseDecoderToolsWithDSProxy
 from .constants import (
+    CPT_ACCOUNT_DELEGATION,
     CPT_GAS,
     ERC20_OR_ERC721_APPROVE,
     ERC20_OR_ERC721_TRANSFER,
@@ -96,6 +98,7 @@ if TYPE_CHECKING:
     from rotkehlchen.chain.evm.transactions import EvmTransactions
     from rotkehlchen.db.dbhandler import DBHandler
     from rotkehlchen.db.drivers.gevent import DBCursor
+    from rotkehlchen.externalapis.beaconchain.service import BeaconChain
     from rotkehlchen.history.events.structures.evm_event import EvmEvent
     from rotkehlchen.user_messages import MessagesAggregator
 
@@ -131,6 +134,7 @@ def decode_safely(
         ValueError,
         ConversionError,
         Web3Exception,
+        NotERC20Conformant,
     ) as e:
         log.error(traceback.format_exc())
         error_prefix = f'Decoding of transaction {tx_hash.hex()} in {chain_id.to_name()}'
@@ -204,6 +208,7 @@ class EVMTransactionDecoder(ABC):
             dbevmtx_class: type[DBEvmTx] = DBEvmTx,
             addresses_exceptions: dict[ChecksumEvmAddress, int] | None = None,
             exceptions_mappings: dict[str, 'Asset'] | None = None,
+            beacon_chain: 'BeaconChain | None' = None,
     ):
         """
         Initialize an evm chain transaction decoder module for a particular chain.
@@ -229,6 +234,7 @@ class EVMTransactionDecoder(ABC):
         self.misc_counterparties = [CounterpartyDetails(identifier=CPT_GAS, label='gas', icon='lu-flame')] + misc_counterparties  # noqa: E501
         self.evm_inquirer = evm_inquirer
         self.transactions = transactions
+        self.beacon_chain = beacon_chain
         self.msg_aggregator = database.msg_aggregator
         self.chain_modules_root = f'rotkehlchen.chain.{self.evm_inquirer.chain_name}.modules'
         self.chain_modules_prefix_length = len(self.chain_modules_root)
@@ -314,11 +320,16 @@ class EVMTransactionDecoder(ABC):
         if class_name in self.decoders:
             raise ModuleLoadingError(f'{self.evm_inquirer.chain_name} decoder with name {class_name} already loaded')  # noqa: E501
 
+        extra_args = []
+        if class_name == 'Eth2':
+            extra_args.append(self.beacon_chain)
+
         try:  # not giving kwargs since, kwargs name can differ
             self.decoders[class_name] = decoder_class(
                 self.evm_inquirer,  # evm_inquirer
                 self.base,  # base_tools
                 self.msg_aggregator,  # msg_aggregator
+                *extra_args,
             )
         except (UnknownAsset, WrongAssetType) as e:
             self.msg_aggregator.add_error(
@@ -574,6 +585,9 @@ class EVMTransactionDecoder(ABC):
         indexes do not need to be consecutive). If an incomplete or unordered group of Trade events
         is encountered an error will be logged and the original EvmEvents saved to the db.
 
+        If a swap has multiple spend receive or fee events, then the event_type will be set to
+        MULTI_TRADE for all the events in the swap.
+
         Returns the list of decoded events ordered by sequence index with any complete groups
         of trade events replaced with EvmSwapEvents.
         """
@@ -589,20 +603,24 @@ class EVMTransactionDecoder(ABC):
                 continue
 
             trade_events: list[EvmEvent] = []
-            for idx, subtype in enumerate(trade_subtypes):
-                if (
+            event_type = HistoryEventType.TRADE
+            for subtype in trade_subtypes:
+                subtype_events = []
+                while (
                     (next_event := events_iterator.peek(None)) is not None and
                     next_event.event_type == HistoryEventType.TRADE and
-                    next_event.event_subtype == subtype and
-                    len(trade_events) == idx
+                    next_event.event_subtype == subtype
                 ):  # match events in the order defined in trade_subtypes
-                    trade_events.append(next(events_iterator))
-                elif subtype != HistoryEventSubType.FEE:  # if spend or receive don't match above then the group is incomplete or out of order.  # noqa: E501
-                    # If no matches yet (failed on SPEND), save next(events_iterator), so that
+                    subtype_events.append(next(events_iterator))
+
+                if len(subtype_events) > 1:
+                    event_type = HistoryEventType.MULTI_TRADE
+                elif len(subtype_events) == 0 and subtype != HistoryEventSubType.FEE:  # if no spend or receive was found then the group is incomplete or out of order.  # noqa: E501
+                    # If no events yet (failed on SPEND), save next(events_iterator), so that
                     # we move on to the event after in the next while loop iteration.
-                    # If partial match (failed on RECEIVE), save only the already matched
+                    # If some events (failed on RECEIVE), save only the already matched
                     # trade_events so the next event (could be the SPEND of another group) will be
-                    # reprocessed in the next while loop iteration.
+                    # reprocessed in the next iteration of the main while loop.
                     processed_events.extend(trade_events if len(trade_events) > 0 else [next(events_iterator)])  # noqa: E501
                     log.error(
                         'Encountered incomplete or unordered swap event group '
@@ -610,6 +628,8 @@ class EVMTransactionDecoder(ABC):
                     )
                     trade_events = []
                     break
+
+                trade_events.extend(subtype_events)
 
             if len(trade_events) == 0:
                 continue  # swap group was incomplete or unordered.
@@ -621,13 +641,16 @@ class EVMTransactionDecoder(ABC):
                     sequence_index=spend_event.sequence_index + idx,  # Make indexes consecutive (required for retrieving the receive and fee events when editing a swap event group via the api).  # noqa: E501
                     timestamp=trade_event.timestamp,
                     location=trade_event.location,
-                    event_subtype=trade_event.event_subtype,  # type: ignore[arg-type]  # will be SPEND, RECEIVE, or FEE here
+                    event_type=event_type,  # type: ignore[arg-type]  # will be TRADE or MULTI_TRADE
+                    event_subtype=trade_event.event_subtype,  # type: ignore[arg-type]  # will be SPEND, RECEIVE, or FEE
                     asset=trade_event.asset,
                     amount=trade_event.amount,
                     notes=trade_event.notes,
                     extra_data=trade_event.extra_data,
+                    # location label can be different on the spend versus the receive, but if its
+                    # missing, fall back to setting it from the spend event.
+                    location_label=trade_event.location_label if trade_event.location_label is not None else spend_event.location_label,  # noqa: E501
                     # the rest should be the same for the whole group, so set from the spend event.
-                    location_label=spend_event.location_label,
                     counterparty=spend_event.counterparty,
                     product=spend_event.product,
                     address=spend_event.address,
@@ -746,10 +769,6 @@ class EVMTransactionDecoder(ABC):
         if maybe_modified:
             process_swaps = True  # a swap may have been created in post decoding
 
-        events = sorted(events, key=lambda x: x.sequence_index, reverse=False)
-        if process_swaps:
-            events = self._process_swaps(transaction=transaction, decoded_events=events)
-
         if monerium_special_handling_event is True:
             # When events that need special handling exist iterate over the decoded events and
             # exchange the legacy assets by the v2 assets. Also delete v2 events to
@@ -770,6 +789,36 @@ class EVMTransactionDecoder(ABC):
 
         if len(events) == 0 and (eth_event := self._get_eth_transfer_event(transaction)) is not None:  # noqa: E501
             events = [eth_event]
+
+        # Process swaps after the monerium handling to avoid interpreting duplicate
+        # transfers as part of a multi swap.
+        events = sorted(events, key=lambda x: x.sequence_index, reverse=False)
+        if process_swaps:
+            events = self._process_swaps(transaction=transaction, decoded_events=events)
+
+        if (
+                tx_receipt.tx_type == 4 and
+                transaction.from_address == transaction.to_address and
+                transaction.authorization_list is not None
+        ):  # if the event is an eip-7702 transaction, we need to add an informational event.
+            if (delegated_address := transaction.authorization_list[-1].delegated_address) == ZERO_ADDRESS:  # noqa: E501
+                notes = f'Revoke account delegation for {transaction.from_address}'
+            else:
+                notes = f'Execute account delegation to {delegated_address}'
+
+            events.append(self.base.make_event(
+                tx_hash=transaction.tx_hash,
+                sequence_index=self.base.get_next_sequence_index(),
+                timestamp=transaction.timestamp,
+                event_type=HistoryEventType.INFORMATIONAL,
+                event_subtype=HistoryEventSubType.DELEGATE,
+                asset=self.value_asset,
+                amount=ZERO,
+                location_label=transaction.from_address,
+                address=delegated_address,
+                notes=notes,
+                counterparty=CPT_ACCOUNT_DELEGATION,
+            ))
 
         with self.database.user_write() as write_cursor:
             if len(events) > 0:
@@ -1268,7 +1317,7 @@ class EVMTransactionDecoder(ABC):
 
         for idx, action_item in enumerate(action_items):
             if (
-                    action_item.asset == found_token and
+                    (action_item.asset is None or action_item.asset == found_token) and
                     action_item.from_event_type == transfer.event_type and
                     action_item.from_event_subtype == transfer.event_subtype and
                     (
@@ -1450,6 +1499,7 @@ class EVMTransactionDecoderWithDSProxy(EVMTransactionDecoder, ABC):
             misc_counterparties: list[CounterpartyDetails],
             base_tools: BaseDecoderToolsWithDSProxy,
             exceptions_mappings: dict[str, 'Asset'] | None = None,
+            beacon_chain: 'BeaconChain | None' = None,
     ):
         super().__init__(
             database=database,
@@ -1460,6 +1510,7 @@ class EVMTransactionDecoderWithDSProxy(EVMTransactionDecoder, ABC):
             misc_counterparties=misc_counterparties,
             base_tools=base_tools,
             exceptions_mappings=exceptions_mappings,
+            beacon_chain=beacon_chain,
         )
         self.evm_inquirer: EvmNodeInquirerWithDSProxy  # Set explicit type
         self.base: BaseDecoderToolsWithDSProxy  # Set explicit type

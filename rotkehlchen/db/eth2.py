@@ -1,31 +1,55 @@
 import json
 import logging
 from collections import defaultdict
+from collections.abc import Collection
 from typing import TYPE_CHECKING, Literal
 
 from pysqlcipher3 import dbapi2 as sqlcipher
 
+from rotkehlchen.api.v1.types import IncludeExcludeFilterData
+from rotkehlchen.chain.ethereum.modules.eth2.constants import CPT_ETH2, MIN_EFFECTIVE_BALANCE
 from rotkehlchen.chain.ethereum.modules.eth2.structures import (
     ValidatorDailyStats,
     ValidatorDetails,
     ValidatorDetailsWithStatus,
+    ValidatorType,
 )
 from rotkehlchen.chain.ethereum.modules.eth2.utils import form_withdrawal_notes
-from rotkehlchen.constants import ONE, ZERO
-from rotkehlchen.constants.timing import DAY_IN_SECONDS, HOUR_IN_SECONDS
+from rotkehlchen.constants import ONE, WEEK_IN_MILLISECONDS, ZERO
+from rotkehlchen.constants.assets import A_ETH
+from rotkehlchen.constants.timing import (
+    DAY_IN_SECONDS,
+    HOUR_IN_SECONDS,
+)
 from rotkehlchen.db.cache import DBCacheDynamic
 from rotkehlchen.db.filtering import (
     ETH_STAKING_EVENT_JOIN,
     EthStakingEventFilterQuery,
     EthWithdrawalFilterQuery,
     EvmEventFilterQuery,
+    HistoryEventFilterQuery,
+    WithdrawalTypesFilter,
 )
+from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.errors.misc import InputError
 from rotkehlchen.fval import FVal
-from rotkehlchen.history.events.structures.base import HistoryBaseEntryType
+from rotkehlchen.history.events.structures.base import HistoryBaseEntry, HistoryBaseEntryType
+from rotkehlchen.history.events.structures.eth2 import (
+    EthBlockEvent,
+    EthDepositEvent,
+    EthWithdrawalEvent,
+)
+from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.types import ChecksumEvmAddress, Eth2PubKey, Timestamp
-from rotkehlchen.utils.misc import ts_ms_to_sec
+from rotkehlchen.types import (
+    ChecksumEvmAddress,
+    Eth2PubKey,
+    SupportedBlockchain,
+    Timestamp,
+    TimestampMS,
+    deserialize_evm_tx_hash,
+)
+from rotkehlchen.utils.misc import ts_ms_to_sec, ts_sec_to_ms
 
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
@@ -158,10 +182,29 @@ class DBEth2:
 
     def get_validators(self, cursor: 'DBCursor') -> list[ValidatorDetails]:
         cursor.execute(
-            'SELECT validator_index, public_key, ownership_proportion, withdrawal_address, '
+            'SELECT validator_index, public_key, validator_type, ownership_proportion, withdrawal_address, '  # noqa: E501
             'activation_timestamp, withdrawable_timestamp, exited_timestamp FROM eth2_validators;',
         )
         return [ValidatorDetails.deserialize_from_db(x) for x in cursor]
+
+    def get_consolidated_validators(self, cursor: 'DBCursor') -> dict[int, int]:
+        """Returns a mapping of source validator index to target validator index
+        for all validators that have been consolidated.
+        """
+        cursor.execute(
+            'SELECT e.extra_data FROM history_events AS e LEFT JOIN evm_events_info ON evm_events_info.identifier=e.identifier '  # noqa: E501
+            'WHERE evm_events_info.counterparty = ? AND e.type = ? AND e.subtype = ? ',
+            (CPT_ETH2, HistoryEventType.INFORMATIONAL.serialize(), HistoryEventSubType.CONSOLIDATE.serialize()),  # noqa: E501
+        )
+        consolidation_indices = {}
+        for raw_extra_data in cursor:
+            try:
+                extra_data = json.loads(raw_extra_data[0])
+                consolidation_indices[extra_data['source_validator_index']] = extra_data['target_validator_index']  # noqa: E501
+            except (KeyError, json.JSONDecodeError) as e:  # should never happen
+                log.error(f'Unable to decode extra data from eth2 consolidation event {raw_extra_data} due to {e}')  # noqa: E501
+
+        return consolidation_indices
 
     def get_validators_with_status(
             self,
@@ -169,14 +212,21 @@ class DBEth2:
             validator_indices: set[int] | None,
     ) -> list[ValidatorDetailsWithStatus]:
         result: list[ValidatorDetailsWithStatus] = []
-        exited_indices = self.get_exited_validator_indices(cursor)
+        exited_indices = self.get_exited_validator_indices(
+            cursor=cursor,
+            validator_indices=validator_indices,
+        )
+        consolidated_indices = self.get_consolidated_validators(cursor)
         cursor.execute(
-            'SELECT validator_index, public_key, ownership_proportion, withdrawal_address, '
+            'SELECT validator_index, public_key, validator_type, ownership_proportion, withdrawal_address, '  # noqa: E501
             'activation_timestamp, withdrawable_timestamp, exited_timestamp FROM eth2_validators;',
         )
         for entry in cursor:
             validator = ValidatorDetailsWithStatus.deserialize_from_db(entry)
-            validator.determine_status(exited_indices)
+            validator.determine_status(
+                exited_indices=exited_indices,
+                consolidated_indices=consolidated_indices,
+            )
             result.append(validator)
 
         if validator_indices is not None:
@@ -191,11 +241,18 @@ class DBEth2:
         )
         return {x[0] for x in cursor}
 
-    def get_exited_validator_indices(self, cursor: 'DBCursor') -> set[int]:
-        """Returns the indices of the tracked validators that we know have exited"""
-        cursor.execute(
-            'SELECT validator_index FROM eth2_validators WHERE exited_timestamp IS NOT NULL',
-        )
+    @staticmethod
+    def get_exited_validator_indices(cursor: 'DBCursor', validator_indices: Collection[int] | None) -> set[int]:  # noqa: E501
+        """Returns the indices of tracked validators that we know have exited.
+        If `validator_indices` is provided, results are filtered to include only those indices.
+        """
+        query = 'SELECT validator_index FROM eth2_validators WHERE exited_timestamp IS NOT NULL'
+        if validator_indices is not None:
+            query = f'{query} AND validator_index IN ({",".join("?" * len(validator_indices))})'
+            cursor.execute(query, tuple(validator_indices))
+        else:
+            cursor.execute(query)
+
         return {x[0] for x in cursor}
 
     def get_associated_with_addresses_validator_indices(
@@ -255,14 +312,14 @@ class DBEth2:
         self.add_or_update_validators(
             write_cursor=write_cursor,
             validators=validators,
-            updatable_attributes=('validator_index', 'withdrawal_address', 'activation_timestamp', 'withdrawable_timestamp'),  # noqa: E501
+            updatable_attributes=('validator_index', 'validator_type', 'withdrawal_address', 'activation_timestamp', 'withdrawable_timestamp'),  # noqa: E501
         )
 
     def add_or_update_validators(
             self,
             write_cursor: 'DBCursor',
             validators: list[ValidatorDetails],
-            updatable_attributes: tuple[str, ...] = ('validator_index', 'ownership_proportion', 'withdrawal_address', 'activation_timestamp', 'withdrawable_timestamp', 'exited_timestamp'),  # noqa: E501
+            updatable_attributes: tuple[str, ...] = ('validator_index', 'ownership_proportion', 'validator_type', 'withdrawal_address', 'activation_timestamp', 'withdrawable_timestamp', 'exited_timestamp'),  # noqa: E501
     ) -> None:
         """Adds or updates validator data
 
@@ -273,7 +330,7 @@ class DBEth2:
         """
         for validator in validators:
             result = write_cursor.execute(
-                'SELECT validator_index, public_key, ownership_proportion, withdrawal_address, '
+                'SELECT validator_index, public_key, validator_type, ownership_proportion, withdrawal_address, '  # noqa: E501
                 'activation_timestamp, withdrawable_timestamp, exited_timestamp '
                 'FROM eth2_validators WHERE public_key=?', (validator.public_key,),
             ).fetchone()
@@ -281,6 +338,9 @@ class DBEth2:
                 db_validator = ValidatorDetails.deserialize_from_db(result)
                 for attr in updatable_attributes:
                     if getattr(db_validator, attr) != (new_value := getattr(validator, attr)):
+                        if attr == 'validator_type':
+                            new_value = new_value.serialize_for_db()
+
                         write_cursor.execute(
                             f'UPDATE eth2_validators SET {attr}=? WHERE public_key=?',
                             (new_value, validator.public_key),
@@ -288,7 +348,7 @@ class DBEth2:
             else:  # insertion case
                 write_cursor.execute(
                     'INSERT INTO '
-                    'eth2_validators(validator_index, public_key, ownership_proportion, withdrawal_address, activation_timestamp, withdrawable_timestamp, exited_timestamp) VALUES(?, ?, ?, ?, ?, ?, ?)',  # noqa: E501
+                    'eth2_validators(validator_index, public_key, validator_type, ownership_proportion, withdrawal_address, activation_timestamp, withdrawable_timestamp, exited_timestamp) VALUES(?, ?, ?, ?, ?, ?, ?, ?)',  # noqa: E501
                     validator.serialize_for_db(),
                 )
 
@@ -357,7 +417,6 @@ class DBEth2:
             filter_query: EthStakingEventFilterQuery,
     ) -> dict[int, FVal]:
         """Execute DB query and extract numerical value per validator after using filter_query
-
         Return a dict of validator index to sum of amounts per validator in the filter
         """
         base_query = f'SELECT validator_index, {amount_querystr} ' + ETH_STAKING_EVENT_JOIN
@@ -366,29 +425,376 @@ class DBEth2:
 
         return {entry[0]: FVal(entry[1]) for entry in cursor}
 
-    def get_validators_profit(
+    def group_validators_by_type(
+            self,
+            database: 'DBHandler',
+            validator_indices: set[int] | None,
+    ) -> tuple[list[int], list[int]]:
+        """Group validators into two categories: non-accumulating (0x00, 0x01) and accumulating (0x02).
+        If no validator indices are specified, all known validators will be returned.
+        Returns a tuple containing the non-accumulating and accumulating validators in two lists.
+        """  # noqa: E501
+        where_str = ''
+        bindings: tuple[int, ...] = ()
+        if validator_indices is not None:
+            where_str = f"AND validator_index IN ({','.join(['?'] * len(validator_indices))})"
+            bindings = tuple(validator_indices)
+
+        with database.conn.read_ctx() as cursor:
+            validator_lists = [
+                [row[0] for row in cursor.execute(
+                    f'SELECT validator_index FROM eth2_validators WHERE validator_type {operator} ? {where_str}',  # noqa: E501
+                    [ValidatorType.ACCUMULATING.value, *bindings],
+                )] for operator in ('!=', '=')
+            ]
+
+        return tuple(validator_lists)  # type: ignore  # will be two list[int]
+
+    def process_non_accumulating_validators_balances_and_pnl(
+            self,
+            from_ts: Timestamp,
+            to_ts: Timestamp,
+            validator_indices: list[int],
+            balances_over_time: dict[int, dict[TimestampMS, FVal]],
+            withdrawals_pnl: dict[int, FVal],
+            exits_pnl: dict[int, FVal],
+    ) -> tuple[dict[int, dict[TimestampMS, FVal]], dict[int, FVal], dict[int, FVal]]:
+        """Process non-accumulating validators, setting the balances and retrieving the pnl from
+        withdrawals and exits.
+
+        Since non-accumulating validators will have an effective balance of 32, we can simply
+        set a single entry of 32 at to_ts in balances_over_time.
+
+        Returns the `balances_over_time`, `withdrawals_pnl` and `exits_pnl` dicts in a tuple.
+        """
+        to_ts_ms = ts_sec_to_ms(to_ts)
+        for validator in validator_indices:  # All non-accumulating validators have an effective balance of 32  # noqa: E501
+            balances_over_time[validator][to_ts_ms] = MIN_EFFECTIVE_BALANCE
+
+        with self.db.conn.read_ctx() as cursor:
+            withdrawals_pnl.update(self._validator_stats_process_queries(
+                cursor=cursor,
+                amount_querystr='SUM(CAST(amount AS REAL))',  # note: has precision issues
+                filter_query=EthWithdrawalFilterQuery.make(
+                    from_ts=from_ts,
+                    to_ts=to_ts,
+                    validator_indices=validator_indices,
+                    event_types=[HistoryEventType.STAKING],
+                    event_subtypes=[HistoryEventSubType.REMOVE_ASSET],
+                    entry_types=IncludeExcludeFilterData(values=[HistoryBaseEntryType.ETH_WITHDRAWAL_EVENT]),
+                    withdrawal_types_filter=WithdrawalTypesFilter.ONLY_PARTIAL,
+                ),
+            ))
+            exits_pnl.update(self._validator_stats_process_queries(
+                cursor=cursor,
+                amount_querystr=f'CAST(amount AS REAL) - {MIN_EFFECTIVE_BALANCE}',  # note: has precision issues  # noqa: E501
+                filter_query=EthWithdrawalFilterQuery.make(
+                    from_ts=from_ts,
+                    to_ts=to_ts,
+                    validator_indices=validator_indices,
+                    event_types=[HistoryEventType.STAKING],
+                    event_subtypes=[HistoryEventSubType.REMOVE_ASSET],
+                    entry_types=IncludeExcludeFilterData(values=[HistoryBaseEntryType.ETH_WITHDRAWAL_EVENT]),
+                    withdrawal_types_filter=WithdrawalTypesFilter.ONLY_EXITS,
+                ),
+            ))
+
+        return balances_over_time, withdrawals_pnl, exits_pnl
+
+    def process_accumulating_validators_balances_and_pnl(
+            self,
+            from_ts: Timestamp,
+            to_ts: Timestamp,
+            validator_indices: list[int],
+            balances_over_time: dict[int, dict[TimestampMS, FVal]],
+            withdrawals_pnl: dict[int, FVal],
+            exits_pnl: dict[int, FVal],
+    ) -> tuple[dict[int, dict[TimestampMS, FVal]], dict[int, FVal], dict[int, FVal]]:
+        """Process historical events for accumulating validators, retrieving their balances
+        over time and pnl from withdrawals and exits.
+
+        Returns the `balances_over_time`, `withdrawals_pnl` and `exits_pnl` dicts in a tuple.
+        """
+        events_db = DBHistoryEvents(self.db)
+        events: list[HistoryBaseEntry] = []
+        with self.db.conn.read_ctx() as cursor:
+            cached_balances_over_time, cached_withdrawals_pnl, cached_exits_pnl, cached_last_stored_ts = self._load_eth2_validator_cache(  # noqa: E501
+                cursor=cursor,
+                from_ts=from_ts,
+                to_ts=to_ts,
+                validator_indices=validator_indices,
+            )
+            from_ts = Timestamp(cached_last_stored_ts + 1) if cached_last_stored_ts > 0 else from_ts  # noqa: E501
+
+            for filter_query in (EthStakingEventFilterQuery.make(
+                from_ts=from_ts,
+                to_ts=to_ts,
+                validator_indices=validator_indices,
+                event_types=[HistoryEventType.STAKING],
+                event_subtypes=[
+                    HistoryEventSubType.DEPOSIT_ASSET,
+                    HistoryEventSubType.REMOVE_ASSET,
+                ],
+                entry_types=IncludeExcludeFilterData(values=[
+                    HistoryBaseEntryType.ETH_DEPOSIT_EVENT,
+                    HistoryBaseEntryType.ETH_WITHDRAWAL_EVENT,
+                ]),
+            ), EvmEventFilterQuery.make(
+                from_ts=from_ts,
+                to_ts=to_ts,
+                event_types=[HistoryEventType.INFORMATIONAL],
+                event_subtypes=[HistoryEventSubType.CONSOLIDATE],
+                counterparties=[CPT_ETH2],
+            )):
+                events.extend(events_db.get_history_events(
+                    cursor=cursor,
+                    filter_query=filter_query,  # type: ignore[arg-type]  # no overload for EthStakingEventFilterQuery
+                    has_premium=True,
+                ))
+
+            # Get withdrawal request events for each validator
+            withdrawal_request_events = defaultdict(list)
+            for request_event in events_db.get_history_events(
+                cursor=cursor,
+                filter_query=EvmEventFilterQuery.make(
+                    to_ts=to_ts,
+                    event_types=[HistoryEventType.INFORMATIONAL],
+                    event_subtypes=[HistoryEventSubType.REMOVE_ASSET],
+                    counterparties=[CPT_ETH2],
+                    order_by_rules=[('timestamp', False)],  # reverse so we get the first request before a withdrawal below  # noqa: E501
+                ),
+                has_premium=True,
+            ):
+                if (
+                    request_event.extra_data is not None and
+                    (v_index := request_event.extra_data.get('validator_index')) in validator_indices  # noqa: E501
+                ):  # only keep related withdrawal requests
+                    withdrawal_request_events[v_index].append(request_event)
+
+        balances_over_time.update(cached_balances_over_time)
+        withdrawals_pnl.update(cached_withdrawals_pnl)
+        exits_pnl.update(cached_exits_pnl)
+
+        from_ts_ms, to_ts_ms = ts_sec_to_ms(from_ts), ts_sec_to_ms(to_ts)
+        validator_balances: dict[int, FVal] = defaultdict(lambda: ZERO)
+        # This mapping is for skimming withdrawals per timestamp to properly cache and filter by time range  # noqa: E501
+        withdrawals_pnl_over_time:  dict[int, dict[TimestampMS, FVal]] = defaultdict(lambda: defaultdict(lambda: ZERO))  # noqa: E501
+        for event in sorted(events, key=lambda x: x.timestamp):  # Process all related events and populate the relevant mappings  # noqa: E501
+            if isinstance(event, EthDepositEvent):
+                validator_balances[v_index := event.validator_index] += event.amount
+            elif isinstance(event, EthWithdrawalEvent):
+                v_index = event.validator_index
+                if event.is_exit_or_blocknumber is True:  # Exit withdrawals
+                    if from_ts_ms <= event.timestamp <= to_ts_ms:  # only count pnl within the specified range  # noqa: E501
+                        exits_pnl[v_index] = event.amount - validator_balances[v_index]
+                        validator_balances[v_index] = ZERO
+                    else:
+                        continue
+                else:  # Partial withdrawals
+                    for request_event in withdrawal_request_events.get(v_index, []):
+                        if request_event.timestamp <= event.timestamp and request_event.amount == event.amount:  # requested partial withdrawal  # noqa: E501
+                            validator_balances[v_index] -= event.amount
+                            withdrawal_request_events[v_index].remove(request_event)  # remove this request event so we don't match it again.  # noqa: E501
+                            break
+                    else:  # skimming withdrawal - doesn't change the effective balance, but is counted as profit  # noqa: E501
+                        withdrawals_pnl_over_time[v_index][event.timestamp] += event.amount
+                        continue
+            elif (
+                event.event_type == HistoryEventType.INFORMATIONAL and
+                event.event_subtype == HistoryEventSubType.CONSOLIDATE and
+                event.extra_data is not None and
+                (source_validator := event.extra_data.get('source_validator_index')) is not None and  # noqa: E501
+                (target_validator := event.extra_data.get('target_validator_index')) is not None
+            ):
+                if target_validator not in validator_indices:
+                    continue
+
+                # Find the last balance of the source validator (the amount being consolidated)
+                if source_validator not in balances_over_time:  # need to process the source validator's history  # noqa: E501
+                    if source_validator in validator_indices:  # Prevent recursively reprocessing the source validator  # noqa: E501
+                        log.warning(
+                            'Failed to find events for consolidation source validator '
+                            f'{source_validator}. Skipping consolidation event.',
+                        )
+                        continue
+
+                    new_balances_over_time, _, _ = self.process_validators_balances_and_pnl(
+                        from_ts=from_ts,
+                        to_ts=to_ts,
+                        validator_indices={source_validator},
+                    )
+                    balances_over_time.update(new_balances_over_time)
+
+                # else we've already processed the source validator
+                source_balances = balances_over_time[source_validator]
+                validator_balances[v_index := target_validator] += source_balances[max(source_balances.keys())]  # noqa: E501
+            else:
+                log.warning(f'Encountered unexpected event {event} during validator event processing.')  # noqa: E501
+                continue
+
+            balances_over_time[v_index][event.timestamp] = validator_balances[v_index]
+
+        with self.db.conn.write_ctx() as write_cursor:
+            self._save_eth2_validator_cache(
+                write_cursor=write_cursor,
+                to_ts=to_ts,
+                balances_over_time=balances_over_time,
+                withdrawals_pnl_over_time=withdrawals_pnl_over_time,
+                exits_pnl=exits_pnl,
+            )
+
+        # recreate the withdrawals pnl to only include pnl in that timeframe.
+        for v_index, balances in withdrawals_pnl_over_time.items():
+            for ts, balance in balances.items():
+                if from_ts_ms <= ts <= to_ts_ms:  # only count pnl within the specified range  # noqa: E501
+                    withdrawals_pnl[v_index] += balance
+
+        return balances_over_time, withdrawals_pnl, exits_pnl
+
+    def process_validators_balances_and_pnl(
+            self,
+            from_ts: Timestamp,
+            to_ts: Timestamp,
+            validator_indices: set[int] | None,
+    ) -> tuple[dict[int, dict[TimestampMS, FVal]], dict[int, FVal], dict[int, FVal]]:
+        """Process validators for their balances over time and pnl from withdrawals and exits.
+        Returns a tuple of three dicts organizing the following by validator index:
+        - dict of balances over time, mapping validator indices to their balance history (timestamps → balance values),
+          used for time-weighted average calculations
+        - pnl from withdrawals
+        - pnl from exits
+        """  # noqa: E501
+        non_accumulating_validators, accumulating_validators = self.group_validators_by_type(
+            database=self.db,
+            validator_indices=validator_indices,
+        )
+        balances_over_time: dict[int, dict[TimestampMS, FVal]] = defaultdict(lambda: defaultdict(lambda: ZERO))  # noqa: E501
+        withdrawals_pnl: dict[int, FVal] = defaultdict(lambda: ZERO)
+        exits_pnl: dict[int, FVal] = defaultdict(lambda: ZERO)
+        for validators, func in (
+            (non_accumulating_validators, self.process_non_accumulating_validators_balances_and_pnl),  # noqa: E501
+            (accumulating_validators, self.process_accumulating_validators_balances_and_pnl),
+        ):
+            if len(validators) != 0:
+                func(
+                    from_ts=from_ts,
+                    to_ts=to_ts,
+                    validator_indices=validators,
+                    balances_over_time=balances_over_time,
+                    withdrawals_pnl=withdrawals_pnl,
+                    exits_pnl=exits_pnl,
+                )
+
+        return balances_over_time, withdrawals_pnl, exits_pnl
+
+    @staticmethod
+    def _load_eth2_validator_cache(
+            cursor: 'DBCursor',
+            from_ts: Timestamp,
+            to_ts: Timestamp,
+            validator_indices: list[int] | None,
+    ) -> tuple[dict[int, dict[TimestampMS, FVal]], dict[int, FVal], dict[int, FVal], Timestamp]:
+        """Return cached validator balance and PnL data from the database.
+
+        Only includes entries within the given time range and (optionally) the specified validator indices.
+        Returns a tuple containing:
+        - Balances over time for each validator
+        - Withdrawals PnL for each validator
+        - Exits PnL for each validator
+        - The latest timestamp found in the cache or 0 if no data is cached
+
+        This is only used for accumulating validators since it involves a lot of processing.
+        """  # noqa: E501
+        latest_ts: Timestamp = Timestamp(0)
+        balances_over_time: dict[int, dict[TimestampMS, FVal]] = defaultdict(lambda: defaultdict(lambda: ZERO))  # noqa: E501
+        exits_pnl: dict[int, FVal] = defaultdict(lambda: ZERO)
+        withdrawals_pnl: dict[int, FVal] = defaultdict(lambda: ZERO)
+
+        query = """SELECT validator_index, timestamp, balance, withdrawals_pnl, exit_pnl
+        FROM eth_validators_data_cache WHERE timestamp >= ? AND timestamp <= ?"""
+        bindings: list = [ts_sec_to_ms(from_ts), ts_sec_to_ms(to_ts)]
+        if validator_indices is not None and len(validator_indices) != 0:
+            query += f" AND validator_index IN ({','.join(['?'] * len(validator_indices))})"
+            bindings.extend(validator_indices)
+        cursor.execute(f'{query} ORDER BY timestamp ASC', bindings)
+
+        for v_index, timestamp, str_balance, withdrawal_pnl, exit_pnl in cursor:
+            if (balance := FVal(str_balance)) > ZERO:  # store balance data only if balance > 0
+                balances_over_time[v_index][timestamp] = FVal(balance)
+
+            # accumulate PnL data
+            withdrawals_pnl[v_index] += FVal(withdrawal_pnl)
+            exits_pnl[v_index] += FVal(exit_pnl)
+            if (ts_in_sec := ts_ms_to_sec(timestamp)) > latest_ts:
+                latest_ts = ts_in_sec
+
+        return balances_over_time, withdrawals_pnl, exits_pnl, latest_ts
+
+    @staticmethod
+    def _save_eth2_validator_cache(
+            write_cursor: 'DBCursor',
+            to_ts: Timestamp,
+            balances_over_time: dict[int, dict[TimestampMS, FVal]],
+            withdrawals_pnl_over_time: dict[int, dict[TimestampMS, FVal]],
+            exits_pnl: dict[int, FVal],
+    ) -> None:
+        """Save validator balance and PnL data to the database, once per week per validator.
+
+        This function caches validator data weekly instead of daily to reduce database size.
+        The cached data is used for faster lookups when needed.
+
+        For each (validator, week), sums all values falling within that week across:
+        - balances_over_time
+        - withdrawals_pnl
+        - exits_pnl
+
+        Stores the weekly totals under the week end timestamp.
+        This is only used for accumulating validators since it involves a lot of processing.
+        """
+        query = """INSERT OR REPLACE INTO eth_validators_data_cache (
+            validator_index, timestamp, balance, withdrawals_pnl, exit_pnl
+        ) VALUES (?, ?, ?, ?, ?)"""
+
+        last_week_ts = ts_sec_to_ms(to_ts) - (ts_sec_to_ms(to_ts) % WEEK_IN_MILLISECONDS) + (WEEK_IN_MILLISECONDS - 1)  # Calculate the last week's timestamp (aligned to week boundary)  # noqa: E501
+        grouped: dict[tuple[int, int], dict[str, FVal]] = defaultdict(lambda: {  # Aggregates data by (validator_index, week_start_ts) for weekly storage  # noqa: E501
+            'balance': ZERO,
+            'withdrawals_pnl': ZERO,
+            'exit_pnl': ZERO,
+        })
+
+        for balance_key, balances in [
+            ('balance', balances_over_time),
+            ('withdrawals_pnl', withdrawals_pnl_over_time),
+        ]:
+            for validator_index, ts_map in balances.items():
+                for ts, val in ts_map.items():
+                    key = (validator_index, ts + (WEEK_IN_MILLISECONDS - (ts % WEEK_IN_MILLISECONDS)) - 1)  # noqa: E501
+                    grouped[key][balance_key] += val
+
+        for v_index, pnl_amount in exits_pnl.items():
+            key = (v_index, last_week_ts)
+            grouped[key]['exit_pnl'] += pnl_amount
+
+        for (validator_index, week_ts), values in grouped.items():
+            write_cursor.execute(query, (
+                validator_index,
+                week_ts,
+                str(values['balance']),
+                str(values['withdrawals_pnl']),
+                str(values['exit_pnl']),
+            ))
+
+    def get_validators_block_and_mev_rewards(
             self,
             cursor: 'DBCursor',
-            withdrawals_filter_query: EthWithdrawalFilterQuery,
-            exits_filter_query: EthWithdrawalFilterQuery,
             blocks_execution_filter_query: EthStakingEventFilterQuery,
-            mev_execution_filter_query: EvmEventFilterQuery,
+            mev_execution_filter_query: HistoryEventFilterQuery,
             to_filter_indices: set[int] | None,
-    ) -> tuple[dict[int, FVal], dict[int, FVal], dict[int, FVal], dict[int, FVal]]:
-        """Query withdrawals, exits, EL rewards amounts for the given filter.
+    ) -> tuple[dict[int, FVal], dict[int, FVal]]:
+        """Query EL block and mev reward amounts for the given filter.
 
         Returns each of the different amount sums for the period per validator
         """
-        withdrawals_amounts = self._validator_stats_process_queries(
-            cursor=cursor,
-            amount_querystr='SUM(CAST(amount AS REAL))',  # note: has precision issues
-            filter_query=withdrawals_filter_query,
-        )
-        exits_pnl = self._validator_stats_process_queries(
-            cursor=cursor,
-            amount_querystr='CAST(amount AS REAL) - 32',  # note: has precision issues
-            filter_query=exits_filter_query,
-        )
         blocks_rewards_amounts = self._validator_stats_process_queries(
             cursor=cursor,
             amount_querystr='SUM(CAST(amount AS REAL))',  # note: has precision issues
@@ -420,4 +826,113 @@ class DBEth2:
 
             mev_rewards_amounts[validator_index] += FVal(amount_str)
 
-        return withdrawals_amounts, exits_pnl, blocks_rewards_amounts, mev_rewards_amounts
+        return blocks_rewards_amounts, mev_rewards_amounts
+
+    def redecode_block_production_events(self, block_numbers: list[int] | None = None) -> None:
+        """Reprocess eth block production events from the db.
+        - Resets event type depending on whether the fee recipient address is tracked.
+        - Combine mev reward events with evm tx events
+        Optionally limit to only events for the specified block numbers.
+        """
+        with self.db.conn.write_ctx() as write_cursor:
+            tracked_addresses = self.db.get_single_blockchain_addresses(
+                cursor=write_cursor,
+                blockchain=SupportedBlockchain.ETHEREUM,
+            )
+            for event_type, operation in (
+                (HistoryEventType.STAKING, 'IN'),
+                (HistoryEventType.INFORMATIONAL, 'NOT IN'),
+            ):
+                query = (
+                    'UPDATE history_events SET type=? WHERE entry_type=? AND subtype=? '
+                    f"AND location_label {operation} ({','.join('?' * len(tracked_addresses))})"
+                )
+                bindings = [
+                    event_type.serialize(),
+                    HistoryBaseEntryType.ETH_BLOCK_EVENT.value,
+                    HistoryEventSubType.BLOCK_PRODUCTION.serialize(),
+                    *tracked_addresses,
+                ]
+                if block_numbers is not None and len(block_numbers) > 0:
+                    query += (
+                        ' AND identifier IN (SELECT identifier FROM eth_staking_events_info '
+                        f"WHERE is_exit_or_blocknumber IN ({','.join('?' * len(block_numbers))}))"
+                    )
+                    bindings += block_numbers
+
+                write_cursor.execute(query, bindings)
+
+        self.combine_block_with_tx_events(block_numbers=block_numbers)
+
+    def combine_block_with_tx_events(self, block_numbers: list[int] | None = None) -> None:
+        """Get mev reward block production events and combine them with the transaction events
+        if they can be found. Optionally limit to only events for the specified block numbers.
+        """
+        with self.db.conn.read_ctx() as cursor:
+            query = (
+                """SELECT B_H.identifier, B_T.block_number, B_H.notes, B_T.tx_hash, (
+                    SELECT A_S.validator_index FROM history_events A_H
+                    LEFT JOIN eth_staking_events_info A_S ON A_H.identifier=A_S.identifier
+                    WHERE A_H.subtype=? AND A_S.is_exit_or_blocknumber=B_T.block_number
+                    AND A_H.location_label=B_H.location_label
+                ) as validator_index
+                FROM evm_transactions B_T LEFT JOIN evm_events_info B_E ON B_T.tx_hash=B_E.tx_hash
+                LEFT JOIN history_events B_H ON B_E.identifier=B_H.identifier
+                WHERE B_H.asset=? AND B_H.type=? AND B_H.subtype=? AND B_T.block_number=(
+                    SELECT A_S.is_exit_or_blocknumber FROM history_events A_H
+                    LEFT JOIN eth_staking_events_info A_S ON A_H.identifier=A_S.identifier
+                    WHERE A_H.subtype=? AND A_S.is_exit_or_blocknumber=B_T.block_number
+                    AND A_H.location_label=B_H.location_label
+                )"""
+            )
+            bindings: list[int | str] = [
+                HistoryEventSubType.MEV_REWARD.serialize(),
+                A_ETH.identifier,
+                HistoryEventType.RECEIVE.serialize(),
+                HistoryEventSubType.NONE.serialize(),
+                HistoryEventSubType.MEV_REWARD.serialize(),
+            ]
+            if block_numbers is not None and len(block_numbers) > 0:
+                placeholders = ','.join('?' * len(block_numbers))
+                query += f' AND B_T.block_number IN ({placeholders})'
+                bindings += block_numbers
+
+            changes = []
+            for entry in cursor.execute(query, bindings):
+                event_identifier = EthBlockEvent.form_event_identifier(entry[1])
+                tx_hash = deserialize_evm_tx_hash(entry[3])
+                changes.append((
+                    event_identifier,
+                    event_identifier,
+                    f'{entry[2]} as mev reward for block {entry[1]} in {tx_hash.hex()}',  # pylint: disable=no-member
+                    HistoryEventType.STAKING.serialize(),
+                    HistoryEventSubType.MEV_REWARD.serialize(),
+                    json.dumps({'validator_index': entry[4]}),  # extra data
+                    entry[0],  # identifier
+                    tx_hash,
+                ))
+
+        with self.db.user_write() as write_cursor:
+            for changes_entry in changes:
+                result = write_cursor.execute(
+                    'SELECT COUNT(*) FROM history_events HE LEFT JOIN evm_events_info EE ON '
+                    'HE.identifier = EE.identifier WHERE HE.event_identifier=? AND EE.tx_hash=?',
+                    (changes_entry[0], changes_entry[7]),
+                ).fetchone()[0]
+                if result == 1:  # Has already been moved.
+                    log.debug(f'Did not move history event with {changes_entry} in combine_block_with_tx_events since event with same tx_hash already combined in the block')  # noqa: E501
+                    write_cursor.execute('DELETE FROM history_events WHERE identifier=?', (changes_entry[6],))  # noqa: E501
+                    continue
+
+                try:
+                    write_cursor.execute(
+                        'UPDATE history_events '
+                        'SET event_identifier=?, sequence_index=('
+                        'SELECT MAX(sequence_index) FROM history_events E2 WHERE E2.event_identifier=?)+1, '  # noqa: E501
+                        'notes=?, type=?, subtype=?, extra_data=? WHERE identifier=?',
+                        changes_entry[:-1],
+                    )
+                except sqlcipher.IntegrityError as e:  # pylint: disable=no-member
+                    log.warning(f'Could not update history events with {changes_entry} in combine_block_with_tx_events due to {e!s}')  # noqa: E501
+                    # already exists. Probably right after resetting events? Delete old one
+                    write_cursor.execute('DELETE FROM history_events WHERE identifier=?', (changes_entry[6],))  # noqa: E501

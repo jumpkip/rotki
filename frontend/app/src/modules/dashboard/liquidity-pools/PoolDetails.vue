@@ -6,8 +6,8 @@ import AssetDetails from '@/components/helper/AssetDetails.vue';
 import PremiumLock from '@/components/premium/PremiumLock.vue';
 import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
 import { usePremium } from '@/composables/premium';
+import { usePriceUtils } from '@/modules/prices/use-price-utils';
 import { TableId, useRememberTableSorting } from '@/modules/table/use-remember-table-sorting';
-import { useBalancePricesStore } from '@/store/balances/prices';
 import { useGeneralSettingsStore } from '@/store/settings/general';
 import { sortAssetBalances } from '@/utils/balances';
 import { type AssetBalanceWithPrice, Zero } from '@rotki/common';
@@ -27,10 +27,10 @@ const sort = ref<DataTableSortData<AssetBalanceWithPrice>>({
 });
 
 const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
-const { assetPrice } = useBalancePricesStore();
+const { assetPrice } = usePriceUtils();
 const { assetInfo } = useAssetInfoRetrieval();
 const premium = usePremium();
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const cols = computed<DataTableColumn<AssetBalanceWithPrice>[]>(() => [{
   cellClass: 'text-no-wrap',
@@ -86,10 +86,7 @@ const sorted = computed<AssetBalanceWithPrice[]>(() => {
     class="bg-white dark:bg-[#1E1E1E] my-2"
   >
     <template #item.asset="{ row }">
-      <AssetDetails
-        opens-details
-        :asset="row.asset"
-      />
+      <AssetDetails :asset="row.asset" />
     </template>
     <template #item.usdPrice="{ row }">
       <AmountDisplay

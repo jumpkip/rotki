@@ -3,7 +3,6 @@ import type { HistoryEventDeletePayload } from '@/modules/history/events/types';
 import type { HistoryEventEditData } from '@/modules/history/management/forms/form-types';
 import type { HistoryEventEntry } from '@/types/history/events';
 import LazyLoader from '@/components/helper/LazyLoader.vue';
-import HistoryEventAsset from '@/components/history/events/HistoryEventAsset.vue';
 import HistoryEventNote from '@/components/history/events/HistoryEventNote.vue';
 import HistoryEventsListItem from '@/components/history/events/HistoryEventsListItem.vue';
 import HistoryEventsListItemAction from '@/components/history/events/HistoryEventsListItemAction.vue';
@@ -29,26 +28,77 @@ const { t } = useI18n({ useScope: 'global' });
 const { getChain } = useSupportedChains();
 const { getAssetSymbol } = useAssetInfoRetrieval();
 
-function getCompactNotes(events: HistoryEventEntry[]): string | undefined {
-  const spend = events.find(item => item.eventSubtype === 'spend');
-  const receive = events.find(item => item.eventSubtype === 'receive');
+const usedEvents = computed(() => {
+  if (get(expanded)) {
+    return props.events;
+  }
 
-  if (!spend || !receive) {
+  const filtered = props.events.filter(item => item.eventSubtype !== 'fee');
+
+  // Separate the spend and receive events
+  const spendEvents = filtered.filter(item => item.eventSubtype === 'spend');
+  const receiveEvents = filtered.filter(item => item.eventSubtype === 'receive');
+
+  // Create an alternating pattern
+  const alternating: HistoryEventEntry[] = [];
+  const maxPairs = Math.min(spendEvents.length, receiveEvents.length);
+
+  for (let i = 0; i < maxPairs; i++) {
+    if (spendEvents[i]) {
+      alternating.push(spendEvents[i]);
+    }
+    if (receiveEvents[i]) {
+      alternating.push(receiveEvents[i]);
+    }
+  }
+
+  // Add remaining spend events if any
+  if (spendEvents.length > receiveEvents.length) {
+    const remainingSpend = spendEvents.slice(receiveEvents.length);
+    alternating.push(...remainingSpend);
+  }
+
+  return alternating;
+});
+
+function getCompactNotes(events: HistoryEventEntry[]): string | undefined {
+  const spend = events.filter(item => item.eventSubtype === 'spend');
+  const receive = events.filter(item => item.eventSubtype === 'receive');
+
+  if (spend.length === 0 || receive.length === 0) {
     return undefined;
   }
 
+  const receiveNotes = receive.length === 1
+    ? {
+        receiveAmount: receive[0].amount,
+        receiveAsset: getAssetSymbol(receive[0].asset),
+      }
+    : {
+        receiveAmount: receive.length,
+        receiveAsset: 'asset',
+      };
+
+  const spendNotes = spend.length === 1
+    ? {
+        spendAmount: spend[0].amount,
+        spendAsset: getAssetSymbol(spend[0].asset),
+      }
+    : {
+        spendAmount: spend.length,
+        spendAsset: 'asset',
+      };
+
   let notes = t('history_events_list_swap.swap_description', {
-    receiveAmount: receive.amount,
-    receiveAsset: getAssetSymbol(receive.asset),
-    spendAmount: spend.amount,
-    spendAsset: getAssetSymbol(spend.asset),
+    ...receiveNotes,
+    ...spendNotes,
   });
 
-  const fee = props.events.find(item => item.eventSubtype === 'fee');
-  if (fee) {
+  const fee = props.events.filter(item => item.eventSubtype === 'fee');
+  if (fee.length > 0) {
+    const feeText = fee.map(item => `${item.amount} ${getAssetSymbol(item.asset)}`).join('; ');
     notes = t('history_events_list_swap.fee_description', {
-      feeAmount: fee.amount,
-      feeAsset: getAssetSymbol(fee.asset),
+      feeText,
       notes,
     });
   }
@@ -56,16 +106,11 @@ function getCompactNotes(events: HistoryEventEntry[]): string | undefined {
   return notes;
 }
 
-function showArrow(event: HistoryEventEntry, index: number): boolean {
-  const isSpend = event.eventSubtype === 'spend';
-  const willBeReceive = props.events[index + 1]?.eventSubtype === 'receive';
-  return isSpend && willBeReceive;
-}
-
 watch(expanded, () => {
-  if (get(isInitialRender)) {
-    set(isInitialRender, false);
+  if (!get(isInitialRender)) {
+    return;
   }
+  set(isInitialRender, false);
 });
 </script>
 
@@ -73,50 +118,117 @@ watch(expanded, () => {
   <TransitionGroup
     tag="div"
     name="list"
-    class="relative"
-    :style="{ height: expanded ? 'auto' : '90px' }"
+    class="relative group"
     :class="{
+      'grid grid-cols-10 gap-x-2 gap-y-1 @5xl:!grid-cols-[repeat(20,minmax(0,1fr))] items-start @5xl:min-h-[80px]': !expanded,
+      'flex flex-col': expanded,
       'transition-wrapper': !isInitialRender,
+      'md:pl-3': !expanded,
     }"
   >
     <LazyLoader
       v-if="!expanded"
-      class="pt-4 pb-0 lg:py-4.5 grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 items-start gap-3 gap-y-1 py-3 px-0 md:px-3"
+      key="history-event-type"
+      class="col-span-10 md:col-span-4 @5xl:!col-span-5 py-4 lg:py-4.5 relative"
     >
+      <RuiButton
+        size="sm"
+        icon
+        color="primary"
+        class="absolute top-2.5 -left-1 size-5 z-[6]"
+        @click="expanded = !expanded"
+      >
+        <RuiIcon
+          class="hidden group-hover:block"
+          name="lu-unfold-vertical"
+          size="14"
+        />
+        <span class="group-hover:hidden">{{ events.length }}</span>
+      </RuiButton>
       <HistoryEventType
         icon="lu-arrow-right-left"
         :event="events[0]"
         highlight
         :chain="getChain(events[0].location)"
       />
+    </LazyLoader>
 
-      <div
-        v-for="(event, eventIndex) in events.filter(item => item.eventSubtype !== 'fee')"
-        :key="event.identifier"
-        class="flex flex-col md:flex-row"
+    <div
+      key="history-event-assets"
+      class="flex flex-col col-span-10 md:col-span-6 @5xl:!col-span-8 relative"
+      :class="{
+        'md:py-2 grid grid-cols-10': !expanded,
+      }"
+    >
+      <RuiButton
+        v-if="expanded"
+        size="sm"
+        icon
+        color="primary"
+        class="absolute top-3 -left-2 md:left-1.5 size-5 z-[6]"
+        @click="expanded = !expanded"
       >
-        <HistoryEventAsset
-          :event="event"
-          class="transition-all duration-300 w-full"
+        <RuiIcon
+          class="hidden group-hover:block"
+          name="lu-fold-vertical"
+          size="14"
+        />
+        <span class="group-hover:hidden">{{ events.length }}</span>
+      </RuiButton>
+      <template
+        v-for="(event, eventIndex) in usedEvents"
+        :key="event.identifier"
+      >
+        <HistoryEventsListItem
+          :class="{
+            'col-start-1 col-span-4': !expanded && event.eventSubtype === 'spend',
+            'col-start-6 col-span-5': !expanded && event.eventSubtype === 'receive',
+          }"
+          :item="event"
+          :index="eventIndex"
+          :data-subtype="event.eventSubtype"
+          :events="usedEvents"
+          :compact="!expanded"
+          :event-group="events[0]"
+          :is-last="eventIndex === events.length - 1"
+          :is-highlighted="highlightedIdentifiers?.includes(event.identifier.toString())"
+          @edit-event="emit('edit-event', $event)"
+          @delete-event="emit('delete-event', $event)"
+          @show:missing-rule-action="emit('show:missing-rule-action', $event)"
         />
 
-        <div class="flex items-center">
+        <LazyLoader
+          v-if="!expanded && eventIndex === 0 && usedEvents.length > 0"
+          key="swap-arrow"
+          class="flex items-center px-2 @md:pl-0 h-14 col-start-5"
+        >
           <RuiIcon
-            v-if="showArrow(event, eventIndex)"
-            class="text-rui-grey-400 dark:text-rui-grey-600 rotate-90 md:rotate-0"
+            class="text-rui-grey-400 dark:text-rui-grey-600"
             name="lu-chevron-right"
             size="24"
           />
-        </div>
-      </div>
+        </LazyLoader>
+      </template>
+    </div>
 
+    <LazyLoader
+      v-if="!expanded && getCompactNotes(events)"
+      key="history-event-notes"
+      class="py-2 pt-4 md:pl-0 @5xl:!pl-0 @5xl:pt-4 col-span-10 @md:col-span-7 @5xl:!col-span-4"
+      min-height="80"
+    >
       <HistoryEventNote
-        v-if="getCompactNotes(events)"
-        class="md:col-span-2 lg:col-span-1"
         :notes="getCompactNotes(events)"
         :amount="events.map(item => item.amount)"
       />
+    </LazyLoader>
 
+    <LazyLoader
+      v-if="!expanded"
+      key="history-event-actions"
+      class="py-2 @5xl:!py-4 col-span-10 @md:col-span-3"
+      min-height="40"
+    >
       <HistoryEventsListItemAction
         :item="events[0]"
         :index="0"
@@ -126,43 +238,7 @@ watch(expanded, () => {
         @show:missing-rule-action="emit('show:missing-rule-action', $event)"
       />
     </LazyLoader>
-    <template v-else>
-      <HistoryEventsListItem
-        v-for="(event, index) in events"
-        :key="event.identifier"
-        class="flex-1"
-        :item="event"
-        :index="index"
-        :events="events"
-        :event-group="events[0]"
-        :is-last="index === events.length - 1"
-        :is-highlighted="highlightedIdentifiers?.includes(event.identifier.toString())"
-        @edit-event="emit('edit-event', $event)"
-        @delete-event="emit('delete-event', $event)"
-        @show:missing-rule-action="emit('show:missing-rule-action', $event)"
-      />
-    </template>
   </TransitionGroup>
-  <LazyLoader
-    class="pb-2"
-    min-height="36"
-  >
-    <RuiButton
-      variant="text"
-      color="primary"
-      @click="expanded = !expanded"
-    >
-      <template #prepend>
-        <RuiIcon
-          name="lu-chevron-down"
-          size="16"
-          class="transition-all"
-          :class="{ 'rotate-180': expanded }"
-        />
-      </template>
-      {{ !expanded ? t('transactions.events.view.view_detail') : t('transactions.events.view.compact_view') }}
-    </RuiButton>
-  </LazyLoader>
 </template>
 
 <style lang="scss" scoped>

@@ -2,10 +2,9 @@
 import type { RoundingMode } from '@/types/settings/frontend-settings';
 import CopyTooltip from '@/components/helper/CopyTooltip.vue';
 import { type AssetResolutionOptions, useAssetInfoRetrieval } from '@/composables/assets/retrieval';
-import { useCopy } from '@/composables/copy';
 import { useNumberScrambler } from '@/composables/utils/useNumberScrambler';
 import { displayAmountFormatter } from '@/data/amount-formatter';
-import { useBalancePricesStore } from '@/store/balances/prices';
+import { usePriceUtils } from '@/modules/prices/use-price-utils';
 import { useHistoricCachePriceStore } from '@/store/prices/historic';
 import { useFrontendSettingsStore } from '@/store/settings/frontend';
 import { useGeneralSettingsStore } from '@/store/settings/general';
@@ -83,13 +82,13 @@ const {
   value,
 } = toRefs(props);
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const { currency, currencySymbol: currentCurrency, floatingPrecision } = storeToRefs(useGeneralSettingsStore());
 
 const { scrambleData, scrambleMultiplier, shouldShowAmount } = storeToRefs(useSessionSettingsStore());
 
-const { assetPrice, exchangeRate, isAssetPriceInCurrentCurrency } = useBalancePricesStore();
+const { assetPrice, isAssetPriceInCurrentCurrency, useExchangeRate } = usePriceUtils();
 
 const {
   abbreviateNumber,
@@ -131,8 +130,8 @@ const latestFiatValue = computed<BigNumber>(() => {
   if (!from || to === from)
     return currentValue;
 
-  const multiplierRate = to === CURRENCY_USD ? One : get(exchangeRate(to));
-  const dividerRate = from === CURRENCY_USD ? One : get(exchangeRate(from));
+  const multiplierRate = to === CURRENCY_USD ? One : get(useExchangeRate(to));
+  const dividerRate = from === CURRENCY_USD ? One : get(useExchangeRate(from));
 
   if (!multiplierRate || !dividerRate)
     return currentValue;
@@ -371,11 +370,9 @@ function fixExponentialSeparators(value: string, thousands: string, decimals: st
   return value;
 }
 
-const { copied, copy } = useCopy(copyValue);
-
 const anyLoading = logicOr(loading, evaluating);
 const info = assetInfo(asset, resolutionOptions);
-const { getAssetPriceOracle, isManualAssetPrice } = useBalancePricesStore();
+const { getAssetPriceOracle, isManualAssetPrice } = usePriceUtils();
 const isManualPrice = isManualAssetPrice(priceAsset);
 
 const assetOracle = computed<string | undefined>(() => {
@@ -464,10 +461,9 @@ const [DefineSymbol, ReuseSymbol] = createReusableTemplate<{ name: string }>();
         />
         <CopyTooltip
           :disabled="!shouldShowAmount"
-          :copied="copied"
           :tooltip="tooltip"
           data-cy="display-amount"
-          @click="copy()"
+          :value="copyValue"
         >
           <template v-if="numberParts.full">
             {{ numberParts.full }}
@@ -490,7 +486,8 @@ const [DefineSymbol, ReuseSymbol] = createReusableTemplate<{ name: string }>();
             <RuiChip
               v-if="assetOracle"
               color="warning"
-              class="[&_span]:!text-[10px] font-bold leading-3 uppercase !p-0.5 mb-0.5 mt-0.5"
+              content-class="!text-[10px]"
+              class="font-bold leading-3 uppercase !p-0.5 mb-0.5 mt-0.5"
               size="sm"
             >
               <div class="flex gap-1">

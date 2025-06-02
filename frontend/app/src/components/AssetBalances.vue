@@ -50,7 +50,7 @@ const props = withDefaults(
   },
 );
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const { balances } = toRefs(props);
 const expanded = ref<AssetBalanceWithPrice[]>([]);
@@ -175,7 +175,6 @@ const sorted = computed<AssetBalanceWithPrice[]>(() => sortAssetBalances([...get
   >
     <template #item.asset="{ row }">
       <AssetDetails
-        opens-details
         :asset="row.asset"
         :is-collection-parent="!!row.breakdown"
       />

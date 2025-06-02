@@ -21,6 +21,7 @@ const props = withDefaults(
     validatorIndex?: number;
     blockNumber?: number;
     counterparty?: string;
+    extraData?: Record<string, any>;
   }>(),
   {
     amount: undefined,
@@ -33,7 +34,7 @@ const props = withDefaults(
   },
 );
 
-const { amount, asset, blockNumber, counterparty, notes, noTxHash, validatorIndex } = toRefs(props);
+const { amount, asset, blockNumber, counterparty, extraData, notes, noTxHash, validatorIndex } = toRefs(props);
 
 const { formatNotes } = useHistoryEventNote();
 
@@ -42,6 +43,7 @@ const formattedNotes: ComputedRef<NoteFormat[]> = formatNotes({
   assetId: asset,
   blockNumber,
   counterparty,
+  extraData,
   notes,
   noTxHash,
   validatorIndex,
@@ -49,6 +51,10 @@ const formattedNotes: ComputedRef<NoteFormat[]> = formatNotes({
 
 function isLinkType(t: any): t is keyof ExplorerUrls {
   return [NoteType.TX, NoteType.ADDRESS, NoteType.BLOCK].includes(t);
+}
+
+function isLinkTypeWithoutImage(t: any, chain: string): t is keyof ExplorerUrls {
+  return [NoteType.TX, NoteType.BLOCK].includes(t) || chain === Blockchain.ETH2;
 }
 </script>
 
@@ -73,9 +79,10 @@ function isLinkType(t: any): t is keyof ExplorerUrls {
       <HashLink
         v-else-if="note.showHashLink && note.address && isLinkType(note.type)"
         :key="index"
-        class="inline-flex pl-2"
+        class="inline-flex"
         :class="{
           [$style.address]: true,
+          'pl-2': isLinkTypeWithoutImage(note.type, note.chain ?? chain),
         }"
         :text="note.address"
         :type="note.type"

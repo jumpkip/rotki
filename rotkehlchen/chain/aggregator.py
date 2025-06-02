@@ -4,7 +4,6 @@ from collections import defaultdict
 from collections.abc import Callable, Iterator, Sequence
 from functools import reduce
 from importlib import import_module
-from itertools import starmap
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Optional, TypeVar, cast, get_args, overload
 
@@ -76,6 +75,7 @@ from rotkehlchen.chain.substrate.manager import wait_until_a_node_is_available
 from rotkehlchen.chain.substrate.utils import SUBSTRATE_NODE_CONNECTION_TIMEOUT
 from rotkehlchen.constants import ONE, ZERO
 from rotkehlchen.constants.assets import A_AVAX, A_BCH, A_BTC, A_DAI, A_DOT, A_ETH, A_ETH2, A_KSM
+from rotkehlchen.db.addressbook import DBAddressbook
 from rotkehlchen.db.cache import DBCacheStatic
 from rotkehlchen.db.eth2 import DBEth2
 from rotkehlchen.db.filtering import Eth2DailyStatsFilterQuery
@@ -1481,9 +1481,15 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
                                 'Failed to check activity using blockscout '
                                 f'for {chain} due to {e}',
                             )
-                            chain_activity = chain_manager.node_inquirer.etherscan.has_activity(address)  # noqa: E501
+                            chain_activity = chain_manager.node_inquirer.etherscan.has_activity(
+                                chain_id=chain.to_chain_id(),
+                                account=address,
+                            )
                     else:
-                        chain_activity = chain_manager.node_inquirer.etherscan.has_activity(address)  # noqa: E501
+                        chain_activity = chain_manager.node_inquirer.etherscan.has_activity(
+                            chain_id=chain.to_chain_id(),
+                            account=address,
+                        )
 
                     only_token_spam = (
                         chain_activity == HasChainActivity.TOKENS and
@@ -1557,6 +1563,8 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
 
         new_tracked_chains, new_failed_chains = self.track_evm_address(account, active_chains)
         failed_to_query_chains += new_failed_chains
+        if len(new_tracked_chains) > 0:
+            DBAddressbook(self.database).maybe_make_entry_name_multichain(address=account)
 
         return (
             [(chain, account) for chain in new_tracked_chains],
@@ -1674,7 +1682,7 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
         with self.database.user_write() as write_cursor:
             self.database.add_blockchain_accounts(
                 write_cursor=write_cursor,
-                account_data=list(starmap(BlockchainAccountData, added_accounts)),  # not duplicating label and tags as it's chain specific  # noqa: E501
+                account_data=[BlockchainAccountData(chain=chain, address=address) for chain, address in added_accounts],  # noqa: E501
             )
 
         self.msg_aggregator.add_message(

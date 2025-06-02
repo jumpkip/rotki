@@ -118,6 +118,99 @@ def upgrade_v47_to_v48(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
         )
         write_cursor.execute('DROP TABLE action_type')
 
+    @progress_step(description='Adding evm transactions authorization list table')
+    def _add_evm_transaction_authorization_list_table(write_cursor: 'DBCursor') -> None:
+        write_cursor.execute("""
+        CREATE TABLE IF NOT EXISTS evm_transactions_authorizations (
+            tx_id INTEGER NOT NULL PRIMARY KEY,
+            nonce INTEGER NOT NULL,
+            delegated_address TEXT NOT NULL,
+            FOREIGN KEY(tx_id) REFERENCES evm_transactions(identifier) ON DELETE CASCADE
+        );
+        """)
+
+    @progress_step(description='Adding eth2 validator cache table')
+    def _add_eth2_staking_cache_table(write_cursor: 'DBCursor') -> None:
+        write_cursor.execute("""
+        CREATE TABLE IF NOT EXISTS eth_validators_data_cache (
+            id INTEGER NOT NULL PRIMARY KEY,
+            validator_index INTEGER NOT NULL,
+            timestamp INTEGER NOT NULL,  -- timestamp is in milliseconds
+            balance TEXT NOT NULL,
+            withdrawals_pnl TEXT NOT NULL,
+            exit_pnl TEXT NOT NULL,
+            UNIQUE(validator_index, timestamp),
+            FOREIGN KEY(validator_index) REFERENCES eth2_validators(validator_index) ON UPDATE CASCADE ON DELETE CASCADE
+        );
+        """)  # noqa: E501
+
+    @progress_step(description='Resetting decoded events.')
+    def _reset_decoded_events(write_cursor: 'DBCursor') -> None:
+        """Reset all decoded evm events except for the customized ones and those in zksync lite.
+        Code taken from previous upgrade
+        """
+        if write_cursor.execute('SELECT COUNT(*) FROM evm_transactions').fetchone()[0] > 0:
+            customized_events = write_cursor.execute(
+                'SELECT COUNT(*) FROM history_events_mappings WHERE name=? AND value=?',
+                (HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED),
+            ).fetchone()[0]
+            querystr = (
+                "DELETE FROM history_events WHERE identifier IN ("
+                "SELECT H.identifier from history_events H INNER JOIN evm_events_info E "
+                "ON H.identifier=E.identifier AND E.tx_hash IN "
+                "(SELECT tx_hash FROM evm_transactions) AND H.location != 'o')"  # location 'o' is zksync lite  # noqa: E501
+            )
+            bindings: tuple = ()
+            if customized_events != 0:
+                querystr += ' AND identifier NOT IN (SELECT parent_identifier FROM history_events_mappings WHERE name=? AND value=?)'  # noqa: E501
+                bindings = (HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED)
+
+            write_cursor.execute(querystr, bindings)
+            write_cursor.execute(
+                'DELETE from evm_tx_mappings WHERE tx_id IN (SELECT identifier FROM evm_transactions) AND value=?',  # noqa: E501
+                (0,),  # decoded tx state
+            )
+
+    @progress_step(description='Adding validator_type column to eth2 validators table')
+    def _add_validator_type_column(write_cursor: 'DBCursor') -> None:
+        update_table_schema(
+            write_cursor=write_cursor,
+            table_name='eth2_validators',
+            schema="""
+                identifier INTEGER NOT NULL PRIMARY KEY,
+                validator_index INTEGER UNIQUE,
+                public_key TEXT NOT NULL UNIQUE,
+                ownership_proportion TEXT NOT NULL,
+                withdrawal_address TEXT,
+                validator_type INTEGER NOT NULL CHECK (validator_type IN (0, 1, 2)),
+                activation_timestamp INTEGER,
+                withdrawable_timestamp INTEGER,
+                exited_timestamp INTEGER
+            """,
+            insert_columns="""identifier, validator_index, public_key, ownership_proportion, withdrawal_address,
+            CASE WHEN withdrawal_address IS NOT NULL THEN 1 ELSE 0 END as validator_type,
+            activation_timestamp, withdrawable_timestamp, exited_timestamp
+            """,  # noqa: E501
+            insert_order='(identifier, validator_index, public_key, ownership_proportion, withdrawal_address, validator_type, activation_timestamp, withdrawable_timestamp, exited_timestamp)',  # noqa: E501
+        )
+
+    @progress_step(description='Updating calendar reminders schema')
+    def _update_calendar_reminders_schema(write_cursor: 'DBCursor') -> None:
+        """Upgrades the calendar_reminders table to include acknowledged column."""
+        update_table_schema(
+            write_cursor=write_cursor,
+            table_name='calendar_reminders',
+            schema="""
+            identifier INTEGER PRIMARY KEY NOT NULL,
+            event_id INTEGER NOT NULL,
+            secs_before INTEGER NOT NULL,
+            acknowledged INTEGER NOT NULL CHECK (acknowledged IN (0, 1)) DEFAULT 0,
+            FOREIGN KEY(event_id) REFERENCES calendar(identifier) ON DELETE CASCADE
+            """,
+            insert_columns='identifier, event_id, secs_before, 0',
+            insert_order='(identifier, event_id, secs_before, acknowledged)',
+        )
+
     @progress_step(description='Converting trades to history events')
     def _convert_trades_to_swap_events(write_cursor: 'DBCursor') -> None:
         new_events: list[SwapEvent] = []
@@ -202,6 +295,35 @@ def upgrade_v47_to_v48(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
             """,
         )
 
+    @progress_step(description='Migrating etherscan configuration')
+    def _migrate_etherscan_keys(write_cursor: 'DBCursor') -> None:
+        write_cursor.execute(
+            'DELETE FROM external_service_credentials WHERE name IN (?, ?, ?, ?, ?, ?, ?)',
+            (
+                'optimism_etherscan',
+                'polygon_pos_etherscan',
+                'arbitrum_one_etherscan',
+                'base_etherscan',
+                'gnosis_etherscan',
+                'scroll_etherscan',
+                'binance_sc_etherscan',
+            ),
+        )
+        write_cursor.execute(
+            'DELETE FROM rpc_nodes WHERE name IN (?, ?, ?, ?, ?, ?, ?, ?)',
+            (
+                'etherscan',
+                'optimism etherscan',
+                'polygon pos etherscan',
+                'arbitrum one etherscan',
+                'base etherscan',
+                'gnosis etherscan',
+                'scroll etherscan',
+                'bsc etherscan',
+            ),
+        )
+        write_cursor.execute('DELETE FROM settings WHERE name=?', ('use_unified_etherscan_api',))
+
     @progress_step(description='Resetting asset movement notes')
     def _reset_asset_movement_notes(write_cursor: 'DBCursor') -> None:
         """Clears auto-generated asset movement notes.
@@ -213,6 +335,35 @@ def upgrade_v47_to_v48(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
             'UPDATE history_events SET notes = NULL WHERE entry_type = 6 AND notes IS NOT NULL '
             'AND NOT EXISTS (SELECT 1 FROM history_events_mappings WHERE parent_identifier = history_events.identifier AND name=? AND value=?)',  # noqa: E501
             (HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED),
+        )
+
+    @progress_step(description='Upgrade internal transactions table')
+    def _ugrade_internal_transactions(write_cursor: 'DBCursor') -> None:
+        """Update the internal transactions table
+
+        Again we need to add more info in the internal transactions data due to examples like this:
+        https://etherscan.io/tx/0xbded678de7cb58d7f0e4e8d1f0f5adeb1dd5097601a8ab5790558f8228a04c58#internal
+
+        To differentiate between same from/to/value internals we just add gas and gas used there.
+        This "should" reduce the chance of missing something to almost zero. There is no other data
+        available for differentiation.
+        """
+        update_table_schema(
+            write_cursor=write_cursor,
+            table_name='evm_internal_transactions',
+            schema="""
+            parent_tx INTEGER NOT NULL,
+            trace_id INTEGER NOT NULL,
+            from_address TEXT NOT NULL,
+            to_address TEXT,
+            value TEXT NOT NULL,
+            gas TEXT NOT NULL,
+            gas_used TEXT NOT NULL,
+            FOREIGN KEY(parent_tx) REFERENCES evm_transactions(identifier) ON DELETE CASCADE ON UPDATE CASCADE,
+            PRIMARY KEY(parent_tx, trace_id, from_address, to_address, value, gas, gas_used)
+            """,  # noqa: E501
+            insert_columns="parent_tx, trace_id, from_address, to_address, value, '0', '0'",
+            insert_order='(parent_tx, trace_id, from_address, to_address, value, gas, gas_used)',
         )
 
     perform_userdb_upgrade_steps(db=db, progress_handler=progress_handler, should_vacuum=True)

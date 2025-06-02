@@ -10,7 +10,9 @@ from rotkehlchen.chain.binance_sc.modules.curve.constants import (
     CURVE_SWAP_ROUTER_NG as CURVE_SWAP_ROUTER_NG_BSC,
 )
 from rotkehlchen.chain.ethereum.modules.curve.constants import (
-    FEE_DISTRIBUTOR,
+    CURVE_MINTER,
+    FEE_DISTRIBUTOR_3CRV,
+    FEE_DISTRIBUTOR_CRVUSD,
     GAUGE_BRIBE_V2,
     VOTING_ESCROW,
 )
@@ -559,6 +561,8 @@ def test_curve_remove_liquidity_with_internal(database, ethereum_transaction_dec
         from_address=string_to_evm_address('0xDC24316b9AE028F1497c275EB9192a3Ea0f67022'),
         to_address=string_to_evm_address('0xa8005630caE7b7d2AFADD38FD3B3040d13cbE2BC'),
         value=FVal('1.02930131799766041') * EXP18,
+        gas=0,
+        gas_used=0,
     )
     dbevmtx = DBEvmTx(database)
     with database.user_write() as cursor:
@@ -2089,7 +2093,7 @@ def test_deposit_via_zap_arbitrum(arbitrum_one_inquirer, arbitrum_one_accounts, 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('ethereum_accounts', [['0x5e216ceCB65E1E1B86fE8C46c730af287c4492Dc']])
-def test_fee_distributor(ethereum_transaction_decoder, ethereum_accounts):
+def test_fee_distributor_3crv(ethereum_transaction_decoder, ethereum_accounts):
     tx_hex = deserialize_evm_tx_hash('0xae8a3781fc8f8b032f4e14db7745f9e4297f61e58a3deebc93d55ef4ed99d728')  # noqa: E501
     evmhash = deserialize_evm_tx_hash(tx_hex)
     events, _ = get_decoded_events_of_transaction(
@@ -2122,7 +2126,48 @@ def test_fee_distributor(ethereum_transaction_decoder, ethereum_accounts):
             location_label=user_address,
             notes=f'Claim {amount} 3CRV as part of curve fees distribution',
             counterparty=CPT_CURVE,
-            address=FEE_DISTRIBUTOR,
+            address=FEE_DISTRIBUTOR_3CRV,
+        ),
+    ]
+    assert events == expected_events
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('ethereum_accounts', [['0x6544df975cF58A0b2C9a361a8db2e00D338e10c1']])
+def test_fee_distributor_crvusd(ethereum_transaction_decoder, ethereum_accounts):
+    tx_hex = deserialize_evm_tx_hash('0x200c154d4206ece5b7c4075064991d10afdcc488da29c88b366409b0d7e348c1')  # noqa: E501
+    evmhash = deserialize_evm_tx_hash(tx_hex)
+    events, _ = get_decoded_events_of_transaction(
+        evm_inquirer=ethereum_transaction_decoder.evm_inquirer,
+        tx_hash=tx_hex,
+    )
+    user_address, timestamp, gas, amount = ethereum_accounts[0], TimestampMS(1746466763000), '0.000382962892805733', '13.357652880447616117'  # noqa: E501
+    expected_events = [
+        EvmEvent(
+            tx_hash=evmhash,
+            sequence_index=0,
+            timestamp=timestamp,
+            location=Location.ETHEREUM,
+            event_type=HistoryEventType.SPEND,
+            event_subtype=HistoryEventSubType.FEE,
+            asset=A_ETH,
+            amount=FVal(gas),
+            location_label=user_address,
+            notes=f'Burn {gas} ETH for gas',
+            counterparty=CPT_GAS,
+        ), EvmEvent(
+            tx_hash=evmhash,
+            sequence_index=139,
+            timestamp=timestamp,
+            location=Location.ETHEREUM,
+            event_type=HistoryEventType.RECEIVE,
+            event_subtype=HistoryEventSubType.REWARD,
+            asset=Asset('eip155:1/erc20:0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E'),  # crvUSD
+            amount=FVal(amount),
+            location_label=user_address,
+            notes=f'Claim {amount} crvUSD as part of curve fees distribution',
+            counterparty=CPT_CURVE,
+            address=FEE_DISTRIBUTOR_CRVUSD,
         ),
     ]
     assert events == expected_events
@@ -2206,6 +2251,47 @@ def test_vote_escrow_withdraw(ethereum_transaction_decoder, ethereum_accounts):
             notes=f'Withdraw {amount} CRV from vote escrow',
             counterparty=CPT_CURVE,
             address=VOTING_ESCROW,
+        ),
+    ]
+    assert events == expected_events
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('ethereum_accounts', [['0x98C5adD2e63C02beB8CCAA0156E4FefD480C3267']])
+def test_crv_minter(ethereum_transaction_decoder, ethereum_accounts):
+    tx_hex = deserialize_evm_tx_hash('0x05b5da4f6f0def6075c2cb51b8c46553144424368c69b9ad9f986cf925ac0fae')  # noqa: E501
+    evmhash = deserialize_evm_tx_hash(tx_hex)
+    events, _ = get_decoded_events_of_transaction(
+        evm_inquirer=ethereum_transaction_decoder.evm_inquirer,
+        tx_hash=tx_hex,
+    )
+    user_address, timestamp, gas, amount = ethereum_accounts[0], TimestampMS(1746419195000), '0.000161308740471675', '86.51016103664373998'  # noqa: E501
+    expected_events = [
+        EvmEvent(
+            tx_hash=evmhash,
+            sequence_index=0,
+            timestamp=timestamp,
+            location=Location.ETHEREUM,
+            event_type=HistoryEventType.SPEND,
+            event_subtype=HistoryEventSubType.FEE,
+            asset=A_ETH,
+            amount=FVal(gas),
+            location_label=user_address,
+            notes=f'Burn {gas} ETH for gas',
+            counterparty=CPT_GAS,
+        ), EvmEvent(
+            tx_hash=evmhash,
+            sequence_index=161,
+            timestamp=timestamp,
+            location=Location.ETHEREUM,
+            event_type=HistoryEventType.RECEIVE,
+            event_subtype=HistoryEventSubType.REWARD,
+            asset=A_CRV,
+            amount=FVal(amount),
+            location_label=user_address,
+            notes=f'Claim {amount} CRV rewards from curve gauge 0x156527deF9a2AB4F54C849575f23dC4BB439d9d9',  # noqa: E501
+            counterparty=CPT_CURVE,
+            address=CURVE_MINTER,
         ),
     ]
     assert events == expected_events
@@ -2749,6 +2835,61 @@ def test_withdraw_eure_arb(
             address=pool_addr,
         ),
     ]
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('load_global_caches', [[CPT_CURVE]])
+@pytest.mark.parametrize('arbitrum_one_accounts', [['0x3Ba6eB0e4327B96aDe6D4f3b578724208a590CEF']])
+def test_remove_liquidity_single_token(
+        arbitrum_one_inquirer: 'ArbitrumOneInquirer',
+        arbitrum_one_accounts: list['ChecksumEvmAddress'],
+        load_global_caches: list[str],
+) -> None:
+    tx_hash = deserialize_evm_tx_hash('0x047c4283007fb778632f75c01984cd9f8a9847b03d9753cb37eb7530bd16615c')  # noqa: E501
+    events, _ = get_decoded_events_of_transaction(
+        evm_inquirer=arbitrum_one_inquirer,
+        tx_hash=tx_hash,
+        load_global_caches=load_global_caches,
+    )
+    assert events == [EvmEvent(
+        tx_hash=tx_hash,
+        sequence_index=0,
+        timestamp=(timestamp := TimestampMS(1744886719000)),
+        location=Location.ARBITRUM_ONE,
+        event_type=HistoryEventType.SPEND,
+        event_subtype=HistoryEventSubType.FEE,
+        asset=A_ETH,
+        amount=FVal(gas_amount := '0.00000229125'),
+        location_label=(user_address := arbitrum_one_accounts[0]),
+        notes=f'Burn {gas_amount} ETH for gas',
+        counterparty=CPT_GAS,
+    ), EvmEvent(
+        tx_hash=tx_hash,
+        sequence_index=1,
+        timestamp=timestamp,
+        location=Location.ARBITRUM_ONE,
+        event_type=HistoryEventType.SPEND,
+        event_subtype=HistoryEventSubType.RETURN_WRAPPED,
+        asset=Asset('eip155:42161/erc20:0xec090cf6DD891D2d014beA6edAda6e05E025D93d'),
+        amount=FVal(returned_amount := '870.17551855514354715'),
+        location_label=user_address,
+        notes=f'Return {returned_amount} crvUSDC',
+        counterparty=CPT_CURVE,
+        address=ZERO_ADDRESS,
+    ), EvmEvent(
+        tx_hash=tx_hash,
+        sequence_index=2,
+        timestamp=timestamp,
+        location=Location.ARBITRUM_ONE,
+        event_type=HistoryEventType.WITHDRAWAL,
+        event_subtype=HistoryEventSubType.REDEEM_WRAPPED,
+        asset=Asset('eip155:42161/erc20:0xaf88d065e77c8cC2239327C5EDb3A432268e5831'),
+        amount=FVal(withdraw_amount := '886.525625'),
+        location_label=user_address,
+        address=(pool_addr := string_to_evm_address('0xec090cf6DD891D2d014beA6edAda6e05E025D93d')),
+        notes=f'Remove {withdraw_amount} USDC from {pool_addr} curve pool',
+        counterparty=CPT_CURVE,
+    )]
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])

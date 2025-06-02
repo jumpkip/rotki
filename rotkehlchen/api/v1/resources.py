@@ -78,6 +78,8 @@ from rotkehlchen.api.v1.schemas import (
     ERC20InfoSchema,
     Eth2DailyStatsSchema,
     Eth2StakePerformanceSchema,
+    Eth2StakingEventsDecodingSchema,
+    Eth2StakingEventsResetSchema,
     Eth2ValidatorDeleteSchema,
     Eth2ValidatorPatchSchema,
     Eth2ValidatorPutSchema,
@@ -226,6 +228,7 @@ from rotkehlchen.db.settings import ModifiableDBSettings
 from rotkehlchen.db.utils import DBAssetBalance, LocationData
 from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.handler import GlobalDBHandler
+from rotkehlchen.history.events.structures.base import HistoryBaseEntryType
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.history.types import HistoricalPriceOracle
 from rotkehlchen.serialization.schemas import (
@@ -735,7 +738,7 @@ class EthereumAirdropsResource(BaseMethodView):
     @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, async_query: bool) -> Response:
-        return self.rest_api.get_ethereum_airdrops(async_query=async_query)
+        return self.rest_api.get_airdrops(async_query=async_query)
 
 
 class RpcNodesResource(BaseMethodView):
@@ -946,6 +949,7 @@ class AllAssetsResource(BaseMethodView):
             disallowed_asset_types=[AssetType.CUSTOM_ASSET],  # custom assets are handled on a separate endpoint  # noqa: E501
             coingecko=self.rest_api.rotkehlchen.coingecko,
             cryptocompare=self.rest_api.rotkehlchen.cryptocompare,
+            is_edit=True,
         )
 
     @resource_parser.use_kwargs(make_post_schema, location='json')
@@ -1253,8 +1257,8 @@ class HistoryEventResource(BaseMethodView):
 
     @require_loggedin_user()
     @resource_parser.use_kwargs(make_patch_schema, location='json')
-    def patch(self, events: list['HistoryBaseEntry']) -> Response:
-        return self.rest_api.edit_history_events(events)
+    def patch(self, events: list['HistoryBaseEntry'], identifiers: list[int] | None = None) -> Response:  # noqa: E501
+        return self.rest_api.edit_history_events(events, identifiers)
 
     @require_loggedin_user()
     @use_kwargs(delete_schema, location='json')
@@ -2008,6 +2012,28 @@ class Eth2StakePerformanceResource(BaseMethodView):
             addresses=addresses,
             validator_indices=validator_indices,
             status=status,
+        )
+
+
+class Eth2StakingEventsResource(BaseMethodView):
+    delete_schema = Eth2StakingEventsResetSchema()
+
+    def make_put_schema(self) -> Eth2StakingEventsDecodingSchema:
+        return Eth2StakingEventsDecodingSchema(
+            database=self.rest_api.rotkehlchen.data.db,
+        )
+
+    @require_loggedin_user()
+    @use_kwargs(delete_schema, location='json')
+    def delete(self, entry_type: Literal[HistoryBaseEntryType.ETH_BLOCK_EVENT, HistoryBaseEntryType.ETH_WITHDRAWAL_EVENT]) -> Response:  # noqa: E501
+        return self.rest_api.reset_eth_staking_data(entry_type=entry_type)
+
+    @require_loggedin_user()
+    @resource_parser.use_kwargs(make_put_schema, location='json')
+    def put(self, async_query: bool, block_numbers: list[int] | None) -> Response:
+        return self.rest_api.redecode_eth2_block_events(
+            async_query=async_query,
+            block_numbers=block_numbers,
         )
 
 
@@ -3047,13 +3073,29 @@ class ExportHistoryEventResource(BaseMethodView):
 
     @require_loggedin_user()
     @use_kwargs(post_schema, location='json_and_query')
-    def post(self, async_query: bool, filter_query: 'HistoryBaseEntryFilterQuery', directory_path: Path) -> dict[str, Any]:  # noqa: E501
-        return self.rest_api.export_history_events(filter_query=filter_query, directory_path=directory_path, async_query=async_query)  # noqa: E501
+    def post(
+            self,
+            async_query: bool,
+            filter_query: 'HistoryBaseEntryFilterQuery',
+            directory_path: Path,
+            match_exact_events: bool,
+    ) -> dict[str, Any]:
+        return self.rest_api.export_history_events(
+            filter_query=filter_query,
+            directory_path=directory_path,
+            async_query=async_query,
+            match_exact_events=match_exact_events,
+        )
 
     @require_loggedin_user()
     @use_kwargs(put_schema, location='json_and_query')
-    def put(self, async_query: bool, filter_query: 'HistoryBaseEntryFilterQuery') -> Response | dict[str, Any]:  # noqa: E501
-        return self.rest_api.export_history_events(filter_query=filter_query, directory_path=None, async_query=async_query)  # noqa: E501
+    def put(self, async_query: bool, filter_query: 'HistoryBaseEntryFilterQuery', match_exact_events: bool) -> Response | dict[str, Any]:  # noqa: E501
+        return self.rest_api.export_history_events(
+            filter_query=filter_query,
+            directory_path=None,
+            async_query=async_query,
+            match_exact_events=match_exact_events,
+        )
 
 
 class ExportHistoryDownloadResource(BaseMethodView):

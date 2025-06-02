@@ -328,9 +328,23 @@ CREATE TABLE IF NOT EXISTS optimism_transactions (
 );
 """
 
+DB_CREATE_EVM_TRANSACTION_AUTHORIZATIONS = """
+CREATE TABLE IF NOT EXISTS evm_transactions_authorizations (
+    tx_id INTEGER NOT NULL PRIMARY KEY,
+    nonce INTEGER NOT NULL,
+    delegated_address TEXT NOT NULL,
+    FOREIGN KEY(tx_id) REFERENCES evm_transactions(identifier) ON DELETE CASCADE
+);
+"""
+
 # from/to address/value is also in the primary key of the internal transactions since
 # trace_id, which is returned by etherscan does not guarantee uniqueness. Example:
 # https://api.etherscan.io/api?module=account&action=txlistinternal&sort=asc&startBlock=16779092&endBlock=16779092
+# Same for gas/gas_used. An example would be https://etherscan.io/tx/0x72f5e619a8f521d874652ec5c09ea22e329ed3a990012e1fe6548d5a07e1959c
+# where each consolidation internal transaction of 1 wei is the same and can only differentiate
+# from gas/gasused combination
+# NB: If you change the internal transactions schema then make sure to change the indexes
+# at DBHandler.write_tuples are correct
 DB_CREATE_EVM_INTERNAL_TRANSACTIONS = """
 CREATE TABLE IF NOT EXISTS evm_internal_transactions (
     parent_tx INTEGER NOT NULL,
@@ -338,8 +352,10 @@ CREATE TABLE IF NOT EXISTS evm_internal_transactions (
     from_address TEXT NOT NULL,
     to_address TEXT,
     value TEXT NOT NULL,
+    gas TEXT NOT NULL,
+    gas_used TEXT NOT NULL,
     FOREIGN KEY(parent_tx) REFERENCES evm_transactions(identifier) ON DELETE CASCADE ON UPDATE CASCADE,
-    PRIMARY KEY(parent_tx, trace_id, from_address, to_address, value)
+    PRIMARY KEY(parent_tx, trace_id, from_address, to_address, value, gas, gas_used)
 );
 """  # noqa: E501
 
@@ -472,11 +488,25 @@ CREATE TABLE IF NOT EXISTS eth2_validators (
     public_key TEXT NOT NULL UNIQUE,
     ownership_proportion TEXT NOT NULL,
     withdrawal_address TEXT,
+    validator_type INTEGER NOT NULL CHECK (validator_type IN (0, 1, 2)),
     activation_timestamp INTEGER,
     withdrawable_timestamp INTEGER,
     exited_timestamp INTEGER
 );
 """
+
+DB_CREATE_ETH_VALIDATORS_DATA_CACHE = """
+CREATE TABLE IF NOT EXISTS eth_validators_data_cache (
+    id INTEGER NOT NULL PRIMARY KEY,
+    validator_index INTEGER NOT NULL,
+    timestamp INTEGER NOT NULL,  -- timestamp is in milliseconds
+    balance TEXT NOT NULL,
+    withdrawals_pnl TEXT NOT NULL,
+    exit_pnl TEXT NOT NULL,
+    UNIQUE(validator_index, timestamp),
+    FOREIGN KEY(validator_index) REFERENCES eth2_validators(validator_index) ON UPDATE CASCADE ON DELETE CASCADE
+);
+"""  # noqa: E501
 
 DB_CREATE_ETH2_DAILY_STAKING_DETAILS = """
 CREATE TABLE IF NOT EXISTS  eth2_daily_staking_details (
@@ -682,6 +712,7 @@ CREATE TABLE IF NOT EXISTS calendar_reminders (
     identifier INTEGER PRIMARY KEY NOT NULL,
     event_id INTEGER NOT NULL,
     secs_before INTEGER NOT NULL,
+    acknowledged INTEGER NOT NULL CHECK (acknowledged IN (0, 1)) DEFAULT 0,
     FOREIGN KEY(event_id) REFERENCES calendar(identifier) ON DELETE CASCADE
 );
 """
@@ -730,6 +761,7 @@ BEGIN TRANSACTION;
 {DB_CREATE_MULTISETTINGS}
 {DB_CREATE_MANUALLY_TRACKED_BALANCES}
 {DB_CREATE_EVM_TRANSACTIONS}
+{DB_CREATE_EVM_TRANSACTION_AUTHORIZATIONS}
 {DB_CREATE_OPTIMISM_TRANSACTIONS}
 {DB_CREATE_EVM_INTERNAL_TRANSACTIONS}
 {DB_CREATE_EVMTX_RECEIPTS}
@@ -748,6 +780,7 @@ BEGIN TRANSACTION;
 {DB_CREATE_XPUBS}
 {DB_CREATE_XPUB_MAPPINGS}
 {DB_CREATE_ETH2_VALIDATORS}
+{DB_CREATE_ETH_VALIDATORS_DATA_CACHE}
 {DB_CREATE_ETH2_DAILY_STAKING_DETAILS}
 {DB_CREATE_HISTORY_EVENTS}
 {DB_CREATE_EVM_EVENTS_INFO}

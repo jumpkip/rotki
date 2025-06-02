@@ -10,16 +10,7 @@ export const TWITTER_URL = 'https://twitter.com/rotkiapp';
 
 // Cannot be checked with fetch because it always returns 403, because it needs authentication,
 // and will be redirected to the register page instead
-export const etherscanLinks = {
-  ethereum: 'https://etherscan.io/myapikey',
-  optimism: 'https://optimistic.etherscan.io/myapikey',
-  polygonPos: 'https://polygonscan.com/myapikey',
-  arbitrumOne: 'https://arbiscan.io/myapikey',
-  base: 'https://basescan.org/myapikey',
-  gnosis: 'https://gnosisscan.io/myapikey',
-  scroll: 'https://scrollscan.com/myapikey',
-  binanceSc: 'https://bscscan.com/myapikey',
-};
+export const etherscanLink = 'https://etherscan.io/myapikey';
 
 export const blockscoutLinks = {
   ethereum: 'https://eth.blockscout.com/account/api-key',
@@ -35,9 +26,9 @@ export const externalLinks = {
   usageGuide: USAGE_GUIDE_URL,
   usageGuideSection: {
     dockerWarning: `${USAGE_GUIDE_URL}using-rotki-from-mobile#docker`,
-    addingAnExchange: `${USAGE_GUIDE_URL}importing-data#adding-an-exchange`,
-    theGraphApiKey: `${USAGE_GUIDE_URL}importing-data#the-graph`,
-    gnosisPayKey: `${USAGE_GUIDE_URL}importing-data#gnosis-pay`,
+    addingAnExchange: `${USAGE_GUIDE_URL}api-keys#exchanges-api-keys`,
+    theGraphApiKey: `${USAGE_GUIDE_URL}api-keys#the-graph`,
+    gnosisPayKey: `${USAGE_GUIDE_URL}api-keys#gnosis-pay`,
     importBlockchainAccounts: `${USAGE_GUIDE_URL}accounts-and-balances#import-and-export-blockchain-accounts-csv`,
     importAddressBook: `${USAGE_GUIDE_URL}address-book#importing-address-book-names-csv`,
   },

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { HistoryEventRequestPayload } from '@/types/history/events';
+import type { HistoryEventRequestPayload } from '@/modules/history/events/request-types';
 import type { TaskMeta } from '@/types/task';
 import { useHistoryEventsApi } from '@/composables/api/history/events';
 import { useInterop } from '@/composables/electron-interop';
@@ -9,14 +9,16 @@ import { useTaskStore } from '@/store/tasks';
 import { TaskType } from '@/types/task-type';
 import { isTaskCancelled } from '@/utils';
 import { type NotificationPayload, type SemiPartial, Severity } from '@rotki/common';
+import { omit } from 'es-toolkit';
 
 const props = defineProps<{
+  matchExactEvents: boolean;
   filters: HistoryEventRequestPayload;
 }>();
 
-const { filters } = toRefs(props);
+const { filters, matchExactEvents } = toRefs(props);
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const { appSession, openDirectory } = useInterop();
 
@@ -27,7 +29,10 @@ const { notify } = useNotificationsStore();
 
 async function createCsv(directoryPath?: string): Promise<{ result: boolean | { filePath: string }; message?: string } | null> {
   try {
-    const { taskId } = await exportHistoryEventsCSV(get(filters), directoryPath);
+    const { taskId } = await exportHistoryEventsCSV({
+      ...omit(get(filters), ['limit', 'offset', 'groupByEventIds']),
+      matchExactEvents: get(matchExactEvents),
+    }, directoryPath);
     const { result } = await awaitTask<boolean | { filePath: string }, TaskMeta>(taskId, TaskType.EXPORT_HISTORY_EVENTS, {
       title: t('actions.history_events_export.title'),
     });

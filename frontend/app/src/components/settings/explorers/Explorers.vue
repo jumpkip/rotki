@@ -28,7 +28,7 @@ const token = ref<string>('');
 
 const store = useFrontendSettingsStore();
 const { explorers } = storeToRefs(store);
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const [CreateSelection, ReuseSelection] = createReusableTemplate<{ item: SupportedExplorers }>();
 
@@ -97,14 +97,15 @@ onMounted(() => {
     <CreateSelection #default="{ item }">
       <ChainDisplay
         v-if="!Array.prototype.includes.call(extraExplorers, item)"
-        dense
         :chain="item"
       />
       <AssetDetails
         v-else
         dense
+        size="26px"
         class="[&>div]:!py-0 -my-[0.375rem]"
         :asset="item"
+        hide-menu
       />
     </CreateSelection>
 

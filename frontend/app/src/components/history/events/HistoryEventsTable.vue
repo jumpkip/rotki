@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { HistoryEventRequestPayload } from '@/modules/history/events/request-types';
 import type { HistoryEventDeletePayload } from '@/modules/history/events/types';
 import type { ShowEventHistoryForm } from '@/modules/history/management/forms/form-types';
 import type { Collection } from '@/types/collection';
@@ -6,6 +7,8 @@ import type {
   EvmChainAndTxHash,
   HistoryEventEntry,
   HistoryEventRow,
+  PullEthBlockEventPayload,
+  PullEventPayload,
   PullEvmTransactionPayload,
   StandaloneEditableEvents,
 } from '@/types/history/events';
@@ -28,6 +31,7 @@ import { useNotificationsStore } from '@/store/notifications';
 import { useStatusStore } from '@/store/status';
 import { Section } from '@/types/status';
 import { isTaskCancelled } from '@/utils';
+import { HistoryEventEntryType } from '@rotki/common';
 import { flatten } from 'es-toolkit';
 
 const sort = defineModel<DataTableSortData<HistoryEventEntry>>('sort', { required: true });
@@ -36,6 +40,7 @@ const pagination = defineModel<TablePaginationData>('pagination', { required: tr
 
 const props = defineProps<{
   groups: Collection<HistoryEventRow>;
+  pageParams: HistoryEventRequestPayload | undefined;
   excludeIgnored: boolean;
   groupLoading: boolean;
   identifiers?: string[];
@@ -46,18 +51,19 @@ const emit = defineEmits<{
   'show:form': [payload: ShowEventHistoryForm];
   'set-page': [page: number];
   'refresh': [payload?: PullEvmTransactionPayload];
+  'refresh:block-event': [payload: PullEthBlockEventPayload];
 }>();
 
 defineSlots<{
   'query-status': (props: { colspan: number }) => any;
 }>();
 
-const { groupLoading, groups } = toRefs(props);
+const { groupLoading, groups, pageParams } = toRefs(props);
 
 const eventsLoading = ref(false);
 const selected = ref<HistoryEventEntry[]>([]);
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const { notify } = useNotificationsStore();
 const { show } = useConfirmStore();
@@ -112,6 +118,7 @@ const events: Ref<HistoryEventRow[]> = asyncComputed(async () => {
     return [];
 
   const response = await fetchHistoryEvents({
+    ...get(pageParams),
     eventIdentifiers: data.flatMap(item => Array.isArray(item) ? item.map(i => i.eventIdentifier) : item.eventIdentifier),
     excludeIgnoredAssets: props.excludeIgnored,
     groupByEventIds: false,
@@ -126,16 +133,17 @@ const events: Ref<HistoryEventRow[]> = asyncComputed(async () => {
   lazy: true,
 });
 
-const eventsGroupedByEventIdentifier = computed<Record<string, HistoryEventEntry[]>>(() => {
-  const mapping: Record<string, HistoryEventEntry[]> = {};
+const eventsGroupedByEventIdentifier = computed<Record<string, HistoryEventRow[]>>(() => {
+  const mapping: Record<string, HistoryEventRow[]> = {};
   for (const event of get(events)) {
     if (Array.isArray(event)) {
-      for (const subevent of event) {
+      if (event.length > 0) {
+        const subevent = event[0];
         if (mapping[subevent.eventIdentifier]) {
-          mapping[subevent.eventIdentifier].push(subevent);
+          mapping[subevent.eventIdentifier].push(event);
         }
         else {
-          mapping[subevent.eventIdentifier] = [subevent];
+          mapping[subevent.eventIdentifier] = [event];
         }
       }
     }
@@ -233,14 +241,19 @@ function confirmTxAndEventsDelete(payload: EvmChainAndTxHash): void {
 
 const showRedecodeConfirmation = ref<boolean>(false);
 const deleteCustom = ref<boolean>(false);
-const redecodePayload = ref<EvmChainAndTxHash>();
+const redecodePayload = ref<PullEventPayload>();
 
-function redecode(payload: EvmChainAndTxHash, eventIdentifier: string): void {
-  const childEvents = get(eventsGroupedByEventIdentifier)[eventIdentifier] || [];
+function redecode(payload: PullEventPayload, eventIdentifier: string): void {
+  if (payload.type === HistoryEventEntryType.ETH_BLOCK_EVENT) {
+    emit('refresh:block-event', { blockNumbers: payload.data });
+    return;
+  }
+
+  const childEvents = flatten(get(eventsGroupedByEventIdentifier)[eventIdentifier] || []);
   const isAnyCustom = childEvents.some(item => item.customized);
 
   if (!isAnyCustom) {
-    emit('refresh', { transactions: [payload] });
+    emit('refresh', { transactions: [payload.data] });
   }
   else {
     set(redecodePayload, payload);
@@ -249,13 +262,20 @@ function redecode(payload: EvmChainAndTxHash, eventIdentifier: string): void {
   }
 }
 
-function forceRedecode(): void {
+function confirmRedecode(): void {
   const payload = get(redecodePayload);
   if (payload) {
-    emit('refresh', {
-      deleteCustom: get(deleteCustom),
-      transactions: [payload],
-    });
+    if (payload.type === HistoryEventEntryType.ETH_BLOCK_EVENT) {
+      emit('refresh:block-event', {
+        blockNumbers: payload.data,
+      });
+    }
+    else {
+      emit('refresh', {
+        deleteCustom: get(deleteCustom),
+        transactions: [payload.data],
+      });
+    }
   }
   set(showRedecodeConfirmation, false);
   set(deleteCustom, false);
@@ -418,7 +438,7 @@ function addMissingRule($event: any, row: HistoryEventEntry): void {
         <div class="grow" />
         <RuiButton
           color="primary"
-          @click="forceRedecode()"
+          @click="confirmRedecode()"
         >
           {{ t('common.actions.proceed') }}
         </RuiButton>

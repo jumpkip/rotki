@@ -33,7 +33,7 @@ const stateUpdated = defineModel<boolean>('stateUpdated', { default: false, requ
 
 const props = defineProps<HistoryEventFormProps>();
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const { data } = toRefs(props);
 
@@ -305,6 +305,7 @@ defineExpose({
       ref="assetPriceForm"
       v-model:asset="asset"
       v-model:amount="amount"
+      :location="location"
       :v$="v$"
       :datetime="datetime"
       :hide-price-fields="isInformationalEvent"

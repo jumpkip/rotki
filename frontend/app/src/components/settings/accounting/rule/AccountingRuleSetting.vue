@@ -26,7 +26,7 @@ import { getPlaceholderRule } from '@/utils/settings';
 import { toSentenceCase } from '@rotki/common';
 import { startPromise } from '@shared/utils';
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 const router = useRouter();
 const route = useRoute();
 
@@ -161,8 +161,8 @@ function createNewEntry() {
   );
 }
 
-function add() {
-  set(modelValue, createNewEntry());
+function add(rule?: AccountingRuleEntry) {
+  set(modelValue, rule || createNewEntry());
   set(editMode, false);
 }
 
@@ -223,11 +223,9 @@ onMounted(async () => {
     eventType: eventType?.toString() ?? '',
   };
 
-  async function openDialog(rule?: AccountingRuleEntry) {
+  async function openDialog(rule?: AccountingRuleEntry, forceAdd = false) {
     if (rule) {
-      startPromise(nextTick(() => {
-        edit(rule);
-      }));
+      startPromise(nextTick(() => forceAdd ? add(rule) : edit(rule)));
     }
     await router.replace({ query: {} });
   }
@@ -236,7 +234,7 @@ onMounted(async () => {
     await openDialog({
       ...getPlaceholderRule(),
       ...ruleData,
-    });
+    }, true);
   }
   else if (editRule) {
     await openDialog(await getAccountingRule({

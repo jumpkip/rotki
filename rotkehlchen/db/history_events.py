@@ -11,6 +11,7 @@ from rotkehlchen.assets.asset import Asset
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants import ZERO
 from rotkehlchen.constants.limits import FREE_HISTORY_EVENTS_LIMIT
+from rotkehlchen.db.cache import DBCacheDynamic
 from rotkehlchen.db.constants import (
     ETH_STAKING_EVENT_FIELDS,
     ETH_STAKING_FIELD_LENGTH,
@@ -229,30 +230,56 @@ class DBHistoryEvents:
 
         return None
 
-    def delete_events_by_location(
+    def reset_eth_staking_data(
             self,
+            entry_type: Literal[HistoryBaseEntryType.ETH_BLOCK_EVENT, HistoryBaseEntryType.ETH_WITHDRAWAL_EVENT],  # noqa: E501
+    ) -> None:
+        """Reset Ethereum staking events and related cache data.
+        Removes all stored events of the specified type and clears associated
+        cache entries to enable fresh data retrieval.
+        """
+        with self.db.conn.write_ctx() as write_cursor:
+            write_cursor.execute('DELETE FROM history_events WHERE entry_type=?', (entry_type.serialize_for_db(),))  # noqa: E501
+            if entry_type == HistoryBaseEntryType.ETH_BLOCK_EVENT:
+                key_parts = [DBCacheDynamic.LAST_PRODUCED_BLOCKS_QUERY_TS.value[0][:30]]
+            else:
+                key_parts = [
+                    DBCacheDynamic.WITHDRAWALS_TS.value[0].split('_')[0],
+                    DBCacheDynamic.WITHDRAWALS_IDX.value[0].split('_')[0],
+                ]
+
+            self.db.delete_dynamic_caches(write_cursor=write_cursor, key_parts=key_parts)
+
+    @staticmethod
+    def reset_evm_events_for_redecode(
             write_cursor: 'DBCursor',
             location: EVM_EVMLIKE_LOCATIONS_TYPE,
     ) -> None:
-        """Delete all relevant non-customized events for a given location
+        """Reset EVM events and transaction decode status for the given location.
 
-        Also set evm_tx_mapping as non decoded so they can be redecoded later
+        Deletes all non-customized EVM events and marks their transactions
+        as not decoded to enable re-processing.
         """
-        customized_event_ids = self.get_customized_event_identifiers(cursor=write_cursor, location=location)  # noqa: E501
-        whereclause = 'WHERE location=?'
-        if (length := len(customized_event_ids)) != 0:
-            whereclause += f' AND history_events.identifier NOT IN ({", ".join(["?"] * length)})'
-            bindings = [location.serialize_for_db(), *customized_event_ids]
-        else:
-            bindings = (location.serialize_for_db(),)  # type: ignore  # different type of elements in the list
+        customized_events_num = write_cursor.execute(
+            'SELECT COUNT(*) FROM history_events_mappings WHERE name=? AND value=?',
+            (HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED),
+        ).fetchone()[0]
+        querystr = (
+            'DELETE FROM history_events WHERE identifier IN ('
+            'SELECT H.identifier from history_events H INNER JOIN evm_events_info E '
+            'ON H.identifier=E.identifier AND E.tx_hash IN '
+            '(SELECT tx_hash FROM evm_transactions) AND H.location = ?)'
+        )
+        bindings: tuple = (location.serialize_for_db(),)
+        if customized_events_num != 0:
+            querystr += ' AND identifier NOT IN (SELECT parent_identifier FROM history_events_mappings WHERE name=? AND value=?)'  # noqa: E501
+            bindings += (HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED)
 
-        transaction_hashes = write_cursor.execute(f'SELECT evm_events_info.tx_hash FROM history_events INNER JOIN evm_events_info ON history_events.identifier=evm_events_info.identifier {whereclause}', bindings).fetchall()  # noqa: E501
-        write_cursor.execute(f'DELETE FROM history_events {whereclause}', bindings)
-
-        if location != Location.ZKSYNC_LITE and len(transaction_hashes) != 0:
-            write_cursor.executemany(
-                'DELETE from evm_tx_mappings WHERE tx_id IN (SELECT identifier FROM evm_transactions WHERE tx_hash=? AND chain_id=?) AND value=?',  # noqa: E501
-                [(x[0], location.to_chain_id(), EVMTX_DECODED) for x in transaction_hashes],
+        write_cursor.execute(querystr, bindings)
+        if location != Location.ZKSYNC_LITE:  # the decode status is stored in zksynclite_transactions.is_decoded  # noqa: E501
+            write_cursor.execute(
+                'DELETE from evm_tx_mappings WHERE tx_id IN (SELECT identifier FROM evm_transactions) AND value=?',  # noqa: E501
+                (EVMTX_DECODED,),
             )
 
     def delete_events_by_tx_hash(
@@ -335,6 +362,7 @@ class DBHistoryEvents:
             entries_limit: int,
             has_premium: bool,
             group_by_event_ids: bool = False,
+            match_exact_events: bool = True,
     ) -> tuple[str, list]:
         """Returns the sql queries and bindings for the history events without pagination."""
         base_suffix = f'{HISTORY_BASE_ENTRY_FIELDS}, {EVM_EVENT_FIELDS}, {ETH_STAKING_EVENT_FIELDS} {ALL_EVENTS_DATA_JOIN}'  # noqa: E501
@@ -351,11 +379,6 @@ class DBHistoryEvents:
             'ORDER BY timestamp DESC,sequence_index ASC LIMIT ?)'  # free query only select the last LIMIT groups  # noqa: E501
         )
 
-        if has_premium:
-            suffix, limit = premium_base_suffix, []
-        else:
-            suffix, limit = free_base_suffix, [entries_limit]
-
         if group_by_event_ids:
             filters, query_bindings = filter_query.prepare(
                 with_group_by=True,
@@ -367,6 +390,17 @@ class DBHistoryEvents:
             filters, query_bindings = filter_query.prepare(with_pagination=False)
             prefix = 'SELECT *'
 
+        if has_premium:
+            suffix, limit = premium_base_suffix, []
+        else:
+            suffix, limit = free_base_suffix, [entries_limit]
+
+        if match_exact_events is False:  # return all group events instead of just the filtered ones.  # noqa: E501
+            return (
+                f'{prefix} FROM (SELECT {base_suffix} WHERE event_identifier IN (SELECT event_identifier FROM (SELECT {suffix}) {filters}))',  # noqa: E501
+                limit + query_bindings,
+            )
+
         return f'{prefix} FROM (SELECT {suffix}) {filters}', limit + query_bindings
 
     @overload
@@ -376,6 +410,7 @@ class DBHistoryEvents:
             filter_query: HistoryEventFilterQuery,
             has_premium: bool,
             group_by_event_ids: Literal[True],
+            match_exact_events: bool = ...,
     ) -> list[tuple[int, HistoryBaseEntry]]:
         ...
 
@@ -386,6 +421,7 @@ class DBHistoryEvents:
             filter_query: HistoryEventFilterQuery,
             has_premium: bool,
             group_by_event_ids: Literal[False] = ...,
+            match_exact_events: bool = ...,
     ) -> list[HistoryBaseEntry]:
         ...
 
@@ -396,6 +432,7 @@ class DBHistoryEvents:
             filter_query: EthDepositEventFilterQuery,
             has_premium: bool,
             group_by_event_ids: Literal[True],
+            match_exact_events: bool,
     ) -> list[tuple[int, EthDepositEvent]]:
         ...
 
@@ -406,6 +443,7 @@ class DBHistoryEvents:
             filter_query: EthDepositEventFilterQuery,
             has_premium: bool,
             group_by_event_ids: Literal[False] = ...,
+            match_exact_events: bool = ...,
     ) -> list[EthDepositEvent]:
         ...
 
@@ -416,6 +454,7 @@ class DBHistoryEvents:
             filter_query: EthWithdrawalFilterQuery,
             has_premium: bool,
             group_by_event_ids: Literal[False] = ...,
+            match_exact_events: bool = ...,
     ) -> list[EthWithdrawalEvent]:
         ...
 
@@ -426,6 +465,7 @@ class DBHistoryEvents:
             filter_query: EvmEventFilterQuery,
             has_premium: bool,
             group_by_event_ids: Literal[True],
+            match_exact_events: bool,
     ) -> list[tuple[int, EvmEvent]]:
         ...
 
@@ -436,6 +476,7 @@ class DBHistoryEvents:
             filter_query: EvmEventFilterQuery,
             has_premium: bool,
             group_by_event_ids: Literal[False] = ...,
+            match_exact_events: bool = ...,
     ) -> list[EvmEvent]:
         ...
 
@@ -445,6 +486,7 @@ class DBHistoryEvents:
             filter_query: HistoryEventFilterQuery | EvmEventFilterQuery | EthDepositEventFilterQuery | EthWithdrawalFilterQuery,  # noqa: E501
             has_premium: bool,
             group_by_event_ids: bool = False,
+            match_exact_events: bool = True,
     ) -> (
         list[tuple[int, HistoryBaseEntry]] | list[HistoryBaseEntry] |
         list[tuple[int, EvmEvent]] | list[EvmEvent] |
@@ -460,6 +502,7 @@ class DBHistoryEvents:
             has_premium=has_premium,
             filter_query=filter_query,
             group_by_event_ids=group_by_event_ids,
+            match_exact_events=match_exact_events,
             entries_limit=FREE_HISTORY_EVENTS_LIMIT,
         )
         if filter_query.pagination is not None:
@@ -550,6 +593,7 @@ class DBHistoryEvents:
             filter_query: HistoryBaseEntryFilterQuery,
             has_premium: bool,
             group_by_event_ids: Literal[True],
+            match_exact_events: bool,
             entries_limit: int | None = None,
     ) -> tuple[list[tuple[int, HistoryBaseEntry]], int, int]:
         ...
@@ -561,6 +605,7 @@ class DBHistoryEvents:
             filter_query: HistoryBaseEntryFilterQuery,
             has_premium: bool,
             group_by_event_ids: Literal[False] = ...,
+            match_exact_events: bool = ...,
             entries_limit: int | None = None,
     ) -> tuple[list[HistoryBaseEntry], int, int]:
         ...
@@ -572,6 +617,7 @@ class DBHistoryEvents:
             filter_query: HistoryBaseEntryFilterQuery,
             has_premium: bool,
             group_by_event_ids: bool = False,
+            match_exact_events: bool = ...,
             entries_limit: int | None = None,
     ) -> tuple[list[tuple[int, HistoryBaseEntry]] | list[HistoryBaseEntry], int, int]:
         """
@@ -585,6 +631,7 @@ class DBHistoryEvents:
             filter_query: 'HistoryBaseEntryFilterQuery',
             has_premium: bool,
             group_by_event_ids: bool = False,
+            match_exact_events: bool = False,
             entries_limit: int | None = None,
     ) -> tuple[list[tuple[int, HistoryBaseEntry]] | list[HistoryBaseEntry], int, int]:
         """Gets all history events for all types, based on the filter query.
@@ -597,6 +644,7 @@ class DBHistoryEvents:
             filter_query=filter_query,
             has_premium=has_premium,
             group_by_event_ids=group_by_event_ids,
+            match_exact_events=match_exact_events,
         )
         count_without_limit, count_with_limit = self.get_history_events_count(
             cursor=cursor,
@@ -616,33 +664,33 @@ class DBHistoryEvents:
         query, bindings = filter_query.prepare()
         query = f'SELECT history_events.identifier, amount, asset, timestamp {ALL_EVENTS_DATA_JOIN}' + query  # noqa: E501
         result = []
-        cursor = self.db.conn.cursor()
-        cursor.execute(query, bindings)
-        for identifier, amount_raw, asset_identifier, timestamp in cursor:
-            try:
-                amount = deserialize_fval(
-                    value=amount_raw,
-                    name='historic base entry usd_value query',
-                    location='query_missing_prices',
-                )
-                result.append(
-                    (
-                        identifier,
-                        amount,
-                        Asset(asset_identifier).check_existence(),
-                        ts_ms_to_sec(TimestampMS(timestamp)),
-                    ),
-                )
-            except DeserializationError as e:
-                log.error(
-                    f'Failed to read value from historic base entry {identifier} '
-                    f'with amount. {e!s}',
-                )
-            except UnknownAsset as e:
-                log.error(
-                    f'Failed to read asset from historic base entry {identifier} '
-                    f'with asset identifier {asset_identifier}. {e!s}',
-                )
+        with self.db.conn.read_ctx() as cursor:
+            cursor.execute(query, bindings)
+            for identifier, amount_raw, asset_identifier, timestamp in cursor:
+                try:
+                    amount = deserialize_fval(
+                        value=amount_raw,
+                        name='historic base entry usd_value query',
+                        location='query_missing_prices',
+                    )
+                    result.append(
+                        (
+                            identifier,
+                            amount,
+                            Asset(asset_identifier).check_existence(),
+                            ts_ms_to_sec(TimestampMS(timestamp)),
+                        ),
+                    )
+                except DeserializationError as e:
+                    log.error(
+                        f'Failed to read value from historic base entry {identifier} '
+                        f'with amount. {e!s}',
+                    )
+                except UnknownAsset as e:
+                    log.error(
+                        f'Failed to read asset from historic base entry {identifier} '
+                        f'with asset identifier {asset_identifier}. {e!s}',
+                    )
         return result
 
     def get_entries_assets_history_events(

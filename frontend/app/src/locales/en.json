@@ -32,6 +32,7 @@
       },
       "description_address": "Are you sure you want to delete {address} address from {chain} chain",
       "description_multiple_address": "Are you sure you want to delete {address} address from {length} chains: {chains}",
+      "description_multiple_validator": "Are you sure you want to delete {length} selected validators?",
       "description_validator": "Are you sure you want to delete validator with public key: {publicKey} ({index})",
       "description_xpub": "Are you sure you want to delete {address}",
       "title": "Account delete"
@@ -518,6 +519,17 @@
       "error": {
         "description": "There was an error while editing the ETH staking validator {id}: {message}",
         "title": "Editing ETH staking validator"
+      }
+    },
+    "eth_block_events_redecoding": {
+      "error": {
+        "description": "Failed to decode ETH block events: {error}",
+        "title": "Decoding ETH block events"
+      },
+      "task": {
+        "description": "Decoding ETH block events for block: {block}",
+        "single_description": "Decoding ETH block events for {number} blocks",
+        "title": "Decoding ETH block events"
       }
     },
     "eth2_staking_stats": {
@@ -1018,7 +1030,6 @@
     },
     "name_non_empty": "The name of the asset cannot be empty",
     "optional": "Optional Fields",
-    "oracle_disable": "Disable/Enable the price fetching from the price oracle. If the oracle is not disabled, and there is no value specified, rotki will attempt to fetch a price using the asset symbol.",
     "replaced": "This icon will be applied after you click \"Save\".",
     "type_non_empty": "The type of the asset cannot be empty",
     "types": {
@@ -1089,6 +1100,12 @@
     "edit_title": "Edit an asset",
     "merge_assets": "Merge Assets",
     "merge_assets_tooltip": "Merge two assets into one (can be used to migrate custom assets to officially supported ones)"
+  },
+  "asset_mappings": {
+    "error": {
+      "message": "Failed to retrieve the asset mappings for the following identifiers {identifiers} ({message})",
+      "title": "Caching asset mappings"
+    }
   },
   "asset_search": {
     "error": {
@@ -1184,7 +1201,20 @@
     }
   },
   "assets": {
+    "action": {
+      "confirm": {
+        "ignore": "Are you sure to ignore this asset?",
+        "mark_as_spam": "Are you sure to mark this asset as spam?"
+      },
+      "ignore": "Ignore Asset",
+      "info": {
+        "ignore": "Asset is ignored",
+        "mark_as_spam": "Asset is marked as spam"
+      },
+      "mark_as_spam": "Mark as spam"
+    },
     "amount": "Total Owned",
+    "asset_symbol": "[{symbol}]",
     "backup": {
       "missing_directory": "Please select a directory"
     },
@@ -1214,7 +1244,7 @@
       "type": "Filter by the type of the custom asset",
       "type_hint": "Search using the asset type"
     },
-    "ignore": "Ignore Asset",
+    "go_to_asset_detail": "Asset details",
     "multi_chain_assets": "Multi Chain Assets",
     "refresh_price": "Refresh price",
     "value": "Value"
@@ -1431,7 +1461,11 @@
     },
     "title": "Blockchain Balances per asset",
     "validator_index_label": "Ethereum validator No. {index}",
-    "validators": "Ethereum Validators"
+    "validators": {
+      "consolidated": "Consolidated into:",
+      "selected": "{count} validator(s) selected",
+      "title": "Ethereum Validators"
+    }
   },
   "calendar": {
     "add_error": "Could not add event: {message}",
@@ -1566,6 +1600,7 @@
       "push": "Push",
       "save": "Save",
       "search": "Search",
+      "select_all": "Select All",
       "skip": "Skip",
       "terminate": "Terminate",
       "update": "Update",
@@ -1619,6 +1654,7 @@
     "status": "Status",
     "tags": "Tags",
     "total": "Total",
+    "trades": "Trade|Trades",
     "tx_hash": "Tx Hash",
     "type": "Type",
     "unclaimed": "Unclaimed",
@@ -2134,7 +2170,8 @@
       "title": "Delete {chain} RPC Node"
     },
     "connected": {
-      "false": "Not connected",
+      "failure": "Failed",
+      "false": "Ready",
       "true": "Connected"
     },
     "connectivity": "Connectivity",
@@ -2303,12 +2340,10 @@
     "delete_key": "Delete key",
     "enter_api_key": "Enter API key",
     "etherscan": {
-      "api_key_message": "Please add an {chain} Etherscan API key to be able to query historical EVM transactions.",
-      "delete_tooltip": "Deletes the {chain} Etherscan API key",
+      "api_key_message": "Please add an Etherscan API key to be able to query historical EVM transactions.",
       "description": "Recommended for any EVM blockchain balances or transactions if you are not using your own node.",
-      "hint": "Enter your {chain} Etherscan API key",
-      "title": "Etherscan",
-      "unified": "Use unified Etherscan key"
+      "hint": "Enter your Etherscan API key",
+      "title": "Etherscan"
     },
     "get_api_key": "You can apply for an API key {link}",
     "gnosispay": {
@@ -2780,8 +2815,38 @@
     "lt": "<"
   },
   "history_events_list_swap": {
-    "fee_description": "{notes} with fee {feeAmount} {feeAsset}",
+    "fee_description": "{notes} with fee: {feeText}",
     "swap_description": "Swap {spendAmount} {spendAsset} for {receiveAmount} {receiveAsset}"
+  },
+  "history_redecode_selection": {
+    "redecode": "Recode {total} chains",
+    "search_chain": "Search chain",
+    "selection": "Select one or more chains to redecode their events"
+  },
+  "history_refresh_button": {
+    "confirm_refresh": {
+      "message": "Are you sure you want to proceed with refreshing all your account transactions and exchange events? This action can take a significant amount of time.",
+      "title": "Confirm history refresh"
+    }
+  },
+  "history_refresh_selection": {
+    "back_to_chain": "Back to chain selection",
+    "refresh": "Refresh {total} {type}",
+    "search_address": "Search by address",
+    "search_chain": "Search by chain",
+    "search_events": "Search by type",
+    "search_exchanges": "Search by exchange",
+    "selection": "Select one or more to refresh their events",
+    "tabs": {
+      "chains": "Chains",
+      "events": "ETH Staking Events",
+      "exchanges": "Exchanges"
+    },
+    "type": {
+      "accounts": "Accounts | Account | Accounts",
+      "events": "Events | Event | Events",
+      "exchanges": "Exchanges | Exchange | Exchanges"
+    }
   },
   "ignore": {
     "confirm": {
@@ -2809,7 +2874,15 @@
         "unmark_message": "Token could not be removed from spam assets list: {message}",
         "unmark_title": "Failed to remove token from spam assets list"
       },
-      "hint": "The asset is marked as a spam asset. To be able to unignore this asset, you need to remove it from the spam assets list."
+      "hint": "The asset is marked as a spam asset. To be able to unignore this asset, you need to remove it from the spam assets list.",
+      "warning": {
+        "manual_balances_message": "Cannot mark this asset(s) as spam because they are added as manual balances: {assets}",
+        "manual_balances_title": "Some assets can't be marked as spam"
+      }
+    },
+    "warning": {
+      "manual_balances_message": "Cannot ignore this asset(s) because they are added as manual balances: {assets}",
+      "manual_balances_title": "Some assets can't be ignored"
     },
     "whitelist": {
       "action": {
@@ -3525,6 +3598,10 @@
     "loading": "LOADING",
     "premium_hint": "Get the full experience by upgrading to rotki premium"
   },
+  "page_not_found": {
+    "back": "Back to dashboard",
+    "title": "Oops, the page could not be found."
+  },
   "percentage_display": {
     "symbol": "%"
   },
@@ -4011,6 +4088,8 @@
       "label": "DeFi module to clear"
     },
     "defi_modules": "DeFi Modules",
+    "eth_block": "ETH Block Events",
+    "eth_withdrawals": "ETH Withdrawal Events",
     "label": "Select a data source",
     "tooltip": "Purge data",
     "transactions": "Transactions"
@@ -4249,6 +4328,11 @@
     "inactive_timeframes": "Inactive Timeframes",
     "visible_timeframes": "Visible Timeframes"
   },
+  "toggle_location_link": {
+    "disabled": "This functionality is available only for evm chains",
+    "limited": "Only assets available in {location} will be displayed.",
+    "unlimited": "All supported assets will be displayed."
+  },
   "trade": {
     "actions": {
       "change_network": "Change Network",
@@ -4263,17 +4347,18 @@
       "insufficient": "Insufficient Funds",
       "sending": "I'm sending"
     },
-    "available_balances": "Available Balances",
     "bridge": {
       "connect_browser_wallet": "Open Browser Wallet Bridge",
+      "connect_the_signer": "Connect the signer",
       "connecting": "Connecting...",
       "connection_logs": "Connection Logs",
       "disconnect_session": "Disconnect Session",
       "hint": "In Electron App, choose \"Wallet Connect\" and then \"Copy link\"",
       "label": "Paste the Pair URI here",
+      "link_session": "Link session using Wallet Connect Pair URI",
       "start_pairing": "Start Pairing",
-      "subtitle": "Paste Wallet Connect Pair URI from Electron App:",
-      "title": "Browser Wallet Bridge"
+      "title": "rotki Browser Wallet Bridge",
+      "warning": "Keep this page open! Otherwise, you will need to create a new session to connect."
     },
     "never_interacted": "You have never interacted with this address before.",
     "recent_transactions": {
@@ -4283,6 +4368,7 @@
     "recipient": {
       "from_private_address_book": "Addresses from private address book",
       "no_addresses_found": "No addresses found",
+      "resolving_ens": "Resolving ENS...",
       "select_recipient_address": "Select recipient address",
       "tracked_addresses": "Tracked Addresses"
     },
@@ -4445,6 +4531,9 @@
             "non_empty": "The fee cannot be empty when fee asset is inputted"
           }
         },
+        "fee_amount": {
+          "label": "Fee Amount"
+        },
         "fee_asset": {
           "label": "Fee Asset",
           "validation": {
@@ -4457,6 +4546,9 @@
             "non_empty": "The fee recipient field cannot be empty.",
             "valid": "The fee recipient is invalid, fill it with valid address"
           }
+        },
+        "has_fee": {
+          "label": "Has Fee"
         },
         "is_exit": {
           "label": "Is Exited?"
@@ -4551,11 +4643,9 @@
         }
       },
       "view": {
-        "compact_view": "Compact view",
         "hide": "Hide events",
         "load_more": "Load more events ({length})",
-        "show": "Show events ({length})",
-        "view_detail": "View events details"
+        "show": "Show events ({length})"
       }
     },
     "events_decoding": {
@@ -4570,8 +4660,9 @@
       },
       "decoding": {
         "all": "Redecoding EVM transactions",
-        "all_done": "Done redecoding EVM transactions",
+        "all_done": "Redecoding finished",
         "done": "Decoded {count} transaction | Decoded {count} transactions",
+        "eth_block_events": "Redecoding ETH block events",
         "pending": "{count} Undecoded transaction | {count} Undecoded transactions",
         "processing": "Decoding {count} transaction | Decoding {count} of {total} transactions"
       },
@@ -4594,6 +4685,8 @@
       "event_subtype": "filter by event sub type",
       "event_type": "filter by event type",
       "location": "filter by event location",
+      "match_exact_filter": "Should match exact filter",
+      "match_exact_filter_hint": "If enabled, it will show only the events that match the filter, excluding the other events in the same group.",
       "product": "filter by product",
       "protocol": "filter by the protocol of the events",
       "show_ignored_assets": "Show entries with ignored assets",
@@ -4690,9 +4783,6 @@
   },
   "update_indicator": {
     "version": "An Updated Version ({appVersion}) of rotki is available"
-  },
-  "update_notifier": {
-    "update_available": "An updated version of the frontend is available."
   },
   "update_popup": {
     "download_failed": {

@@ -889,7 +889,6 @@
     },
     "name_non_empty": "Le nom de l'actif ne peut pas être vide",
     "optional": "Champs facultatifs",
-    "oracle_disable": "Désactiver/Activer la récupération des prix à partir de l'oracle de prix. Si l'oracle n'est pas désactivé, et qu'aucune valeur n'est spécifiée, rotki tentera de récupérer un prix en utilisant le symbole de l'actif.",
     "replaced": "Cette icône sera appliquée après avoir cliqué sur \"Enregistrer\".",
     "type_non_empty": "Le type d'actif ne peut pas être vide",
     "types": {
@@ -1030,6 +1029,9 @@
     }
   },
   "assets": {
+    "action": {
+      "ignore": "Ignorer l'Actif"
+    },
     "amount": "Total détenu",
     "backup": {
       "missing_directory": "Veuillez sélectionner un répertoire"
@@ -1057,7 +1059,6 @@
       "type": "Filtrer par le type d'actif personnalisé",
       "type_hint": "Rechercher en utilisant le type d'actif"
     },
-    "ignore": "Ignorer l'Actif",
     "multi_chain_assets": "Actifs Multi-chaînes",
     "value": "Valeur"
   },
@@ -1800,7 +1801,8 @@
       "title": "Supprimer le nœud RPC {chain}"
     },
     "connected": {
-      "false": "Non connecté",
+      "failure": "Échec",
+      "false": "Prêt",
       "true": "Connecté"
     },
     "delete_error": {
@@ -1926,9 +1928,8 @@
       "description": "Erreur lors de la suppression des clés API des services externes : {message}"
     },
     "etherscan": {
-      "delete_tooltip": "Supprime la clé Etherscan {chain}",
       "description": "Recommandé pour les soldes et transactions EVM sur toute blockchain autre que Ethereum si vous n'utilisez pas votre propre nœud.",
-      "hint": "Entrer votre clé Etherscan {chain}",
+      "hint": "Entrer votre clé Etherscan",
       "title": "Etherscan"
     },
     "get_api_key": "Vous pouvez demander une clé API {link}",
@@ -3772,9 +3773,6 @@
   },
   "update_indicator": {
     "version": "Une version mise à jour ({appVersion}) de rotki est disponible"
-  },
-  "update_notifier": {
-    "update_available": "Une version mise à jour de l'interface utilisateur frontale est disponible."
   },
   "update_popup": {
     "download_failed": {

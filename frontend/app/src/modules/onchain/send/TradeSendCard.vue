@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import type { GasFeeEstimation, TradableAsset } from '@/modules/onchain/types';
-import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
+import type { GasFeeEstimation, GetAssetBalancePayload } from '@/modules/onchain/types';
 import { useInterop } from '@/composables/electron-interop';
 import { useSupportedChains } from '@/composables/info/chains';
 import TradeAmountInput from '@/modules/onchain/send/TradeAmountInput.vue';
@@ -12,12 +11,11 @@ import { useBalanceQueries } from '@/modules/onchain/send/use-balance-queries';
 import { useTradableAsset } from '@/modules/onchain/use-tradable-asset';
 import { useWalletHelper } from '@/modules/onchain/use-wallet-helper';
 import { useWalletStore } from '@/modules/onchain/use-wallet-store';
-import { CURRENCY_USD } from '@/types/currencies';
 import { logger } from '@/utils/logging';
-import { bigNumberify, Blockchain, isValidEthAddress } from '@rotki/common';
+import { type BigNumber, bigNumberify, Blockchain, isValidEthAddress } from '@rotki/common';
 import { useTradeApi } from './use-trade-api';
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const amount = ref<string>('');
 const asset = ref<string>('');
@@ -25,6 +23,9 @@ const assetChain = ref<string>(Blockchain.ETH);
 const toAddress = ref<string>('');
 
 const max = ref<string>('0');
+const estimatedGasFee = ref<string>('0');
+const assetBalance = ref<BigNumber>();
+
 const estimatingGas = ref<boolean>(false);
 const showNeverInteractedWarning = ref<boolean>(false);
 const errorMessage = ref<string>('');
@@ -33,7 +34,7 @@ const currentGasEstimationController = ref<AbortController>();
 const tradeAmountInputRef = useTemplateRef<InstanceType<typeof TradeAmountInput>>('tradeAmountInputRef');
 
 const { getChainFromChainId, getChainIdFromChain } = useWalletHelper();
-const { getNativeAsset } = useSupportedChains();
+const { getEvmChainName, getNativeAsset } = useSupportedChains();
 
 const walletStore = useWalletStore();
 const {
@@ -47,10 +48,10 @@ const {
   waitingForWalletConfirmation,
 } = storeToRefs(walletStore);
 const { getGasFeeForChain, open, sendTransaction, switchNetwork } = walletStore;
-const { addressTracked, availableBalance, useQueryingBalances } = useBalanceQueries(connected, connectedAddress);
+const { addressTracked, useQueryingBalances } = useBalanceQueries(connected, connectedAddress);
 
 const { getAssetDetail } = useTradableAsset(connectedAddress);
-const { getIsInteractedBefore } = useTradeApi();
+const { getAssetBalance, getIsInteractedBefore } = useTradeApi();
 const { isPackaged, openWalletConnectBridge } = useInterop();
 const router = useRouter();
 
@@ -127,9 +128,10 @@ function setMax() {
   get(tradeAmountInputRef)?.setMax();
 }
 
-function updateMaxAmountForAsset(assetDetail?: TradableAsset) {
-  if (assetDetail) {
-    set(max, assetDetail.amount.toFixed());
+function updateMaxAmountForAsset() {
+  const balance = get(assetBalance);
+  if (balance) {
+    set(max, balance.minus(get(estimatedGasFee)).toFixed());
   }
   else {
     resetMax();
@@ -178,6 +180,41 @@ async function send() {
   }
 }
 
+async function refreshAssetBalance() {
+  set(amount, '');
+  set(assetBalance, undefined);
+
+  const chain = get(assetChain);
+  const assetVal = get(asset);
+  const address = get(connectedAddress);
+
+  if (!chain || !assetVal || !address) {
+    return;
+  }
+
+  const evmChain = getEvmChainName(chain);
+
+  if (!evmChain) {
+    return;
+  }
+
+  const payload: GetAssetBalancePayload = {
+    address,
+    asset: assetVal,
+    evmChain,
+  };
+
+  try {
+    const response = await getAssetBalance(payload);
+    if (get(asset) === payload.asset) {
+      set(assetBalance, response);
+    }
+  }
+  catch (error) {
+    logger.error(error);
+  }
+}
+
 watch([assetChain, supportedChainsForConnectedAccount], ([currentChain, chainOptions]) => {
   if (!chainOptions.includes(currentChain)) {
     set(assetChain, chainOptions[0]);
@@ -200,10 +237,11 @@ watch([connectedAddress, toAddress], async ([fromAddress, toAddress]) => {
   }
 });
 
-watch([assetChain, asset], () => {
-  set(amount, '');
+watch([assetChain, asset, connectedAddress], async () => {
+  await refreshAssetBalance();
 });
 
+// calculate the gas fee estimation
 watchImmediate([
   asset,
   assetChain,
@@ -222,7 +260,7 @@ watchImmediate([
   }
 
   if (!get(isNativeAsset)) {
-    updateMaxAmountForAsset(assetDetail);
+    set(estimatedGasFee, '0');
     return;
   }
 
@@ -230,17 +268,17 @@ watchImmediate([
     if (getChainIdFromChain(chain) === connectedChainId) {
       const gasFeeEstimation = await estimateGas(currentAsset);
       if (gasFeeEstimation) {
-        const { maxAmount } = gasFeeEstimation;
-        set(max, maxAmount);
+        const { gasFee } = gasFeeEstimation;
+        set(estimatedGasFee, gasFee);
+        return;
       }
-      return;
     }
 
-    updateMaxAmountForAsset(assetDetail);
+    set(estimatedGasFee, '0');
   }
   catch (error: any) {
     if (error.message !== 'Gas estimation cancelled') {
-      updateMaxAmountForAsset(assetDetail);
+      set(estimatedGasFee, '0');
       logger.error(error);
     }
   }
@@ -256,6 +294,10 @@ watchImmediate(connectedChainId, (curr, prev) => {
   }
 
   set(assetChain, getChainFromChainId(curr));
+});
+
+watch([estimatedGasFee, assetBalance], () => {
+  updateMaxAmountForAsset();
 });
 </script>
 
@@ -285,25 +327,7 @@ watchImmediate(connectedChainId, (curr, prev) => {
       >
         {{ t('trade.warning.query_on_progress') }}
       </RuiAlert>
-      <div class="flex justify-between items-center">
-        <div class="min-h-[2.75rem]">
-          <template v-if="connected">
-            <div class="text-rui-text-secondary text-sm">
-              {{ t('trade.available_balances') }}
-            </div>
-            <div v-if="!addressTracked">
-              -
-            </div>
-            <AmountDisplay
-              v-else
-              v-model="amount"
-              :value="availableBalance"
-              :fiat-currency="CURRENCY_USD"
-              show-currency="symbol"
-            />
-          </template>
-        </div>
-
+      <div class="flex justify-end items-center">
         <div class="flex gap-2">
           <RuiButton
             v-if="isPackaged && !connected"
@@ -337,8 +361,10 @@ watchImmediate(connectedChainId, (curr, prev) => {
       <TradeAssetSelector
         v-model="asset"
         v-model:chain="assetChain"
+        :amount="assetBalance"
         :address="addressTracked ? connectedAddress : undefined"
         @set-max="setMax()"
+        @refresh="refreshAssetBalance()"
       />
       <TradeRecipientAddress
         v-model="toAddress"
@@ -380,7 +406,7 @@ watchImmediate(connectedChainId, (curr, prev) => {
         color="primary"
         size="lg"
         class="!w-full"
-        :disabled="!valid || estimatingGas"
+        :disabled="!valid || estimatingGas || !assetBalance"
         :loading="preparing"
         @click="send()"
       >

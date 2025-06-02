@@ -95,6 +95,9 @@ class HistoryEventSubType(SerializableEnumNameMixin):
     CLAWBACK = auto()
     DEPOSIT_FOR_WRAPPED = auto()
     REDEEM_WRAPPED = auto()
+    CONSOLIDATE = auto()
+    DELEGATE = auto()
+    LIQUIDITY_PROVISION_LOSS = auto()
 
     def serialize_or_none(self) -> str | None:
         return self.serialize()
@@ -160,7 +163,7 @@ class EventCategory(Enum):
     STAKING_REWARD = 30, EventDirection.IN
     CREATE_BLOCK = 31, EventDirection.IN
     CREATE_PROJECT = 32, EventDirection.NEUTRAL
-    UPDATE_PROJECT = 33, EventDirection.NEUTRAL
+    UPDATE = 33, EventDirection.NEUTRAL
     APPLY = 34, EventDirection.NEUTRAL
     STAKE_DEPOSIT = 35, EventDirection.OUT
     UNSTAKE = 36, EventDirection.IN
@@ -178,6 +181,10 @@ class EventCategory(Enum):
     CLAWBACK = 48, EventDirection.OUT
     MINT_NFT = 49, EventDirection.IN
     BURN_NFT = 50, EventDirection.OUT
+    COMBINE = 51, EventDirection.NEUTRAL
+    DELEGATE = 52, EventDirection.NEUTRAL
+    LOSS = 53, EventDirection.OUT
+    LIQUIDITY_PROVISION_LOSS = 54, EventDirection.OUT
 
     @property
     def direction(self) -> EventDirection:

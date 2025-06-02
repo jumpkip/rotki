@@ -8,10 +8,19 @@ import pytest
 import requests
 
 from rotkehlchen.chain.accounts import BlockchainAccountData
-from rotkehlchen.chain.ethereum.modules.eth2.constants import CPT_ETH2, UNKNOWN_VALIDATOR_INDEX
+from rotkehlchen.chain.ethereum.modules.eth2.constants import (
+    CONSOLIDATION_REQUEST_CONTRACT,
+    CPT_ETH2,
+    MIN_EFFECTIVE_BALANCE,
+    UNKNOWN_VALIDATOR_INDEX,
+    WITHDRAWAL_REQUEST_CONTRACT,
+)
 from rotkehlchen.chain.ethereum.modules.eth2.structures import (
     ValidatorDailyStats,
     ValidatorDetails,
+    ValidatorDetailsWithStatus,
+    ValidatorStatus,
+    ValidatorType,
 )
 from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.types import string_to_evm_address
@@ -46,10 +55,11 @@ from rotkehlchen.types import (
     deserialize_evm_tx_hash,
 )
 from rotkehlchen.user_messages import MessagesAggregator
-from rotkehlchen.utils.misc import ts_now, ts_sec_to_ms
+from rotkehlchen.utils.misc import ts_ms_to_sec, ts_now, ts_sec_to_ms
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.modules.eth2.eth2 import Eth2
+    from rotkehlchen.history.events.structures.base import HistoryBaseEntry
     from rotkehlchen.history.price import PriceHistorian
     from rotkehlchen.types import ChecksumEvmAddress
 
@@ -66,6 +76,7 @@ def test_get_validators_to_query_for_stats(database):
             ValidatorDetails(
                 validator_index=1,
                 public_key=Eth2PubKey('0xfoo1'),
+                validator_type=ValidatorType.DISTRIBUTING,
             ),
         ],
         )
@@ -93,9 +104,9 @@ def test_get_validators_to_query_for_stats(database):
     # Now add multiple validators and daily stats and assert on result
     with database.user_write() as cursor:
         db.add_or_update_validators(cursor, [
-            ValidatorDetails(validator_index=2, public_key=Eth2PubKey('0xfoo2')),
-            ValidatorDetails(validator_index=3, public_key=Eth2PubKey('0xfoo3')),
-            ValidatorDetails(validator_index=4, public_key=Eth2PubKey('0xfoo4')),
+            ValidatorDetails(validator_index=2, public_key=Eth2PubKey('0xfoo2'), validator_type=ValidatorType.DISTRIBUTING),  # noqa: E501
+            ValidatorDetails(validator_index=3, public_key=Eth2PubKey('0xfoo3'), validator_type=ValidatorType.DISTRIBUTING),  # noqa: E501
+            ValidatorDetails(validator_index=4, public_key=Eth2PubKey('0xfoo4'), validator_type=ValidatorType.DISTRIBUTING),  # noqa: E501
         ])
     db.add_validator_daily_stats([ValidatorDailyStats(
         validator_index=3,
@@ -344,6 +355,7 @@ def test_validator_daily_stats_with_db_interaction(  # pylint: disable=unused-ar
             ValidatorDetails(
                 validator_index=validator_index,
                 public_key=public_key,
+                validator_type=ValidatorType.DISTRIBUTING,
             ),
         ])
 
@@ -592,14 +604,17 @@ def test_ownership_proportion(eth2: 'Eth2', database):
             validator_index=9,
             public_key=Eth2PubKey('0xb016e31f633a21fbe42a015152399361184f1e2c0803d89823c224994af74a561c4ad8cfc94b18781d589d03e952cd5b'),
             ownership_proportion=FVal(0.5),
+            validator_type=ValidatorType.BLS,
         ), ValidatorDetails(
             validator_index=1647,
             public_key=Eth2PubKey('0xb80777b022a115579f22674883996d0a904e51afaf0ddef4e577c7bc72ec4e14fc7714b8c58fb77ceb7b5162809d1475'),
             ownership_proportion=FVal(0.7),
+            validator_type=ValidatorType.DISTRIBUTING,
         ), ValidatorDetails(  # This validator is tracked but not owned by any of the addresses
             validator_index=1757,
             public_key=Eth2PubKey('0xac3d4d453d58c6e6fd5186d8f231eb00ff5a753da3669c208157419055c7c562b7e317654d8c67783c656a956927209d'),
             ownership_proportion=FVal(0.9),
+            validator_type=ValidatorType.DISTRIBUTING,
         ),
     ]
     with database.user_write() as write_cursor:
@@ -696,9 +711,11 @@ def test_eth_validators_performance(eth2, database, ethereum_accounts):
         dbeth2.add_or_update_validators(write_cursor, validators=[
             ValidatorDetails(
                 validator_index=vindex1,
+                validator_type=ValidatorType.DISTRIBUTING,
                 public_key=Eth2PubKey('0xadd9843b2eb53ccaf5afb52abcc0a13223088320656fdfb162360ca53a71ebf8775dbebd0f1f1bf6c3e823d4bf2815f7'),
             ), ValidatorDetails(
                 validator_index=vindex2,
+                validator_type=ValidatorType.DISTRIBUTING,
                 public_key=Eth2PubKey('0xa41a0224e73270cee8e06a9984aa2cd902a20e66c8bb528caae602a7caf76c417d0bdf2ab3b6e50a579fa7d98c6d240c'),
             ),
         ])
@@ -836,6 +853,161 @@ def test_eth_validators_performance(eth2, database, ethereum_accounts):
     assert performance['validators'] == {}
 
 
+@pytest.mark.parametrize('network_mocking', [False])
+@pytest.mark.parametrize('ethereum_accounts', [['0x0fdAe061cAE1Ad4Af83b27A96ba5496ca992139b']])
+def test_eth_accumulating_validators_performance(
+        eth2: 'Eth2',
+        database: 'DBHandler',
+        ethereum_accounts: list['ChecksumEvmAddress'],
+) -> None:
+    """Test that the performance of accumulating validators is handled correctly.
+
+    Validators:
+    1. Accumulating - Target for consolidations.
+    2. Distributing - Consolidated into validator 1
+    3. Accumulating - Consolidated into validator 1 after a 64 ETH deposit
+    4. Accumulating - Exits with pnl with an effective balance > 32
+
+    Events:
+    - initial deposits of 32 ETH to each validator
+    - deposit of 64 ETH to validator 3
+    - deposit of 10 ETH to validator 4
+    - skimming withdrawal of 0.02 ETH from validator 3
+    - partial withdrawal (via EL request) of 4 ETH from validator 3
+    - consolidation of validators 2 and 3 into validator 1
+    - exit of validator 4
+    - block reward of 0.05 ETH for validator 1
+    """
+    dbevents = DBHistoryEvents(database)
+    dbeth2 = DBEth2(database)
+    validators = [(validator1 := ValidatorDetails(
+        validator_index=1073521,
+        validator_type=ValidatorType.ACCUMULATING,
+        public_key=Eth2PubKey('0xae44b0684220d51d11726e09115b1a9068147755bfa8dcb67fa208f6178a251c2450cc7072d75976ef5c32ab3acd8e68'),
+    )), (validator2 := ValidatorDetails(
+        validator_index=67929,
+        validator_type=ValidatorType.DISTRIBUTING,
+        public_key=Eth2PubKey('0x99e7ae8ad91b8f8fa447554858481980a57da7e93bcf49d92acadcec2e689e98b4e8c25a2f1fbb1ad337c3d4711fd977'),
+    )), (validator3 := ValidatorDetails(
+        validator_index=47086,
+        validator_type=ValidatorType.ACCUMULATING,
+        public_key=Eth2PubKey('0x97662e211e8eb3fa64ffd73ada75cfd6d14078aef7f1138d6430abb38d4d1d1b91191f18470e6e467dd4c125f73a9f48'),
+    )), (validator4 := ValidatorDetails(
+        validator_index=1672457,
+        validator_type=ValidatorType.ACCUMULATING,
+        public_key=Eth2PubKey('0x8ad15ca10be31b7fb7ad6e87f721b7311f535b3e47dc7e6e25d9c6f904a35fc0964b3ab581bb162ac474653236b5f9a6'),
+    ))]
+
+    tx_hash_1, timestamp, user_address, hour_in_ms = make_evm_tx_hash(), TimestampMS(1746119141000), ethereum_accounts[0], ts_sec_to_ms(Timestamp(HOUR_IN_SECONDS))  # noqa: E501
+    events: list[HistoryBaseEntry] = [EthDepositEvent(
+        tx_hash=tx_hash_1,
+        validator_index=validator.validator_index,  # type: ignore[arg-type]  # validator_index has been set
+        sequence_index=idx,
+        timestamp=timestamp,
+        amount=MIN_EFFECTIVE_BALANCE,
+        depositor=user_address,
+    ) for idx, validator in enumerate(validators)]
+    events.extend([EthDepositEvent(
+        tx_hash=make_evm_tx_hash(),
+        validator_index=validator3.validator_index,  # type: ignore[arg-type]
+        sequence_index=1,
+        timestamp=TimestampMS(timestamp + (1 * hour_in_ms)),
+        amount=FVal('64'),
+        depositor=user_address,
+    ), EthDepositEvent(
+        tx_hash=make_evm_tx_hash(),
+        validator_index=validator4.validator_index,  # type: ignore[arg-type]
+        sequence_index=1,
+        timestamp=TimestampMS(timestamp + (1 * hour_in_ms)),
+        amount=(second_deposit := FVal('10')),
+        depositor=user_address,
+    ), EthWithdrawalEvent(
+        validator_index=validator3.validator_index,  # type: ignore[arg-type]
+        timestamp=TimestampMS(timestamp + (2 * hour_in_ms)),
+        amount=(skim_amount := FVal('0.02')),
+        withdrawal_address=user_address,
+        is_exit=False,
+    ), EvmEvent(
+        tx_hash=make_evm_tx_hash(),
+        sequence_index=1,
+        timestamp=TimestampMS(timestamp + (3 * hour_in_ms)),
+        location=Location.ETHEREUM,
+        event_type=HistoryEventType.INFORMATIONAL,
+        event_subtype=HistoryEventSubType.REMOVE_ASSET,
+        asset=A_ETH,
+        amount=(withdrawal_amount := FVal('4')),
+        location_label=user_address,
+        notes=f'Request to withdraw {withdrawal_amount} ETH from validator {validator3.validator_index}',  # noqa: E501
+        counterparty=CPT_ETH2,
+        address=WITHDRAWAL_REQUEST_CONTRACT,
+        extra_data={'validator_index': validator3.validator_index},
+    ), EthWithdrawalEvent(
+        validator_index=validator3.validator_index,  # type: ignore[arg-type]
+        timestamp=TimestampMS(timestamp + (36 * hour_in_ms)),
+        amount=withdrawal_amount,
+        withdrawal_address=user_address,
+        is_exit=False,
+    ), EthWithdrawalEvent(
+        validator_index=validator4.validator_index,  # type: ignore[arg-type]
+        timestamp=TimestampMS(timestamp + (72 * hour_in_ms)),
+        amount=MIN_EFFECTIVE_BALANCE + second_deposit + (exit_amount := FVal('0.01')),
+        withdrawal_address=user_address,
+        is_exit=True,
+    ), EthBlockEvent(
+        validator_index=validator1.validator_index,  # type: ignore[arg-type]
+        timestamp=TimestampMS(timestamp + (75 * hour_in_ms)),
+        amount=(block_reward := FVal('0.05')),
+        fee_recipient=user_address,
+        fee_recipient_tracked=True,
+        block_number=33333,
+        is_mev_reward=False,
+    )])
+    events.extend([EvmEvent(
+        tx_hash=make_evm_tx_hash(),
+        sequence_index=1,
+        timestamp=TimestampMS(timestamp + (40 * hour_in_ms)),
+        location=Location.ETHEREUM,
+        event_type=HistoryEventType.INFORMATIONAL,
+        event_subtype=HistoryEventSubType.CONSOLIDATE,
+        asset=A_ETH,
+        amount=ZERO,
+        location_label=user_address,
+        counterparty=CPT_ETH2,
+        address=CONSOLIDATION_REQUEST_CONTRACT,
+        extra_data={
+            'source_validator_index': validator.validator_index,
+            'target_validator_index': validator1.validator_index,
+        },
+    ) for validator in (validator2, validator3)])
+
+    with database.user_write() as write_cursor:
+        dbeth2.add_or_update_validators(write_cursor, validators)
+        dbevents.add_history_events(write_cursor, events)
+
+    assert eth2.get_performance(
+        from_ts=ts_ms_to_sec(timestamp),
+        to_ts=ts_ms_to_sec(TimestampMS(timestamp + (100 * hour_in_ms))),
+        limit=10,
+        offset=0,
+        ignore_cache=True,
+    ) == {
+        'validators': {
+            validator3.validator_index: {'withdrawals': skim_amount, 'sum': skim_amount, 'apr': FVal('0.0188793103448275862068965517241379310344827586206896551724137931034482758620690')},  # noqa: E501
+            validator4.validator_index: {'exits': exit_amount, 'sum': exit_amount, 'apr': FVal('0.0290643662906436629064366290643662906436629064366290643662906436629064366290644')},  # noqa: E501
+            validator1.validator_index: {'execution_blocks': block_reward, 'sum': block_reward, 'apr': FVal('0.0411654135338345864661654135338345864661654135338345864661654135338345864661654')},  # noqa: E501
+        },
+        'sums': {
+            'withdrawals': skim_amount,
+            'sum': skim_amount + exit_amount + block_reward,
+            'exits': exit_amount,
+            'execution_blocks': block_reward,
+            'apr': FVal('0.0297030300564352785264995314407796027147703595303844353349566167667297663190996'),  # noqa: E501
+        },
+        'entries_total': 4,
+        'entries_found': 3,
+    }
+
+
 @pytest.mark.vcr
 @pytest.mark.freeze_time('2024-02-02 13:34:45 GMT')
 @pytest.mark.parametrize('network_mocking', [False])
@@ -852,9 +1024,11 @@ def test_eth_validators_performance_recent(eth2, database, ethereum_accounts):
         dbeth2.add_or_update_validators(write_cursor, validators=[
             ValidatorDetails(
                 validator_index=647202,
+                validator_type=ValidatorType.DISTRIBUTING,
                 public_key=Eth2PubKey('0x8f1e2e85780c76baede1331c1b5050b7ef752014d24eac669542051ff066dff263753bc033030ccb3c6cfdcc73de0757'),
             ), ValidatorDetails(
                 validator_index=647205,
+                validator_type=ValidatorType.DISTRIBUTING,
                 public_key=Eth2PubKey('0x845fd413c7c5fc2073437d423167f41a51c7f13343c8beb71d5cad2092036ff8277570aec8ba9467aee7ca352dd19d87'),
             ),
         ])
@@ -914,6 +1088,7 @@ def test_combine_block_with_tx_events(eth2, database):
         dbeth2.add_or_update_validators(write_cursor, [
             ValidatorDetails(
                 validator_index=vindex1,
+                validator_type=ValidatorType.DISTRIBUTING,
                 public_key=Eth2PubKey('0xadd9843b2eb53ccaf5afb52abcc0a1322308832065v6fdfb162360ca53a71ebf8775dbebd0f1f1bf6c3e823d4bf2815f7'),
             ),
         ])
@@ -1010,14 +1185,17 @@ def test_refresh_activated_validators_deposits(eth2, database):
     dbeth2 = DBEth2(database)
     validator1 = ValidatorDetails(
         validator_index=30932,
+        validator_type=ValidatorType.DISTRIBUTING,
         public_key=Eth2PubKey('0xa7d4c301a02b7dc747c0f8ff32579226588c7771e133e9b2817cc7a9a977f0004dbee4f4f7f89451a1f5f761e3bb8c81'),
     )
     validator2 = ValidatorDetails(
         validator_index=207003,
+        validator_type=ValidatorType.DISTRIBUTING,
         public_key=Eth2PubKey('0x989620ffd512c08907841e28a2c472bbfad2e57c73f474814bf64bab3ae3b44436b1db7b05e4ccc1eb2c3f949a546278'),
     )
     validator3 = ValidatorDetails(
         validator_index=4523,
+        validator_type=ValidatorType.BLS,
         public_key=Eth2PubKey('0x967c17368bcb6a90164d1af369115b3bf265b82c350fc78d9b1fa9389f2a216867ca02121f21c4be121f334ce2ac7f4f'),
     )
     with database.user_write() as write_cursor:
@@ -1112,14 +1290,17 @@ def test_get_active_validator_indices(database):
         dbeth2.add_or_update_validators(write_cursor, [
             ValidatorDetails(
                 validator_index=active_index,
+                validator_type=ValidatorType.DISTRIBUTING,
                 public_key=Eth2PubKey('0xa1d1ad0714035353258038e964ae9675dc0252ee22cea896825c01458e1807bfad2f9969338798548d9858a571f7425c'),
             ), ValidatorDetails(
                 validator_index=exited_index,
+                validator_type=ValidatorType.DISTRIBUTING,
                 public_key=Eth2PubKey('0x800041b1eff8af7a583caa402426ffe8e5da001615f5ce00ba30ea8e3e627491e0aa7f8c0417071d5c1c7eb908962d8e'),
                 withdrawable_timestamp=Timestamp(1699801559),
                 exited_timestamp=Timestamp(1699976207000),
             ), ValidatorDetails(
                 validator_index=noevents_index,
+                validator_type=ValidatorType.DISTRIBUTING,
                 public_key=Eth2PubKey('0xb02c42a2cda10f06441597ba87e87a47c187cd70e2b415bef8dc890669efe223f551a2c91c3d63a5779857d3073bf288'),
             ),
         ])
@@ -1145,11 +1326,11 @@ def test_refresh_validator_data_after_v40_v41_upgrade(eth2):
     with eth2.database.user_write() as write_cursor:
         write_cursor.executemany(
             'INSERT OR IGNORE INTO eth2_validators('
-            'validator_index, public_key, ownership_proportion) VALUES(?, ?, ?)',
+            'validator_index, public_key, validator_type, ownership_proportion) VALUES(?, ?, ?, ?)',  # noqa: E501
             [
-                (42, '0xb0fee189ffa7ddb3326ef685c911f3416e15664ff1825f3b8e542ba237bd3900f960cd6316ef5f8a5adbaf4903944013', '1.0'),  # noqa: E501
-                (1232, '0xa15f29dd50327bc53b02d34d7db28f175ffc21d7ffbb2646c8b1b82bb6bca553333a19fd4b9890174937d434cc115ace', '0.35'),  # noqa: E501
-                (5231, '0xb052a2b421770b99c2348b652fbdc770b2a27a87bf56993dff212d839556d70e7b68f5d953133624e11774b8cb81129d', '1.0'),  # noqa: E501
+                (42, '0xb0fee189ffa7ddb3326ef685c911f3416e15664ff1825f3b8e542ba237bd3900f960cd6316ef5f8a5adbaf4903944013', 1, '1.0'),  # noqa: E501
+                (1232, '0xa15f29dd50327bc53b02d34d7db28f175ffc21d7ffbb2646c8b1b82bb6bca553333a19fd4b9890174937d434cc115ace', 1, '0.35'),  # noqa: E501
+                (5231, '0xb052a2b421770b99c2348b652fbdc770b2a27a87bf56993dff212d839556d70e7b68f5d953133624e11774b8cb81129d', 1, '1.0'),  # noqa: E501
             ],
         )
         write_cursor.executemany(
@@ -1166,9 +1347,9 @@ def test_refresh_validator_data_after_v40_v41_upgrade(eth2):
 
     with eth2.database.conn.read_ctx() as cursor:
         assert cursor.execute('SELECT * from eth2_validators').fetchall() == [
-            (1, 42, '0xb0fee189ffa7ddb3326ef685c911f3416e15664ff1825f3b8e542ba237bd3900f960cd6316ef5f8a5adbaf4903944013', '1.0', '0x42751916BD8e4ef1966ca033D4EA1FA2a8563f88', 1606824023, None, None),  # noqa: E501
-            (2, 1232, '0xa15f29dd50327bc53b02d34d7db28f175ffc21d7ffbb2646c8b1b82bb6bca553333a19fd4b9890174937d434cc115ace', '0.35', '0x009Ec7D76feBECAbd5c73CB13f6d0FB83e45D450', 1606824023, None, None),  # noqa: E501
-            (3, 5231, '0xb052a2b421770b99c2348b652fbdc770b2a27a87bf56993dff212d839556d70e7b68f5d953133624e11774b8cb81129d', '1.0', '0x5675801e9346eA8165e7Eb80dcCD01dCa65c0f3A', 1606824023, None, None),  # noqa: E501
+            (1, 42, '0xb0fee189ffa7ddb3326ef685c911f3416e15664ff1825f3b8e542ba237bd3900f960cd6316ef5f8a5adbaf4903944013', '1.0', '0x42751916BD8e4ef1966ca033D4EA1FA2a8563f88', 1, 1606824023, None, None),  # noqa: E501
+            (2, 1232, '0xa15f29dd50327bc53b02d34d7db28f175ffc21d7ffbb2646c8b1b82bb6bca553333a19fd4b9890174937d434cc115ace', '0.35', '0x009Ec7D76feBECAbd5c73CB13f6d0FB83e45D450', 1, 1606824023, None, None),  # noqa: E501
+            (3, 5231, '0xb052a2b421770b99c2348b652fbdc770b2a27a87bf56993dff212d839556d70e7b68f5d953133624e11774b8cb81129d', '1.0', '0x5675801e9346eA8165e7Eb80dcCD01dCa65c0f3A', 1, 1606824023, None, None),  # noqa: E501
         ]
         assert cursor.execute('SELECT COUNT(*) from eth2_daily_staking_details').fetchone()[0] == 3
 
@@ -1196,3 +1377,81 @@ def test_clean_cache_on_account_removal(
             name=DBCacheDynamic.WITHDRAWALS_TS,
             address=ethereum_accounts[0],
         ) is None
+
+
+def test_staking_performance_division_by_zero_protection(eth2) -> None:
+    """Test that division by zero is prevented when time_weighted_avg is zero in APR calculation"""
+    dbevents, dbeth2 = DBHistoryEvents(eth2.database), DBEth2(eth2.database)
+    with eth2.database.conn.write_ctx() as write_cursor:
+        dbeth2.add_or_update_validators(
+            write_cursor=write_cursor,
+            validators=[(validator := ValidatorDetailsWithStatus(
+                activation_timestamp=Timestamp(1606824023),
+                validator_index=(v_index := 999999),
+                public_key=Eth2PubKey('0xb912072ccf65435991175736cd73bcb4b2852a993f7d00c4bf3abab5fcfacbd72b37114320a60d9894eaced1ddee1cae'),
+                withdrawal_address=make_evm_address(),
+                status=ValidatorStatus.ACTIVE,
+                validator_type=ValidatorType.DISTRIBUTING,
+            ))],
+        )
+
+    with eth2.database.conn.write_ctx() as write_cursor:
+        dbevents.add_history_events(
+            write_cursor=write_cursor,
+            history=[EthWithdrawalEvent(
+                identifier=1,
+                validator_index=v_index,
+                timestamp=TimestampMS(1631379127000),
+                amount=ONE,
+                withdrawal_address=make_evm_address(),
+                is_exit=False,
+            )],
+        )
+
+    with (
+        patch('rotkehlchen.chain.ethereum.modules.eth2.beacon.BeaconInquirer.get_validator_data', return_value=[validator]),  # noqa: E501
+        patch('rotkehlchen.chain.ethereum.modules.eth2.eth2.Eth2._time_weighted_average', return_value=ZERO),  # noqa: E501
+    ):
+        result = eth2.get_performance(
+            from_ts=Timestamp(1631378127),
+            to_ts=Timestamp(1631379927),
+            limit=100,
+            offset=0,
+            validator_indices=[v_index],
+            ignore_cache=True,
+        )
+        validator_apr = result['validators'][v_index]
+        assert FVal(validator_apr['sum']) == ONE
+        assert FVal(validator_apr['withdrawals']) == ONE
+        assert FVal(validator_apr['apr']) == ZERO
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('network_mocking', [False])
+@pytest.mark.parametrize('ethereum_accounts', [['0xa966b01E2136953DF4F4914CfA9D37724E99a187']])
+def test_validator_details_update(
+        eth2: 'Eth2',
+        database: 'DBHandler',
+        ethereum_accounts: list['ChecksumEvmAddress'],
+):
+    """Test that validator details are properly updated."""
+    dbeth2 = DBEth2(database)
+    with database.user_write() as write_cursor:
+        dbeth2.add_or_update_validators(write_cursor, [ValidatorDetails(
+            validator_index=(v_index := 765881),
+            validator_type=ValidatorType.DISTRIBUTING,  # Will be updated to accumulating
+            public_key=(pub_key := Eth2PubKey('0x8f4bbc39e8319c17050fd94bb609bc21b5f45d2208de5ecf73fc5f38cccfdd434aefb13ed77dea5c1745fa76b627a8af')),  # noqa: E501
+        )])
+
+    assert eth2.get_validators(
+        ignore_cache=True,
+        addresses=[withdrawal_address := ethereum_accounts[0]],
+        validator_indices={v_index},
+    ) == [ValidatorDetailsWithStatus(
+        validator_index=v_index,
+        validator_type=ValidatorType.ACCUMULATING,
+        public_key=pub_key,
+        withdrawal_address=withdrawal_address,
+        activation_timestamp=Timestamp(1690165463),
+        status=ValidatorStatus.ACTIVE,
+    )]

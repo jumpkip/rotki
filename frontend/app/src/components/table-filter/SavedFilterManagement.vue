@@ -16,7 +16,7 @@ const emit = defineEmits<{
   (e: 'update:matches', matches: Suggestion[]): void;
 }>();
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const { location, matchers, selection } = toRefs(props);
 
@@ -150,7 +150,7 @@ async function addToSavedFilter() {
             >
               <RuiIcon
                 size="20"
-                name="lu-filter"
+                name="lu-list-filter"
               />
             </RuiButton>
           </template>
@@ -240,7 +240,10 @@ async function addToSavedFilter() {
         v-else
         class="p-4"
       >
-        <i18n-t keypath="table_filter.saved_filters.empty">
+        <i18n-t
+          scope="global"
+          keypath="table_filter.saved_filters.empty"
+        >
           <template #button>
             <RuiButton
               color="secondary"

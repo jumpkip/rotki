@@ -49,6 +49,7 @@ from rotkehlchen.history.events.structures.types import HistoryEventSubType, His
 from rotkehlchen.oracles.structures import CurrentPriceOracle
 from rotkehlchen.tests.utils.database import (
     _use_prepared_db,
+    column_exists,
     mock_db_schema_sanity_check,
     mock_dbhandler_sync_globaldb_assets,
     mock_dbhandler_update_owned_assets,
@@ -2186,8 +2187,11 @@ def test_upgrade_db_40_to_41(user_data_dir, address_name_priority, messages_aggr
         value TEXT
     )""") is True
         cache_values = cursor.execute('SELECT name, value FROM key_value_cache').fetchall()
-        assert len(cache_values) == len(should_move_settings) + len(should_move_used_query_ranges)
+        assert len(cache_values) == len(should_move_settings) + len(should_move_used_query_ranges) + 1  # 1 is for the last_db_upgrade_ts  # noqa: E501
         for name, value in cache_values:
+            if name == 'last_db_upgrade':
+                continue  # this unrelated
+
             assert name not in should_not_move_settings
             assert name not in should_not_move_used_query_ranges
             if name in should_move_settings:
@@ -3124,6 +3128,19 @@ def test_upgrade_db_47_to_48(user_data_dir, messages_aggregator):
             ('B', 'some-deposit-id'),
             ('C', 'some-withdrawal-id'),
         ]
+        assert not column_exists(cursor, 'calendar_reminders', 'acknowledged')
+        assert cursor.execute('SELECT * from calendar_reminders').fetchall() == [
+            (1, 1, 3600),
+            (2, 1, 900),
+            (3, 2, 86400),
+        ]
+        assert not column_exists(cursor, 'eth2_validators', 'validator_type')
+        assert cursor.execute('SELECT withdrawal_address from eth2_validators').fetchall() == [
+            ('0xabcd1234abcd1234abcd1234abcd1234abcd1234',),
+            (None,),
+            ('0xefef1234abcd1234abcd1234abcd1234abcd5678',),
+            (None,),
+        ]
         assert cursor.execute('SELECT * from used_query_ranges WHERE name LIKE "%_trades_%"').fetchall() == [  # noqa: E501
             ('kraken_trades_kraken', 1577836800, 1609459200),
             ('binance_trades_binance', 1609459200, 1640995200),
@@ -3131,6 +3148,26 @@ def test_upgrade_db_47_to_48(user_data_dir, messages_aggregator):
             ('gemini_trades_gemini', 1672531200, 1704067200),
         ]
         assert table_exists(cursor, 'action_type')
+        assert cursor.execute('SELECT COUNT(*) FROM rpc_nodes').fetchone()[0] == 51
+        assert {row[0] for row in cursor.execute('SELECT name FROM rpc_nodes WHERE endpoint=""')} == {  # noqa: E501
+            'arbitrum one etherscan',
+            'base etherscan',
+            'bsc etherscan',
+            'etherscan',
+            'gnosis etherscan',
+            'optimism etherscan',
+            'polygon pos etherscan',
+            'scroll etherscan',
+        }
+        assert cursor.execute(
+            'SELECT value FROM settings where name=?',
+            ('use_unified_etherscan_api',),
+        ).fetchone()[0] == 'True'
+        assert not table_exists(cursor, 'evm_transactions_authorizations')
+        assert not table_exists(cursor, 'eth_validators_data_cache')
+        assert cursor.execute('SELECT * from evm_internal_transactions').fetchall() == [
+            (579, 42, '0x9eE457023bB3De16D51A003a247BaEaD7fce313D', '0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12', '15'),  # noqa: E501
+        ]
 
     # Execute upgrade
     db = _init_db_with_target_version(
@@ -3182,8 +3219,32 @@ def test_upgrade_db_47_to_48(user_data_dir, messages_aggregator):
             ('some-deposit-id',),
             ('some-withdrawal-id',),
         ]
+        assert column_exists(cursor, 'calendar_reminders', 'acknowledged')
+        assert cursor.execute('SELECT * from calendar_reminders').fetchall() == [
+            (1, 1, 3600, 0),
+            (2, 1, 900, 0),
+            (3, 2, 86400, 0),
+        ]
+        assert column_exists(cursor, 'eth2_validators', 'validator_type')
+        assert cursor.execute('SELECT withdrawal_address, validator_type from eth2_validators').fetchall() == [  # noqa: E501
+            ('0xabcd1234abcd1234abcd1234abcd1234abcd1234', 1),
+            (None, 0),
+            ('0xefef1234abcd1234abcd1234abcd1234abcd5678', 1),
+            (None, 0),
+        ]
         assert cursor.execute('SELECT COUNT(*) from used_query_ranges WHERE name LIKE "%_trades_%"').fetchone()[0] == 0  # noqa: E501
         assert not table_exists(cursor, 'action_type')
+        assert cursor.execute('SELECT COUNT(*) FROM rpc_nodes').fetchone()[0] == 43
+        assert cursor.execute('SELECT COUNT(*) FROM rpc_nodes WHERE endpoint=""').fetchone()[0] == 0  # noqa: E501
+        assert cursor.execute(
+            'SELECT value FROM settings where name=?',
+            ('use_unified_etherscan_api',),
+        ).fetchall() == []
+        assert table_exists(cursor, 'evm_transactions_authorizations')
+        assert table_exists(cursor, 'eth_validators_data_cache')
+        assert cursor.execute('SELECT * from evm_internal_transactions').fetchall() == [
+            (579, 42, '0x9eE457023bB3De16D51A003a247BaEaD7fce313D', '0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12', '15', '0', '0'),  # noqa: E501
+        ]
 
     db.logout()
 
@@ -3198,10 +3259,10 @@ def test_latest_upgrade_correctness(user_data_dir):
     this is just to reminds us not to forget to add create table statements.
     """
     msg_aggregator = MessagesAggregator()
-    base_database = 'v43_rotkehlchen.db'
+    base_database = f'v{ROTKEHLCHEN_DB_VERSION - 1}_rotkehlchen.db'
     _use_prepared_db(user_data_dir, base_database)
     last_db = _init_db_with_target_version(
-        target_version=43,
+        target_version=ROTKEHLCHEN_DB_VERSION - 1,
         user_data_dir=user_data_dir,
         msg_aggregator=msg_aggregator,
         resume_from_backup=False,
@@ -3241,7 +3302,7 @@ def test_latest_upgrade_correctness(user_data_dir):
     assert cursor.execute(
         "SELECT value FROM settings WHERE name='version'",
     ).fetchone()[0] == str(ROTKEHLCHEN_DB_VERSION)
-    removed_tables = {'action_type', 'asset_movements', 'asset_movement_category', 'trade_type', 'trades'}  # noqa: E501
+    removed_tables = {'action_type', 'trade_type', 'trades'}
     removed_views = set()
     missing_tables = tables_before - tables_after_upgrade
     missing_views = views_before - views_after_upgrade
@@ -3250,7 +3311,7 @@ def test_latest_upgrade_correctness(user_data_dir):
     assert tables_after_creation - tables_after_upgrade == set()
     assert views_after_creation - views_after_upgrade == set()
     new_tables = tables_after_upgrade - tables_before
-    assert new_tables == {'cowswap_orders', 'gnosispay_data'}
+    assert new_tables == {'evm_transactions_authorizations', 'eth_validators_data_cache'}
     new_views = views_after_upgrade - views_before
     assert new_views == set()
     db.logout()

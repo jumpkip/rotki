@@ -9,7 +9,7 @@ export const useAssetCacheStore = defineStore('assets/cache', () => {
   const fetchedAssetCollections = ref<Record<string, AssetCollection>>({});
 
   const { assetMapping } = useAssetInfoApi();
-  const { t } = useI18n();
+  const { t } = useI18n({ useScope: 'global' });
   const { notify } = useNotificationsStore();
 
   const getAssetMappingHandler = async (identifiers: string[]): Promise<AssetMap | undefined> => {
@@ -20,10 +20,11 @@ export const useAssetCacheStore = defineStore('assets/cache', () => {
       logger.error(error);
       notify({
         display: true,
-        message: t('asset_search.error.message', {
+        message: t('asset_mappings.error.message', {
+          identifiers: identifiers.join(', '),
           message: error.message,
         }),
-        title: t('asset_search.error.title'),
+        title: t('asset_mappings.error.title'),
       });
       return undefined;
     }

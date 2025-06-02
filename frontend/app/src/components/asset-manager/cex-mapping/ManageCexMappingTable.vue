@@ -27,7 +27,7 @@ const emit = defineEmits<{
   delete: [mapping: CexMapping];
 }>();
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 const cols = computed<DataTableColumn<CexMapping>[]>(() => [{
   align: 'center',
   cellClass: 'py-3',
@@ -104,11 +104,7 @@ function setPage(page: number) {
             />
           </template>
           <template #item.asset="{ row }">
-            <AssetDetails
-              opens-details
-              hide-name
-              :asset="row.asset"
-            />
+            <AssetDetails :asset="row.asset" />
           </template>
           <template #item.actions="{ row }">
             <RowActions

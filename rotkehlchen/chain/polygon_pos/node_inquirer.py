@@ -1,5 +1,5 @@
 import logging
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal
 
 from rotkehlchen.chain.constants import DEFAULT_EVM_RPC_TIMEOUT
 from rotkehlchen.chain.evm.constants import BALANCE_SCANNER_ADDRESS
@@ -17,14 +17,12 @@ from .constants import (
     ARCHIVE_NODE_CHECK_ADDRESS,
     ARCHIVE_NODE_CHECK_BLOCK,
     ARCHIVE_NODE_CHECK_EXPECTED_BALANCE,
-    POLYGON_POS_ETHERSCAN_NODE,
-    POLYGON_POS_ETHERSCAN_NODE_NAME,
     PRUNED_NODE_CHECK_TX_HASH,
 )
-from .etherscan import PolygonPOSEtherscan
 
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
+    from rotkehlchen.externalapis.etherscan import Etherscan
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -36,20 +34,15 @@ class PolygonPOSInquirer(EvmNodeInquirer):
             self,
             greenlet_manager: GreenletManager,
             database: 'DBHandler',
+            etherscan: 'Etherscan',
             rpc_timeout: int = DEFAULT_EVM_RPC_TIMEOUT,
     ) -> None:
-        etherscan = PolygonPOSEtherscan(
-            database=database,
-            msg_aggregator=database.msg_aggregator,
-        )
         contracts = EvmContracts[Literal[ChainID.POLYGON_POS]](chain_id=ChainID.POLYGON_POS)
         super().__init__(
             greenlet_manager=greenlet_manager,
             database=database,
             etherscan=etherscan,
             blockchain=SupportedBlockchain.POLYGON_POS,
-            etherscan_node=POLYGON_POS_ETHERSCAN_NODE,
-            etherscan_node_name=POLYGON_POS_ETHERSCAN_NODE_NAME,
             contracts=contracts,
             rpc_timeout=rpc_timeout,
             contract_multicall=contracts.contract(string_to_evm_address('0x275617327c958bD06b5D6b871E7f491D76113dd8')),
@@ -61,7 +54,6 @@ class PolygonPOSInquirer(EvmNodeInquirer):
                 msg_aggregator=database.msg_aggregator,
             ),
         )
-        self.etherscan = cast('PolygonPOSEtherscan', self.etherscan)
 
     # -- Implementation of EvmNodeInquirer base methods --
 

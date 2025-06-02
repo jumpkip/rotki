@@ -4,8 +4,9 @@ import BigDialog from '@/components/dialogs/BigDialog.vue';
 import PremiumLock from '@/components/premium/PremiumLock.vue';
 import { usePremium } from '@/composables/premium';
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
+    name?: string;
     title: string;
     subtitle?: string;
     imageSrc: string;
@@ -36,7 +37,7 @@ defineSlots<{
   'left-buttons': () => any;
 }>();
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const openDialog = ref<boolean>(false);
 
@@ -46,9 +47,21 @@ function setOpen(value: boolean) {
   set(openDialog, value);
 }
 
-defineExpose({
-  setOpen,
-});
+const route = useRoute();
+const router = useRouter();
+
+watch(route, async (route) => {
+  if (!props.name)
+    return;
+
+  const { query } = route;
+  if (query?.service === props.name) {
+    nextTick(() => {
+      setOpen(true);
+    });
+    await router.replace({ query: {} });
+  }
+}, { immediate: true });
 </script>
 
 <template>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Report } from '@/types/reports';
+import type { BigNumber } from '@rotki/common';
 import type { DataTableColumn, DataTableSortColumn } from '@rotki/ui-library';
-import type BigNumber from 'bignumber.js';
 import type { RouteLocationRaw } from 'vue-router';
 import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
 import DateDisplay from '@/components/display/DateDisplay.vue';
@@ -21,7 +21,7 @@ const expanded = ref<ReportData[]>([]);
 const reportStore = useReportsStore();
 const { deleteReport, fetchReports, isLatestReport } = reportStore;
 const { reports } = storeToRefs(reportStore);
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const items = computed<(ReportData & { id: number })[]>(() =>
   get(reports).entries.map((value, index) => ({

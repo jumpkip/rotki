@@ -2,6 +2,25 @@
 Changelog
 =========
 
+* :bug:`-` The order of borrowing and fee events in liquity DSProxy events should now be correct.
+* :bug:`-` Binance CSV import now correctly handles complex trade entries that span multiple rows.
+* :bug:`-` Balancer pool token price errors are now properly handled instead of breaking portfolio snapshots.
+* :feature:`-` Users will now be able to redecode the ETH block events.
+* :feature:`-` Users will now be able to fetch/refresh the name, symbol and decimals for an evm token from chain data.
+* :feature:`-` Hop staking merkle rewards for optimism should be properly decoded.
+* :feature:`-` More Stakedao bribes should be properly decoded
+* :feature:`-` Users will now be able to redecode events for only selected chains if they need.
+* :bug:`-` rotki should decode newer safe multisig owner addition/removal transactions properly now.
+* :feature:`9965` Users will now be able to chose which chains and addresses they can refresh history events for.
+* :bug:`-` Users will now see the correct latest price on the asset chart when the currently selected currency is not USD.
+* :feature:`9937` Users will now only see a failed/disconnected state when an RPC node fails to connect, the default non-connected state has been changed to Ready to avoid confusion.
+* :feature:`-` Account labels will now be applied to all chains for which activity is auto-detected unless the existing labels differ between chains.
+* :feature:`-` rotki will now use the Etherscan V2 api. Users won't need to create a different api key for each chain since the one from https://etherscan.io will be used for all the supported chains. Finally all non mainnet etherscan api keys are removed from the app. More information available at https://docs.etherscan.io/etherscan-v2
+* :bug:`-` Newer interactions with MakerDAO (now Sky) vaults will now be properly decoded.
+* :feature:`-` sDAI, DAI to sUSDS and vice versa migrations will now be properly decoded.
+* :feature:`-` Users will be able to delete multiple validators at once.
+* :feature:`-` rotki will now correctly decode single token withdrawals from Curve pools.
+* :feature:`-` Gearbox rewards transactions are now decoded properly on all supported chains.
 * :feature:`-` Aave v3 ETH deposit transactions in arbitrum using the new v3 gateway will now be decoded correctly.
 * :feature:`-` Users will now see Umami protocol fees as separate entries when depositing or withdrawing on Arbitrum.
 * :bug:`-` rotki will now exclude Superfluid's Constant Inflow and Outflow NFTs from your balances, fixing misleading balance summaries.
@@ -27,9 +46,24 @@ Changelog
 * :feature:`9496` rotki will now correctly decode Curve Lend staking deposits, withdrawals and reward claims in all supported EVM chains.
 * :feature:`9267` rotki now supports decoding of Aerodrome and Velodrome lock transactions, tracking locked balances, and automatic reminders for lock expirations.
 * :feature:`9145` Deposits and withdrawals from Hyperliquid will be decoded. Balances will also be queried.
-* :bug:`-` rotki will now correctly decode mints of CRV as result of claiming from Curve gauges in L2.
+* :bug:`-` rotki will now correctly decode mints of CRV from various gauges.
+* :bug:`-` rotki will now correctly decode crvUSD claims from the Curve fees distributor.
 * :bug:`9772` Backups of big DBs for premium users should no longer freeze the app.
+* :bug:`-` Users will now be able to see the savings history for the registered Binance exchange.
+
+* :release:`1.38.4 <2025-05-20>`
+* :feature:`-` Blockscout will now be prioritized when querying block number.
+* :bug:`-` Users should no longer experience a loading loop for asset information (name, symbol) on different areas of the application.
+* :bug:`-` rotki password will no longer appear in the debug logs.
+* :bug:`-` Ethereum and Base transaction decoding should now work fine again after the Morpho API deserialization problems.
+
+* :release:`1.38.3 <2025-05-16>`
+* :bug:`-` Fix slow history querying due to the curve DNS domain hijacking which caused us to switch to onchain queries for thousands of pools.
+* :bug:`-` Users will now be able to use the filter properly after deleting the selected filter that is being edited.
+* :bug:`9793` Users will now be able to add a missing accounting rule by clicking the menu on the history events page.
+* :bug:`9777` Bitstamp asset movements with a fee will now load correctly.
 * :bug:`9730` Fix the issue where the app breaks when the user clicks on "Ethereum Staking" in the blockchain balance summary on the dashboard.
+* :bug:`-` Addresses tracked only on non-mainnet EVM networks should now also be checked for airdrop eligibility.
 * :bug:`-` Fix a rare issue where the manual balance page becomes empty.
 * :bug:`-` Fix a rare issue calling RPC nodes when there is an error connecting to them.
 * :bug:`-` Users will now be able to see exchange locations when expanding the ETH entry under Multi Chain Assets.

@@ -14,8 +14,8 @@ import { type Filters, type Matcher, useEthValidatorAccountFilter } from '@/comp
 import { usePaginationFilters } from '@/composables/use-pagination-filter';
 import { useBlockchainBalances } from '@/modules/balances/use-blockchain-balances';
 import HashLink from '@/modules/common/links/HashLink.vue';
+import { usePriceUtils } from '@/modules/prices/use-price-utils';
 import { TableId, useRememberTableSorting } from '@/modules/table/use-remember-table-sorting';
-import { useBalancePricesStore } from '@/store/balances/prices';
 import { useBlockchainValidatorsStore } from '@/store/blockchain/validators';
 import { useGeneralSettingsStore } from '@/store/settings/general';
 import { useStatusStore } from '@/store/status';
@@ -29,7 +29,9 @@ const emit = defineEmits<{
   (e: 'edit', value: StakingValidatorManage): void;
 }>();
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
+
+const selected = ref<number[]>([]);
 
 const blockchainValidatorsStore = useBlockchainValidatorsStore();
 const { fetchValidators } = blockchainValidatorsStore;
@@ -37,7 +39,7 @@ const { ethStakingValidators } = storeToRefs(blockchainValidatorsStore);
 const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
 const { showConfirmation } = useAccountDelete();
 const { fetchEthStakingValidators } = useEthStaking();
-const { exchangeRate } = useBalancePricesStore();
+const { useExchangeRate } = usePriceUtils();
 const { fetchBlockchainBalances } = useBlockchainBalances();
 
 const {
@@ -142,6 +144,7 @@ function edit(account: EthereumValidator) {
 
 const colorMap: Record<string, ContextColorsType | undefined> = {
   active: 'success',
+  consolidated: 'secondary',
   exited: 'error',
   exiting: 'warning',
   pending: 'info',
@@ -165,14 +168,22 @@ async function refresh() {
 
 function confirmDelete(item: EthereumValidator) {
   showConfirmation({
-    data: item,
+    data: [item],
+    type: 'validator',
+  });
+}
+
+function deleteSelectedValidators() {
+  const items = get(rows).data.filter(item => get(selected).includes(item.index));
+  showConfirmation({
+    data: items,
     type: 'validator',
   });
 }
 
 const total = computed(() => {
   const mainCurrency = get(currencySymbol);
-  return (get(rows).totalUsdValue || Zero).multipliedBy(get(exchangeRate(mainCurrency)) ?? One);
+  return (get(rows).totalUsdValue || Zero).multipliedBy(get(useExchangeRate(mainCurrency)) ?? One);
 });
 
 watchImmediate(ethStakingValidators, async () => {
@@ -187,20 +198,57 @@ defineExpose({
 <template>
   <RuiCard>
     <template #header>
-      {{ t('blockchain_balances.validators') }}
+      {{ t('blockchain_balances.validators.title') }}
     </template>
-    <div class="flex w-full">
-      <div class="grow" />
-      <div>
-        <TableFilter
-          v-model:matches="filters"
-          :matchers="matchers"
-          class="max-w-[calc(100vw-11rem)] w-[25rem] lg:max-w-[30rem]"
-          :location="SavedFilterLocation.ETH_VALIDATORS"
-        />
+    <div class="flex flex-row flex-wrap items-center gap-2">
+      <div class="flex flex-row gap-3">
+        <RuiButton
+          :disabled="selected.length === 0"
+          class="h-10"
+          variant="outlined"
+          color="error"
+          :loading="accountOperation"
+          @click="deleteSelectedValidators()"
+        >
+          <template #prepend>
+            <RuiIcon
+              name="lu-trash-2"
+              size="16"
+            />
+          </template>
+          {{ t('common.actions.delete') }}
+        </RuiButton>
+        <div
+          v-if="selected.length > 0"
+          class="flex gap-2 items-center text-sm"
+        >
+          {{ t('blockchain_balances.validators.selected', { count: selected.length }) }}
+          <RuiButton
+            size="sm"
+            class="!py-0 !px-1.5 !gap-0.5 dark:!bg-opacity-30 dark:!text-white"
+            @click="selected = []"
+          >
+            <template #prepend>
+              <RuiIcon
+                name="lu-x"
+                size="14"
+              />
+            </template>
+            {{ t('common.actions.clear_selection') }}
+          </RuiButton>
+        </div>
       </div>
+      <div class="grow" />
+
+      <TableFilter
+        v-model:matches="filters"
+        :matchers="matchers"
+        class="max-w-[calc(100vw-11rem)] w-[25rem] lg:max-w-[30rem]"
+        :location="SavedFilterLocation.ETH_VALIDATORS"
+      />
     </div>
     <RuiDataTable
+      v-model="selected"
       v-model:sort.external="sort"
       v-model:pagination.external="pagination"
       class="mt-4"
@@ -210,6 +258,8 @@ defineExpose({
       :cols="cols"
       :rows="rows.data"
       sticky-header
+      show-select
+      return-object
       :empty="{ description: t('data_table.no_data') }"
     >
       <template #item.index="{ row }">
@@ -231,8 +281,30 @@ defineExpose({
         <RuiChip
           size="sm"
           :color="getColor(row.status)"
+          content-class="text-xs inline-flex gap-1 items-center"
+          class="uppercase font-semibold"
         >
           {{ row.status }}
+
+          <template v-if="row.consolidatedInto">
+            <RuiTooltip
+              persist-on-tooltip-hover
+              :open-delay="300"
+            >
+              <template #activator>
+                <RuiIcon
+                  name="lu-merge"
+                  size="16"
+                  class="bg-rui-grey-200 text-rui-grey-800 rounded-full p-0.5 -mr-1.5 cursor-pointer"
+                />
+              </template>
+              <div>{{ t('blockchain_balances.validators.consolidated') }}</div>
+              <HashLink
+                location="eth2"
+                :text="row.consolidatedInto.toString()"
+              />
+            </RuiTooltip>
+          </template>
         </RuiChip>
       </template>
       <template #item.amount="{ row }">

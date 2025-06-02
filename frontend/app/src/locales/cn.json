@@ -766,7 +766,6 @@
     },
     "name_non_empty": "资产名称不能为空",
     "optional": "可选字段",
-    "oracle_disable": "禁用/启用从价格 oracle 获取价格。如果 oracle 未禁用且未指定值,rotki 将尝试使用资产符号获取价格。",
     "replaced": "点击\"保存\"后，该图标将被应用。",
     "type_non_empty": "资产类型不能为空",
     "types": {
@@ -907,6 +906,9 @@
     }
   },
   "assets": {
+    "action": {
+      "ignore": "忽略资产"
+    },
     "amount": "总拥有量",
     "backup": {
       "missing_directory": "请选择目录"
@@ -932,7 +934,6 @@
       "type": "按自定义资产类型过滤",
       "type_hint": "使用资产类型搜索"
     },
-    "ignore": "忽略资产",
     "multi_chain_assets": "多链资产",
     "value": "价值"
   },
@@ -1636,7 +1637,8 @@
       "title": "删除 {chain} RPC 节点"
     },
     "connected": {
-      "false": "未连接",
+      "failure": "失败",
+      "false": "准备就绪",
       "true": "已连接"
     },
     "delete_error": {
@@ -1751,9 +1753,8 @@
       "description": "删除外部服务 api 密钥时出错： {message}"
     },
     "etherscan": {
-      "delete_tooltip": "删除 {chain} Etherscan API 密钥",
       "description": "如果您不使用自己的节点，建议用于任何 EVM 区块链余额或交易。",
-      "hint": "输入您的 {chain} Etherscan API 密钥",
+      "hint": "输入您的 Etherscan API 密钥",
       "title": "Etherscan"
     },
     "get_api_key": "您可以申请 an API key {link}",
@@ -3371,9 +3372,6 @@
   },
   "update_indicator": {
     "version": "rotki 的更新版本 ({appVersion}) 可用"
-  },
-  "update_notifier": {
-    "update_available": "前端的更新版本可用。"
   },
   "update_popup": {
     "download_failed": {

@@ -1,18 +1,12 @@
 import type { AssetBalances } from '@/types/balances';
 import type { ComputedRef } from 'vue';
-import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
-import { useAssetCacheStore } from '@/store/assets/asset-cache';
+import { useCollectionInfo } from '@/modules/assets/use-collection-info';
 import { sortDesc, zeroBalance } from '@/utils/bignumbers';
 import { balanceSum } from '@/utils/calculation';
-import { type AssetBalance, type AssetBalanceWithPrice, type Balance, type BigNumber, NoPrice } from '@rotki/common';
+import { type AssetBalanceWithPrice, type Balance, type BigNumber, NoPrice } from '@rotki/common';
 import { groupBy } from 'es-toolkit';
 
 interface UseBalanceSortingReturn {
-  toSortedAssetBalanceArray: (
-    ownedAssets: AssetBalances,
-    isIgnored: (asset: string) => boolean,
-    groupMultiChain?: boolean
-  ) => AssetBalance[];
   toSortedAssetBalanceWithPrice: (
     ownedAssets: AssetBalances,
     isIgnored: (asset: string) => boolean,
@@ -22,8 +16,7 @@ interface UseBalanceSortingReturn {
 }
 
 export function useBalanceSorting(): UseBalanceSortingReturn {
-  const { assetInfo } = useAssetInfoRetrieval();
-  const { fetchedAssetCollections } = storeToRefs(useAssetCacheStore());
+  const { useCollectionId, useCollectionMainAsset } = useCollectionInfo();
 
   const toSortedAndGroupedArray = <T extends Balance>(
     ownedAssets: AssetBalances,
@@ -39,10 +32,10 @@ export function useBalanceSorting(): UseBalanceSortingReturn {
       return data.sort((a, b) => sortDesc(a.usdValue, b.usdValue));
 
     const groupedBalances = groupBy(data, (balance) => {
-      const info = get(assetInfo(balance.asset));
+      const collectionId = get(useCollectionId(balance.asset));
 
-      if (info?.collectionId)
-        return `collection-${info.collectionId}`;
+      if (collectionId)
+        return `collection-${collectionId}`;
 
       return balance.asset;
     });
@@ -53,9 +46,9 @@ export function useBalanceSorting(): UseBalanceSortingReturn {
       const grouped = groupedBalances[key];
       const isAssetCollection = key.startsWith('collection-');
       const collectionKey = key.split('collection-')[1];
-      const assetCollectionInfo = !isAssetCollection ? false : get(fetchedAssetCollections)?.[collectionKey];
+      const mainAsset = !isAssetCollection ? false : get(useCollectionMainAsset(collectionKey));
 
-      if (assetCollectionInfo) {
+      if (mainAsset) {
         const sumBalance = grouped.reduce(
           (accumulator, currentBalance) => balanceSum(accumulator, currentBalance),
           zeroBalance(),
@@ -64,7 +57,7 @@ export function useBalanceSorting(): UseBalanceSortingReturn {
         const parent: T = {
           ...grouped[0],
           ...sumBalance,
-          asset: assetCollectionInfo.mainAsset,
+          asset: mainAsset,
           breakdown: grouped,
         };
 
@@ -91,19 +84,7 @@ export function useBalanceSorting(): UseBalanceSortingReturn {
       usdValue: ownedAssets[asset].usdValue,
     }));
 
-  const toSortedAssetBalanceArray = (
-    ownedAssets: AssetBalances,
-    isIgnored: (asset: string) => boolean,
-    groupMultiChain = false,
-  ): AssetBalance[] =>
-    toSortedAndGroupedArray(ownedAssets, isIgnored, groupMultiChain, asset => ({
-      amount: ownedAssets[asset].amount,
-      asset,
-      usdValue: ownedAssets[asset].usdValue,
-    }));
-
   return {
-    toSortedAssetBalanceArray,
     toSortedAssetBalanceWithPrice,
   };
 }

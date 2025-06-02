@@ -542,7 +542,7 @@ class DBHandler:
             conn.close()
             setattr(self, conn_attribute, None)
 
-    def export_unencrypted(self, temppath: Path) -> None:
+    def export_unencrypted(self, tempdbfile: 'tempfile._TemporaryFileWrapper[bytes]') -> Path:
         """Export the unencrypted DB to the temppath as plaintext DB
 
         The critical section is absolutely needed as a context switch
@@ -551,15 +551,20 @@ class DBHandler:
         to DB plaintext already in use
         2. Having a DB transaction open between the attach and detach and not
         closed when we detach which will result in DB plaintext locked.
+
+        Returns the Path of the new temp DB file
         """
+        tempdbpath = Path(tempdbfile.name)
+        tempdbfile.close()  # close the file to allow re-opening by export_unencrypted in windows https://github.com/rotki/rotki/issues/5051  # noqa: E501
         with self.conn.critical_section():
             # flush the wal file to have up to date information when exporting data
             self.conn.execute('PRAGMA wal_checkpoint;')
             self.conn.executescript(
-                f"ATTACH DATABASE '{temppath}' AS plaintext KEY '';"
+                f"ATTACH DATABASE '{tempdbpath}' AS plaintext KEY '';"
                 "SELECT sqlcipher_export('plaintext');"
                 "DETACH DATABASE plaintext;",
             )
+        return tempdbpath
 
     def import_unencrypted(self, unencrypted_db_data: bytes) -> None:
         """Imports an unencrypted DB from raw data
@@ -788,6 +793,18 @@ class DBHandler:
         write_cursor.execute(
             'DELETE FROM key_value_cache WHERE name=?;', (name.get_db_key(**kwargs),),
         ).fetchone()
+
+    @staticmethod
+    def delete_dynamic_caches(
+            write_cursor: 'DBCursor',
+            key_parts: Sequence[str],
+    ) -> None:
+        """Delete cache entries whose names start with any of the given `key_parts`"""
+        placeholders = ' OR '.join(['name LIKE ?'] * len(key_parts))
+        write_cursor.execute(
+            f'DELETE FROM key_value_cache WHERE {placeholders}',
+            [f'{key_part}%' for key_part in key_parts],
+        )
 
     @overload
     def set_dynamic_cache(
@@ -1953,7 +1970,7 @@ class DBHandler:
                 if tuple_type == 'evm_transaction':
                     tx_hash_idx, chain_id_idx = 0, 1
                 else:  # relevant address can only be left for internal tx
-                    tx_hash_idx, chain_id_idx = 4, 5
+                    tx_hash_idx, chain_id_idx = 6, 7
                 write_cursor.executemany(
                     'INSERT OR IGNORE INTO evmtx_address_mappings(tx_id, address) '
                     'SELECT TX.identifier, ? FROM evm_transactions TX WHERE '
@@ -1964,24 +1981,13 @@ class DBHandler:
             # That means that one of the tuples hit a constraint, probably some
             # foreign key connection is broken. Try to put them 1 by one.
             for entry in tuples:
-                try:
-                    last_row_id = write_cursor.lastrowid
-                    write_cursor.execute(query, entry)
-                    if relevant_address is not None and (new_id := write_cursor.lastrowid) != last_row_id:  # noqa: E501
-                        write_cursor.execute(  # new addition happened
-                            'INSERT OR IGNORE INTO evmtx_address_mappings '
-                            '(tx_id, address) VALUES(?, ?)',
-                            (new_id, relevant_address),
-                        )
-                except sqlcipher.IntegrityError as e:  # pylint: disable=no-member
-                    string_repr = db_tuple_to_str(entry, tuple_type)
-                    log.warning(
-                        f'Did not add "{string_repr}" to the DB due to "{e!s}".'
-                        f'Some other constraint was hit.',
-                    )
-                except sqlcipher.InterfaceError:  # pylint: disable=no-member
-                    log.critical(f'Interface error with tuple: {entry}')
-
+                self.write_single_tuple(
+                    write_cursor=write_cursor,
+                    tuple_type=tuple_type,
+                    query=query,
+                    entry=entry,
+                    relevant_address=relevant_address,
+                )
         except OverflowError:
             self.msg_aggregator.add_error(
                 f'Failed to add "{tuple_type}" to the DB with overflow error. '
@@ -1991,6 +1997,42 @@ class DBHandler:
                 f'Overflow error while trying to add "{tuple_type}" tuples to the'
                 f' DB. Tuples: {tuples} with query: {query}',
             )
+
+    @staticmethod
+    def write_single_tuple(
+            write_cursor: 'DBCursor',
+            tuple_type: DBTupleType,
+            query: str,
+            entry: tuple[Any, ...],
+            relevant_address: ChecksumEvmAddress | None,
+    ) -> int | None:
+        """Helper to write an entry of a tuple type and handle address mapping"""
+        try:
+            write_cursor.execute(query, entry)
+            if tuple_type == 'evm_transaction':
+                tx_id = write_cursor.execute(
+                    'SELECT identifier FROM evm_transactions WHERE tx_hash=? AND chain_id=?',
+                    (entry[0], entry[1]),
+                ).fetchone()[0]
+
+                # add address mapping if relevant_address is provided and transaction exists
+                if relevant_address is not None and tx_id is not None:
+                    write_cursor.execute(
+                        'INSERT OR IGNORE INTO evmtx_address_mappings(tx_id, address) VALUES (?, ?)',  # noqa: E501
+                        (tx_id, relevant_address),
+                    )
+
+                return tx_id  # return the transaction id (new or existing)
+        except sqlcipher.IntegrityError as e:  # pylint: disable=no-member
+            string_repr = db_tuple_to_str(entry, tuple_type)
+            log.warning(
+                f'Did not add "{string_repr}" to the DB due to "{e!s}".'
+                f'Some other constraint was hit.',
+            )
+        except sqlcipher.InterfaceError:  # pylint: disable=no-member
+            log.critical(f'Interface error with tuple: {entry}')
+
+        return None
 
     def add_margin_positions(self, write_cursor: 'DBCursor', margin_positions: list[MarginPosition]) -> None:  # noqa: E501
         margin_tuples: list[tuple[Any, ...]] = []
@@ -3213,6 +3255,7 @@ class DBHandler:
                 cursor.execute(
                     'SELECT identifier, name, endpoint, owned, weight, active, blockchain FROM rpc_nodes WHERE blockchain=? ORDER BY name;', (blockchain.value,),  # noqa: E501
                 )
+
             return [
                 WeightedNode(
                     identifier=entry[0],
@@ -3264,14 +3307,6 @@ class DBHandler:
             'UPDATE rpc_nodes SET weight=? WHERE identifier=?',
             new_weights,
         )
-
-    def is_etherscan_node(self, node_identifier: int) -> bool:
-        """Checks if a given node is an etherscan node (ethereum, optimism, etc)"""
-        with self.conn.read_ctx() as cursor:
-            return bool(cursor.execute(
-                "SELECT COUNT(*) FROM rpc_nodes WHERE identifier=? AND endpoint=''",
-                (node_identifier,),
-            ).fetchone()[0])
 
     def add_rpc_node(self, node: WeightedNode) -> None:
         """

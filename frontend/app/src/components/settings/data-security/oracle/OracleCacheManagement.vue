@@ -7,9 +7,10 @@ import AssetDetails from '@/components/helper/AssetDetails.vue';
 import PrioritizedListEntry from '@/components/helper/PrioritizedListEntry.vue';
 import AssetSelect from '@/components/inputs/AssetSelect.vue';
 import SettingCategoryHeader from '@/components/settings/SettingCategoryHeader.vue';
+import { usePriceApi } from '@/composables/api/balances/price';
 import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
+import { usePriceTaskManager } from '@/modules/prices/use-price-task-manager';
 import { TableId, useRememberTableSorting } from '@/modules/table/use-remember-table-sorting';
-import { useBalancePricesStore } from '@/store/balances/prices';
 import { useConfirmStore } from '@/store/confirm';
 import { useNotificationsStore } from '@/store/notifications';
 import { useTaskStore } from '@/store/tasks';
@@ -20,41 +21,36 @@ import { Severity } from '@rotki/common';
 
 type OracleCacheEntry = OracleCacheMeta & { id: number };
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const sort = ref<DataTableSortData<OracleCacheEntry>>([]);
 
-const columns = computed<DataTableColumn<OracleCacheEntry>[]>(() => [
-  {
-    key: 'fromAsset',
-    label: t('oracle_cache_management.headers.from'),
-    sortable: true,
-  },
-  {
-    key: 'toAsset',
-    label: t('oracle_cache_management.headers.to'),
-    sortable: true,
-  },
-  {
-    key: 'fromTimestamp',
-    label: t('oracle_cache_management.headers.from_date'),
-    sortable: true,
-  },
-  {
-    key: 'toTimestamp',
-    label: t('oracle_cache_management.headers.to_date'),
-    sortable: true,
-  },
-  {
-    key: 'actions',
-    label: '',
-  },
-]);
+const columns = computed<DataTableColumn<OracleCacheEntry>[]>(() => [{
+  key: 'fromAsset',
+  label: t('oracle_cache_management.headers.from'),
+  sortable: true,
+}, {
+  key: 'toAsset',
+  label: t('oracle_cache_management.headers.to'),
+  sortable: true,
+}, {
+  key: 'fromTimestamp',
+  label: t('oracle_cache_management.headers.from_date'),
+  sortable: true,
+}, {
+  key: 'toTimestamp',
+  label: t('oracle_cache_management.headers.to_date'),
+  sortable: true,
+}, {
+  key: 'actions',
+  label: '',
+}]);
 
 useRememberTableSorting<OracleCacheEntry>(TableId.ORACLE_CACHE_MANAGEMENT, sort, columns);
 
 const { useIsTaskRunning } = useTaskStore();
-const { createOracleCache, deletePriceCache, getPriceCache } = useBalancePricesStore();
+const { deletePriceCache, getPriceCache } = usePriceApi();
+const { createOracleCache } = usePriceTaskManager();
 
 const oracles: PrioritizedListItemData<PriceOracle>[] = [CRYPTOCOMPARE_PRIO_LIST_ITEM];
 
@@ -85,14 +81,6 @@ const rows = computed<OracleCacheEntry[]>(() => {
       const toAssetMatch = !to || to === item.toAsset;
       return fromAssetMatch && toAssetMatch;
     });
-});
-
-onMounted(async () => {
-  await load();
-});
-
-watch(selection, async () => {
-  await load();
 });
 
 const pending = useIsTaskRunning(TaskType.CREATE_PRICE_CACHE);
@@ -187,6 +175,14 @@ function showDeleteConfirmation(entry: OracleCacheMeta) {
     () => clearCache(entry),
   );
 }
+
+watch(selection, async () => {
+  await load();
+});
+
+onMounted(async () => {
+  await load();
+});
 </script>
 
 <template>
@@ -275,16 +271,10 @@ function showDeleteConfirmation(entry: OracleCacheMeta) {
         class="bg-white dark:bg-transparent"
       >
         <template #item.fromAsset="{ row }">
-          <AssetDetails
-            opens-details
-            :asset="row.fromAsset"
-          />
+          <AssetDetails :asset="row.fromAsset" />
         </template>
         <template #item.toAsset="{ row }">
-          <AssetDetails
-            opens-details
-            :asset="row.toAsset"
-          />
+          <AssetDetails :asset="row.toAsset" />
         </template>
         <template #item.toTimestamp="{ row }">
           <DateDisplay :timestamp="row.toTimestamp" />

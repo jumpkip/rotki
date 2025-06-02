@@ -77,6 +77,7 @@ from rotkehlchen.externalapis.beaconchain.service import BeaconChain
 from rotkehlchen.externalapis.coingecko import Coingecko
 from rotkehlchen.externalapis.cryptocompare import Cryptocompare
 from rotkehlchen.externalapis.defillama import Defillama
+from rotkehlchen.externalapis.etherscan import Etherscan
 from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.asset_updates.manager import AssetsUpdater
 from rotkehlchen.globaldb.handler import GlobalDBHandler
@@ -101,7 +102,6 @@ from rotkehlchen.types import (
     EVM_CHAINS_WITH_TRANSACTIONS,
     EVM_CHAINS_WITH_TRANSACTIONS_TYPE,
     SUPPORTED_BITCOIN_CHAINS,
-    SUPPORTED_EVM_CHAINS,
     SUPPORTED_EVM_CHAINS_TYPE,
     SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE,
     SUPPORTED_SUBSTRATE_CHAINS,
@@ -126,7 +126,6 @@ from rotkehlchen.utils.misc import combine_dicts, ts_now
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.bitcoin.xpub import XpubData
-    from rotkehlchen.chain.evm.manager import EvmManager
     from rotkehlchen.db.drivers.gevent import DBCursor
     from rotkehlchen.exchanges.kraken import KrakenAccountType
 
@@ -370,40 +369,56 @@ class Rotkehlchen:
             )
             blockchain_accounts = self.data.db.get_blockchain_accounts(cursor)
 
+        etherscan = Etherscan(
+            database=self.data.db,
+            msg_aggregator=self.data.db.msg_aggregator,
+        )
+
         # Initialize blockchain querying modules
         self.chains_aggregator = ChainsAggregator(
             blockchain_accounts=blockchain_accounts,
-            ethereum_manager=EthereumManager(ethereum_inquirer := EthereumInquirer(
-                greenlet_manager=self.greenlet_manager,
-                database=self.data.db,
-            )),
+            ethereum_manager=EthereumManager(
+                node_inquirer=(ethereum_inquirer := EthereumInquirer(
+                    greenlet_manager=self.greenlet_manager,
+                    database=self.data.db,
+                    etherscan=etherscan,
+                )),
+                beacon_chain=self.beaconchain,
+            ),
             optimism_manager=OptimismManager(OptimismInquirer(
                 greenlet_manager=self.greenlet_manager,
                 database=self.data.db,
+                etherscan=etherscan,
             )),
             polygon_pos_manager=PolygonPOSManager(PolygonPOSInquirer(
                 greenlet_manager=self.greenlet_manager,
                 database=self.data.db,
+                etherscan=etherscan,
             )),
             arbitrum_one_manager=ArbitrumOneManager(ArbitrumOneInquirer(
                 greenlet_manager=self.greenlet_manager,
                 database=self.data.db,
+                etherscan=etherscan,
             )),
             base_manager=BaseManager(BaseInquirer(
                 greenlet_manager=self.greenlet_manager,
                 database=self.data.db,
+                etherscan=etherscan,
             )),
             gnosis_manager=GnosisManager(GnosisInquirer(
                 greenlet_manager=self.greenlet_manager,
                 database=self.data.db,
+                etherscan=etherscan,
             )),
             scroll_manager=ScrollManager(ScrollInquirer(
                 greenlet_manager=self.greenlet_manager,
                 database=self.data.db,
+                etherscan=etherscan,
             )),
             binance_sc_manager=BinanceSCManager(BinanceSCInquirer(
                 greenlet_manager=self.greenlet_manager,
                 database=self.data.db,
+                etherscan=etherscan,
             )),
             kusama_manager=SubstrateManager(
                 chain=SupportedBlockchain.KUSAMA,
@@ -1216,13 +1231,6 @@ class Rotkehlchen:
         with self.data.db.user_write() as cursor:
             self.data.db.set_settings(cursor, settings)
 
-        if settings.use_unified_etherscan_api is not None:
-            for chain in SUPPORTED_EVM_CHAINS:
-                if chain == SupportedBlockchain.AVALANCHE:
-                    continue  # Avalanche doesn't have etherscan
-                chain_manager: EvmManager = self.chains_aggregator.get_chain_manager(chain)
-                chain_manager.node_inquirer.etherscan.toggle_base_attributes()
-
         return True, ''
 
     def _validate_and_set_oracles(
@@ -1292,10 +1300,16 @@ class Rotkehlchen:
         if self.user_is_logged_in:
             with self.data.db.conn.read_ctx() as cursor:
                 result[DBCacheStatic.LAST_BALANCE_SAVE.value] = self.data.db.get_last_balance_save_time(cursor)  # noqa: E501
-                connected_nodes = {}
+                connected_nodes, failed_to_connect = {}, {}
                 for evm_manager in self.chains_aggregator.iterate_evm_chain_managers():
                     connected_nodes[evm_manager.node_inquirer.chain_name] = [node.name for node in evm_manager.node_inquirer.get_connected_nodes()]  # noqa: E501
+                    if len(evm_manager.node_inquirer.failed_to_connect_nodes) != 0:
+                        failed_to_connect[evm_manager.node_inquirer.chain_name] = list(evm_manager.node_inquirer.failed_to_connect_nodes)  # noqa: E501
+
                 result['connected_nodes'] = connected_nodes
+                if len(failed_to_connect) != 0:
+                    result['failed_to_connect'] = failed_to_connect
+
                 result[DBCacheStatic.LAST_DATA_UPLOAD_TS.value] = Timestamp(self.premium_sync_manager.last_remote_data_upload_ts)  # noqa: E501
         return result
 

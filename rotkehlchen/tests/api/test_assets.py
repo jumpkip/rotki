@@ -7,9 +7,9 @@ import pytest
 import requests
 from polyleven import levenshtein
 
-from rotkehlchen.accounting.structures.balance import BalanceType
+from rotkehlchen.accounting.structures.balance import Balance, BalanceType
 from rotkehlchen.api.server import APIServer
-from rotkehlchen.assets.asset import CryptoAsset, CustomAsset
+from rotkehlchen.assets.asset import CryptoAsset, CustomAsset, EvmToken
 from rotkehlchen.assets.resolver import AssetResolver
 from rotkehlchen.assets.types import AssetType
 from rotkehlchen.balances.manual import ManuallyTrackedBalance
@@ -36,7 +36,11 @@ from rotkehlchen.tests.utils.api import (
 from rotkehlchen.tests.utils.checks import assert_asset_result_order
 from rotkehlchen.tests.utils.constants import A_GNO, A_RDN
 from rotkehlchen.tests.utils.database import clean_ignored_assets
-from rotkehlchen.tests.utils.factories import UNIT_BTC_ADDRESS1, UNIT_BTC_ADDRESS2
+from rotkehlchen.tests.utils.factories import (
+    UNIT_BTC_ADDRESS1,
+    UNIT_BTC_ADDRESS2,
+    make_evm_address,
+)
 from rotkehlchen.tests.utils.rotkehlchen import setup_balances
 from rotkehlchen.types import (
     SPAM_PROTOCOL,
@@ -44,6 +48,7 @@ from rotkehlchen.types import (
     CacheType,
     ChainID,
     ChecksumEvmAddress,
+    EvmTokenKind,
     Location,
     TimestampMS,
 )
@@ -1157,6 +1162,8 @@ def test_setting_tokens_as_spam(rotkehlchen_api_server: APIServer) -> None:
             values=(A_DAI.identifier,),
         )
 
+    eth_address = make_evm_address()
+    rotki.chains_aggregator.balances.eth[eth_address].assets[A_DAI] = Balance(amount=FVal(30))
     response = requests.post(
         api_url_for(
             rotkehlchen_api_server,
@@ -1168,6 +1175,9 @@ def test_setting_tokens_as_spam(rotkehlchen_api_server: APIServer) -> None:
     assert A_OP.resolve_to_evm_token().protocol == SPAM_PROTOCOL
     with db.conn.read_ctx() as cursor:
         assert {A_DAI, A_OP}.issubset(rotki.data.db.get_ignored_asset_ids(cursor))
+
+    # check that we removed the asset from the balances
+    assert len(rotki.chains_aggregator.balances.eth[eth_address].assets) == 0
 
     with globaldb.conn.read_ctx() as cursor:
         assert A_DAI.identifier not in globaldb_get_general_cache_values(
@@ -1197,3 +1207,32 @@ def test_setting_tokens_as_spam(rotkehlchen_api_server: APIServer) -> None:
     )
     assert_proper_response(response)
     assert A_DAI.resolve_to_evm_token().protocol is None
+
+
+def test_edit_tokens_nullable(rotkehlchen_api_server: 'APIServer') -> None:
+    """Check that evm tokens can be edited with symbol and decimal being None"""
+    token = EvmToken.initialize(
+        address=make_evm_address(),
+        chain_id=ChainID.ETHEREUM,
+        token_kind=EvmTokenKind.ERC20,
+        name='Custom 2',
+    )
+    GlobalDBHandler.add_asset(token)
+    response = requests.patch(
+        api_url_for(rotkehlchen_api_server, 'allassetsresource'),
+        json={
+            'asset_type': token.asset_type.serialize(),
+            'identifier': token.identifier,
+            'name': 'A new name',
+            'address': token.evm_address,
+            'token_kind': str(token.token_kind.name),
+            'evm_chain': token.chain_id.to_name(),
+            'symbol': None,
+            'decimals': None,
+        },
+    )
+    assert_proper_response(response)
+    token = EvmToken(token.identifier)
+    assert token.name == 'A new name'
+    assert token.symbol == ''
+    assert token.decimals == 18

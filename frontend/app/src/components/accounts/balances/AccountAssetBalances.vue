@@ -4,8 +4,8 @@ import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
 import AssetDetails from '@/components/helper/AssetDetails.vue';
 import RowAppend from '@/components/helper/RowAppend.vue';
 import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
+import { usePriceUtils } from '@/modules/prices/use-price-utils';
 import { TableId, useRememberTableSorting } from '@/modules/table/use-remember-table-sorting';
-import { useBalancePricesStore } from '@/store/balances/prices';
 import { useGeneralSettingsStore } from '@/store/settings/general';
 import { CURRENCY_USD } from '@/types/currencies';
 import { getSortItems } from '@/utils/assets';
@@ -26,10 +26,10 @@ const props = withDefaults(defineProps<AccountAssetBalancesProps>(), {
   flat: false,
 });
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 const { assets } = toRefs(props);
 
-const { assetPrice } = useBalancePricesStore();
+const { assetPrice } = usePriceUtils();
 const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
 const { assetInfo } = useAssetInfoRetrieval();
 const getPrice = (asset: string) => get(assetPrice(asset)) ?? Zero;
@@ -119,7 +119,6 @@ useRememberTableSorting<AssetWithPrice>(TableId.ACCOUNT_ASSET_BALANCES, sort, he
     >
       <template #item.asset="{ row }">
         <AssetDetails
-          opens-details
           :asset="row.asset"
         />
       </template>

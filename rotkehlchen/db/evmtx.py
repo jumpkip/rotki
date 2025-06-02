@@ -1,5 +1,5 @@
 import logging
-from typing import TYPE_CHECKING, Any, get_args
+from typing import TYPE_CHECKING, Any, ClassVar, get_args
 
 from pysqlcipher3 import dbapi2 as sqlcipher
 
@@ -7,6 +7,10 @@ from rotkehlchen.chain.arbitrum_one.constants import ARBITRUM_ONE_GENESIS
 from rotkehlchen.chain.base.constants import BASE_GENESIS
 from rotkehlchen.chain.binance_sc.constants import BINANCE_SC_GENESIS
 from rotkehlchen.chain.ethereum.constants import ETHEREUM_GENESIS
+from rotkehlchen.chain.ethereum.modules.eth2.constants import (
+    CONSOLIDATION_REQUEST_CONTRACT,
+    WITHDRAWAL_REQUEST_CONTRACT,
+)
 from rotkehlchen.chain.evm.constants import GENESIS_HASH, ZERO_ADDRESS
 from rotkehlchen.chain.evm.structures import EvmTxReceipt, EvmTxReceiptLog
 from rotkehlchen.chain.evm.types import EvmAccount
@@ -35,6 +39,7 @@ from rotkehlchen.types import (
     ChecksumEvmAddress,
     EvmInternalTransaction,
     EvmTransaction,
+    EvmTransactionAuthorization,
     EVMTxHash,
     Location,
     SupportedBlockchain,
@@ -63,6 +68,8 @@ TRANSACTIONS_MISSING_DECODING_QUERY = (
 
 
 class DBEvmTx:
+    # Index in the SQL result tuple where authorization fields (nonce, delegated_address) begin  # noqa: E501
+    AUTHORIZATION_DATA_START_INDEX: ClassVar[int] = 13
 
     def __init__(self, database: 'DBHandler') -> None:
         self.db = database
@@ -74,20 +81,6 @@ class DBEvmTx:
             relevant_address: ChecksumEvmAddress | None,
     ) -> None:
         """Adds evm transactions to the database"""
-        tx_tuples = [(
-            tx.tx_hash,
-            tx.chain_id.serialize_for_db(),
-            tx.timestamp,
-            tx.block_number,
-            tx.from_address,
-            tx.to_address,
-            str(tx.value),
-            str(tx.gas),
-            str(tx.gas_price),
-            str(tx.gas_used),
-            tx.input_data,
-            tx.nonce,
-        ) for tx in evm_transactions]
         query = """
             INSERT OR IGNORE INTO evm_transactions(
               tx_hash,
@@ -104,13 +97,36 @@ class DBEvmTx:
               nonce)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
-        self.db.write_tuples(
-            write_cursor=write_cursor,
-            tuple_type='evm_transaction',
-            query=query,
-            tuples=tx_tuples,
-            relevant_address=relevant_address,
-        )
+        for tx in evm_transactions:
+            if (row_id := self.db.write_single_tuple(
+                write_cursor=write_cursor,
+                tuple_type='evm_transaction',
+                query=query,
+                entry=(
+                    tx.tx_hash,
+                    tx.chain_id.serialize_for_db(),
+                    tx.timestamp,
+                    tx.block_number,
+                    tx.from_address,
+                    tx.to_address,
+                    str(tx.value),
+                    str(tx.gas),
+                    str(tx.gas_price),
+                    str(tx.gas_used),
+                    tx.input_data,
+                    tx.nonce,
+                ),
+                relevant_address=relevant_address,
+            )) is not None and tx.authorization_list is not None:
+                self.db.write_tuples(
+                    write_cursor=write_cursor,
+                    tuple_type='evm_transactions_authorization',
+                    query='INSERT OR IGNORE INTO evm_transactions_authorizations(tx_id, nonce, delegated_address) VALUES (?, ?, ?)',  # noqa: E501
+                    tuples=[
+                        (row_id, entry.nonce, entry.delegated_address)
+                        for entry in tx.authorization_list
+                    ],
+                )
 
     def add_evm_internal_transactions(
             self,
@@ -124,6 +140,8 @@ class DBEvmTx:
             tx.from_address,
             tx.to_address,
             str(tx.value),
+            str(tx.gas),
+            str(tx.gas_used),
             tx.parent_tx_hash,
             tx.chain_id.serialize_for_db(),
         ) for tx in transactions]
@@ -133,7 +151,10 @@ class DBEvmTx:
               trace_id,
               from_address,
               to_address,
-              value) SELECT evm_transactions.identifier, ?, ?, ?, ? FROM evm_transactions
+              value,
+              gas,
+              gas_used
+        ) SELECT evm_transactions.identifier, ?, ?, ?, ?, ?, ? FROM evm_transactions
             WHERE tx_hash=? AND chain_id=?
         """
         self.db.write_tuples(
@@ -153,8 +174,6 @@ class DBEvmTx:
     ) -> list[EvmInternalTransaction]:
         """Get all internal transactions under a parent tx_hash for a given chain"""
         chain_id = blockchain.to_chain_id()
-        cursor = self.db.conn.cursor()
-
         address_filter, bindings = '', [parent_tx_hash, chain_id.serialize_for_db()]
         if from_address is not None:
             address_filter += ' AND ITX.from_address=?'
@@ -163,23 +182,26 @@ class DBEvmTx:
             address_filter += ' AND ITX.to_address=?'
             bindings.append(to_address)
 
-        results = cursor.execute(
-            'SELECT ITX.trace_id, ITX.from_address, ITX.to_address, ITX.value '
-            'FROM evm_internal_transactions ITX INNER JOIN evm_transactions TX '
-            'ON ITX.parent_tx=TX.identifier WHERE TX.tx_hash=? AND TX.chain_id=?'
-            f'{address_filter}', bindings,
-        )
-        transactions = []
-        for result in results:
-            tx = EvmInternalTransaction(
-                parent_tx_hash=parent_tx_hash,
-                chain_id=chain_id,
-                trace_id=result[0],
-                from_address=result[1],
-                to_address=result[2],
-                value=int(result[3]),
+        with self.db.conn.read_ctx() as cursor:
+            results = cursor.execute(
+                'SELECT ITX.trace_id, ITX.from_address, ITX.to_address, ITX.value, ITX.gas, '
+                'ITX.gas_used FROM evm_internal_transactions ITX INNER JOIN evm_transactions TX '
+                'ON ITX.parent_tx=TX.identifier WHERE TX.tx_hash=? AND TX.chain_id=?'
+                f'{address_filter}', bindings,
             )
-            transactions.append(tx)
+            transactions = []
+            for result in results:
+                tx = EvmInternalTransaction(
+                    parent_tx_hash=parent_tx_hash,
+                    chain_id=chain_id,
+                    trace_id=result[0],
+                    from_address=result[1],
+                    to_address=result[2],
+                    value=int(result[3]),
+                    gas=int(result[4]),
+                    gas_used=int(result[5]),
+                )
+                transactions.append(tx)
 
         return transactions
 
@@ -198,20 +220,24 @@ class DBEvmTx:
         """
         query, bindings = filter_.prepare()
         query, bindings = self._form_evm_transaction_dbquery(query, bindings, has_premium)
-        results = cursor.execute(query, bindings)
+        grouped_transactions: dict[int, tuple[Any, ...]] = {}  # Group results by transaction identifier  # noqa: E501
+        for result in cursor.execute(query, bindings):
+            if (tx_identifier := result[12]) not in grouped_transactions:  # Store base transaction data + empty auth list  # noqa: E501
+                grouped_transactions[tx_identifier] = (*result[:self.AUTHORIZATION_DATA_START_INDEX], [])  # noqa: E501
+
+            if (nonce := result[self.AUTHORIZATION_DATA_START_INDEX]) is not None:  # add authorizations if they exist  # noqa: E501
+                grouped_transactions[tx_identifier][self.AUTHORIZATION_DATA_START_INDEX].append((nonce, result[self.AUTHORIZATION_DATA_START_INDEX + 1]))  # (nonce, delegated_address)  # noqa: E501
 
         evm_transactions = []
-        for result in results:
+        for tx_data in grouped_transactions.values():
             try:
-                tx = self._build_evm_transaction(result)
+                evm_transactions.append(self._build_evm_transaction(tx_data[:-1], tx_data[-1]))
             except DeserializationError as e:
                 self.db.msg_aggregator.add_error(
                     f'Error deserializing evm transaction from the DB. '
                     f'Skipping it. Error was: {e!s}',
                 )
                 continue
-
-            evm_transactions.append(tx)
 
         return evm_transactions
 
@@ -256,7 +282,6 @@ class DBEvmTx:
             tx_filter_query: EvmTransactionsFilterQuery | None,
             limit: int | None,
     ) -> list[EVMTxHash]:
-        cursor = self.db.conn.cursor()
         querystr = 'SELECT DISTINCT evm_transactions.tx_hash FROM evm_transactions '
         bindings = ()
         if tx_filter_query is not None:
@@ -270,13 +295,13 @@ class DBEvmTx:
             querystr += 'LIMIT ?'
             bindings = (*bindings, limit)  # type: ignore
 
-        cursor_result = cursor.execute(querystr, bindings)
         hashes = []
-        for entry in cursor_result:
-            try:
-                hashes.append(deserialize_evm_tx_hash(entry[0]))
-            except DeserializationError as e:
-                log.debug(f'Got error {e!s} while deserializing tx_hash {entry[0]} from the DB')
+        with self.db.conn.read_ctx() as cursor:
+            for entry in cursor.execute(querystr, bindings):
+                try:
+                    hashes.append(deserialize_evm_tx_hash(entry[0]))
+                except DeserializationError as e:
+                    log.debug(f'Got error {e!s} while deserializing tx_hash {entry[0]} from the DB')  # noqa: E501
 
         return hashes
 
@@ -436,7 +461,13 @@ class DBEvmTx:
                     (result[0],),
                 )
                 tx_receipt_log.topics = [x[0] for x in other_cursor]
-                if len(tx_receipt_log.topics) == 0:
+                if (
+                    len(tx_receipt_log.topics) == 0 and
+                    tx_receipt_log.address not in (
+                        CONSOLIDATION_REQUEST_CONTRACT,
+                        WITHDRAWAL_REQUEST_CONTRACT,
+                    )
+                ):  # skip anonymous logs unless they are from specific addresses whose decoders properly handle it.  # noqa: E501
                     log.debug(f'Ignoring anonymous tx log in {tx_hash.hex()} at {chain_id}')
                     continue
 
@@ -497,7 +528,7 @@ class DBEvmTx:
         dbevents.delete_events_by_tx_hash(
             write_cursor=write_cursor,
             tx_hashes=tx_hashes,
-            location=Location.from_chain_id(chain_id),  # type: ignore[arg-type] # comes from SUPPORTED_EVM_CHAINS
+            location=Location.from_chain_id(chain_id),
         )
         write_cursor.execute(  # delete genesis tx events related to the provided address
             'DELETE FROM history_events WHERE identifier IN ('
@@ -560,13 +591,13 @@ class DBEvmTx:
     def get_max_genesis_trace_id(self, chain_id: ChainID) -> int:
         """Get the max trace id of genesis internal transactions from the database.
         If no internal transactions were found, returns 0 (zero)."""
-        cursor = self.db.conn.cursor()
-        trace_id, = cursor.execute(
-            'SELECT MAX(trace_id) from evm_internal_transactions AS ITX '
-            'INNER JOIN evm_transactions AS TX ON ITX.parent_tx=TX.identifier '
-            'WHERE TX.tx_hash=? and chain_id=?',
-            (GENESIS_HASH, chain_id.serialize_for_db()),
-        ).fetchone()
+        with self.db.conn.read_ctx() as cursor:
+            trace_id, = cursor.execute(
+                'SELECT MAX(trace_id) from evm_internal_transactions AS ITX '
+                'INNER JOIN evm_transactions AS TX ON ITX.parent_tx=TX.identifier '
+                'WHERE TX.tx_hash=? and chain_id=?',
+                (GENESIS_HASH, chain_id.serialize_for_db()),
+            ).fetchone()
         return trace_id if trace_id is not None else 0
 
     def get_or_create_genesis_transaction(
@@ -625,21 +656,29 @@ class DBEvmTx:
                 )
         return tx
 
-    def _form_evm_transaction_dbquery(self, query: str, bindings: list[Any], has_premium: bool) -> tuple[str, list[tuple]]:  # noqa: E501
-        """Return query and bindings for the evm_transaction database table"""
-        if has_premium:
-            return (
-                'SELECT DISTINCT evm_transactions.tx_hash, evm_transactions.chain_id, timestamp, block_number, from_address, to_address, value, gas, gas_price, gas_used, input_data, nonce, identifier FROM evm_transactions ' + query,  # noqa: E501
-                bindings,
-            )
-        # else
-        return (
-            'SELECT DISTINCT evm_transactions.tx_hash, evm_transactions.chain_id, timestamp, block_number, from_address, to_address, value, gas, gas_price, gas_used, input_data, nonce, identifier FROM (SELECT * from evm_transactions ORDER BY timestamp DESC LIMIT ?) AS evm_transactions ' + query,  # noqa: E501
-            [FREE_ETH_TX_LIMIT] + bindings,
+    def _form_evm_transaction_dbquery(self, query: str, bindings: list[Any], has_premium: bool) -> tuple[str, list]:  # noqa: E501
+        """Constructs SQL query and bindings for EVM transactions with authorization data"""
+        base_select = (
+            'SELECT evm_transactions.tx_hash, evm_transactions.chain_id, '
+            'timestamp, block_number, from_address, to_address, value, evm_transactions.gas, '
+            'gas_price, evm_transactions.gas_used, input_data, evm_transactions.nonce, '
+            'identifier, auth.nonce AS auth_nonce, auth.delegated_address'
         )
+        join_clause = 'LEFT JOIN evm_transactions_authorizations AS auth ON evm_transactions.identifier = auth.tx_id'  # noqa: E501
+        if has_premium:
+            sql = f'{base_select} FROM evm_transactions {join_clause} {query}'
+        else:
+            sql = f'{base_select} FROM (SELECT * FROM evm_transactions ORDER BY timestamp DESC LIMIT ?) AS evm_transactions {join_clause} {query}'  # noqa: E501
+            bindings = [FREE_ETH_TX_LIMIT] + bindings
 
-    def _build_evm_transaction(self, result: tuple[Any, ...]) -> EvmTransaction:
-        """Build a transaction object from queried data
+        return sql, bindings
+
+    def _build_evm_transaction(self, result: tuple[Any, ...], authorization_list_result: list[tuple[int, ChecksumEvmAddress]]) -> EvmTransaction:  # noqa: E501
+        """Construct an EvmTransaction from db query result.
+
+        `result` is a tuple containing core transaction fields from the `evm_transactions` table.
+        The `authorization_list_result` is a list of (nonce, delegated_address) tuples from the
+        `evm_transaction_authorizations` table.
 
         May raise:
         - DeserializationError
@@ -658,6 +697,10 @@ class DBEvmTx:
             input_data=result[10],
             nonce=result[11],
             db_id=result[12],
+            authorization_list=None if len(authorization_list_result) == 0 else [
+                EvmTransactionAuthorization(nonce=entry[0], delegated_address=entry[1])
+                for entry in authorization_list_result
+            ],
         )
 
     def count_evm_transactions(self, chain_id: SUPPORTED_CHAIN_IDS) -> int:

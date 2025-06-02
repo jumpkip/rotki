@@ -41,7 +41,7 @@ const props = defineProps<{
 
 const { identifier } = toRefs(props);
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 const router = useRouter();
 const route = useRoute();
 
@@ -104,6 +104,22 @@ const collectionBalance = computed<AssetBalanceWithPrice[]>(() => {
     return [];
 
   return get(aggregatedBalances).find(data => data.asset === get(identifier))?.breakdown || [];
+});
+
+const collectionAssetWithPrice = computed<string | undefined>(() => {
+  const collectionBalanceVal = get(collectionBalance);
+
+  const id = get(identifier);
+
+  if (collectionBalanceVal.length === 0) {
+    return id;
+  }
+
+  if (collectionBalanceVal.some(item => item.asset === id)) {
+    return id;
+  }
+
+  return collectionBalanceVal[0].asset;
 });
 
 const isSpam = computed(() => get(asset)?.isSpam || false);
@@ -240,7 +256,7 @@ async function toggleWhitelistAsset() {
 
         <template v-if="!isCustomAsset">
           <div class="text-body-2 mr-4">
-            {{ t('assets.ignore') }}
+            {{ t('assets.action.ignore') }}
           </div>
 
           <RuiTooltip
@@ -280,6 +296,7 @@ async function toggleWhitelistAsset() {
     <AssetAmountAndValueOverTime
       v-if="premium"
       :asset="identifier"
+      :price-asset="collectionAssetWithPrice"
       :collection-id="collectionId"
     />
 

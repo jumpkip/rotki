@@ -22,6 +22,8 @@ import { useTxQueryStatusStore } from '@/store/history/query-status/tx-query-sta
 import { useNotificationsStore } from '@/store/notifications';
 import { useHistoricCachePriceStore } from '@/store/prices/historic';
 import { useSessionAuthStore } from '@/store/session/auth';
+import { useTaskStore } from '@/store/tasks';
+import { TaskType } from '@/types/task-type';
 import {
   type BalanceSnapshotError,
   type DbUploadResult,
@@ -52,7 +54,7 @@ export function useMessageHandling(): UseMessageHandling {
   const notificationsStore = useNotificationsStore();
   const { data: notifications } = storeToRefs(notificationsStore);
   const { notify } = notificationsStore;
-  const { t } = useI18n();
+  const { t } = useI18n({ useScope: 'global' });
   const { consumeMessages } = useSessionApi();
   const { uploadStatus, uploadStatusAlreadyHandled } = useSync();
   const { setProtocolCacheStatus, setUndecodedTransactionsStatus } = useHistoryStore();
@@ -63,6 +65,7 @@ export function useMessageHandling(): UseMessageHandling {
   const { handle: handleCsvImportResult } = useCsvImportResultHandler(t);
   const { handle: handleNewTokenDetectedMessage } = useNewTokenDetectedHandler(t);
   const { handle: handleExchangeUnknownAsset } = useExchangeUnknownAssetHandler(t);
+  const { isTaskRunning } = useTaskStore();
 
   let isRunning = false;
 
@@ -138,7 +141,7 @@ export function useMessageHandling(): UseMessageHandling {
     action: {
       action: async () => router.push({
         path: Routes.API_KEYS_EXTERNAL_SERVICES.toString(),
-        query: { service: 'gnosisPay' },
+        query: { service: 'gnosis_pay' },
       }),
       icon: 'lu-arrow-right',
       label: t('notification_messages.gnosis_pay_session_key_expired.replace_key'),
@@ -221,7 +224,10 @@ export function useMessageHandling(): UseMessageHandling {
       addNotification(handleNewTokenDetectedMessage(message.data, notifications));
     }
     else if (type === SocketMessageType.REFRESH_BALANCES) {
-      await refreshBalance(message.data.blockchain);
+      const isDecoding = isTaskRunning(TaskType.TRANSACTIONS_DECODING);
+      if (!isDecoding) {
+        await refreshBalance(message.data.blockchain);
+      }
     }
     else if (type === SocketMessageType.DB_UPLOAD_RESULT) {
       handleDbUploadResult(message.data);

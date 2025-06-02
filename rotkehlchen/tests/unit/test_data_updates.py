@@ -1,10 +1,12 @@
 import json
+import os
 from collections.abc import Callable
 from contextlib import ExitStack
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
+from packaging.version import Version
 
 from rotkehlchen.assets.asset import EvmToken
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
@@ -27,9 +29,12 @@ from rotkehlchen.types import (
     Location,
     SupportedBlockchain,
 )
+from rotkehlchen.utils.version_check import VersionCheckResult
 
 if TYPE_CHECKING:
     from gevent import DBCursor
+
+    from rotkehlchen.db.dbhandler import DBHandler
 
 ETHEREUM_SPAM_ASSET_ADDRESS = make_evm_address()
 OPTIMISM_SPAM_ASSET_ADDRESS = make_evm_address()
@@ -462,7 +467,7 @@ def test_no_update_due_to_max_rotki(data_updater: RotkiDataUpdater) -> None:
 
 def test_update_rpc_nodes(data_updater: RotkiDataUpdater) -> None:
     """Test that rpc nodes for different blockchains are updated correctly.."""
-    default_rpc_nodes_count = 41
+    default_rpc_nodes_count = 33
     # check db state of the default rpc nodes before updating
     with GlobalDBHandler().conn.read_ctx() as cursor:
         cursor.execute('SELECT COUNT(*) FROM default_rpc_nodes')
@@ -496,7 +501,7 @@ def test_update_rpc_nodes(data_updater: RotkiDataUpdater) -> None:
         nodes = cursor.execute('SELECT * FROM rpc_nodes').fetchall()
 
     assert nodes == [
-        (7, 'optimism official', 'https://mainnet.optimism.io', 0, 1, '0.20', 'OPTIMISM'),
+        (5, 'optimism official', 'https://mainnet.optimism.io', 0, 1, '0.20', 'OPTIMISM'),
         (default_rpc_nodes_count + 1, *custom_node_tuple),
         (default_rpc_nodes_count + 2, 'pocket network', 'https://eth-mainnet.gateway.pokt.network/v1/5f3453978e354ab992c4da79', 0, 1, '0.5', 'ETH'),  # noqa: E501
     ]
@@ -773,3 +778,19 @@ def test_location_unsupported_assets_updates(
 
     with globaldb.conn.read_ctx() as cursor:
         _check_location_unsupported_assets(cursor, after_upgrade=True)
+
+
+def test_version_used_in_updates(database: 'DBHandler') -> None:
+    """Test that the next higher bugfixes or develop version is used depending on the branch.
+    Allows updates intended for the next release to be applied during release testing.
+    """
+    with patch(
+            'rotkehlchen.db.updates.get_current_version',
+            return_value=VersionCheckResult(our_version=Version('1.38.4.dev204+gcd9b2b93f')),
+    ):
+        os.environ['GITHUB_BASE_REF'] = 'develop'
+        data_updater = RotkiDataUpdater(msg_aggregator=database.msg_aggregator, user_db=database)
+        assert data_updater.version == Version('1.39.0')
+        os.environ['GITHUB_BASE_REF'] = 'bugfixes'
+        data_updater = RotkiDataUpdater(msg_aggregator=database.msg_aggregator, user_db=database)
+        assert data_updater.version == Version('1.38.5')

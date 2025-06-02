@@ -1,5 +1,6 @@
 import dataclasses
 import logging
+import tempfile
 import time
 from contextlib import suppress
 from copy import deepcopy
@@ -65,7 +66,6 @@ from rotkehlchen.db.settings import (
     DEFAULT_SSF_GRAPH_MULTIPLIER,
     DEFAULT_TREAT_ETH2_AS_ETH,
     DEFAULT_UI_FLOATING_PRECISION,
-    DEFAULT_USE_UNIFIED_ETHERSCAN_API,
     ROTKEHLCHEN_DB_VERSION,
     DBSettings,
     ModifiableDBSettings,
@@ -121,6 +121,7 @@ TABLES_AT_INIT = [
     'evm_accounts_details',
     'multisettings',
     'evm_transactions',
+    'evm_transactions_authorizations',
     'optimism_transactions',
     'evm_internal_transactions',
     'evmtx_receipts',
@@ -139,6 +140,7 @@ TABLES_AT_INIT = [
     'xpub_mappings',
     'eth2_daily_staking_details',
     'eth2_validators',
+    'eth_validators_data_cache',
     'ignored_actions',
     'nfts',
     'history_events',
@@ -313,7 +315,9 @@ def test_export_import_db(data_dir: Path, username: str, sql_vm_instructions_cb:
     with data.db.user_write() as cursor:
         data.db.add_manually_tracked_balances(cursor, [starting_balance])
 
-    encoded_data, _ = data.compress_and_encrypt_db()
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.db') as tempdbfile:
+        tempdbpath = data.db.export_unencrypted(tempdbfile)
+        encoded_data, _ = data.compress_and_encrypt_db(tempdbpath)
     # The server would return them decoded
     data.decompress_and_decrypt_db(encoded_data)
     with data.db.user_write() as cursor:
@@ -518,7 +522,6 @@ def test_writing_fetching_data(data_dir, username, sql_vm_instructions_cb):
         'ask_user_upon_size_discrepancy': DEFAULT_ASK_USER_UPON_SIZE_DISCREPANCY,
         'auto_detect_tokens': DEFAULT_AUTO_DETECT_TOKENS,
         'csv_export_delimiter': DEFAULT_CSV_EXPORT_DELIMITER,
-        'use_unified_etherscan_api': DEFAULT_USE_UNIFIED_ETHERSCAN_API,
     }
     assert len(expected_dict) == len(dataclasses.fields(DBSettings)), 'One or more settings are missing'  # noqa: E501
 

@@ -9,6 +9,8 @@ import { useExchanges } from '@/modules/balances/exchanges/use-exchanges';
 import { useManualBalanceData } from '@/modules/balances/manual/use-manual-balance-data';
 import { useManualBalances } from '@/modules/balances/manual/use-manual-balances';
 import { useBalancesStore } from '@/modules/balances/use-balances-store';
+import { usePriceTaskManager } from '@/modules/prices/use-price-task-manager';
+import { usePriceUtils } from '@/modules/prices/use-price-utils';
 import { useBalancePricesStore } from '@/store/balances/prices';
 import { useNotificationsStore } from '@/store/notifications';
 import { useStatisticsStore } from '@/store/statistics';
@@ -27,12 +29,12 @@ export const useBalances = createSharedComposable(() => {
   const { refreshAccounts } = useBlockchains();
   const { assets } = useAggregatedBalances();
   const { queryBalancesAsync } = useBalancesApi();
-  const priceStore = useBalancePricesStore();
-  const { prices } = storeToRefs(priceStore);
-  const { assetPrice, fetchExchangeRates, fetchPrices } = priceStore;
+  const { prices } = storeToRefs(useBalancePricesStore());
+  const { hasCachedPrice } = usePriceUtils();
+  const { cacheEuroCollectionAssets, fetchExchangeRates, fetchPrices } = usePriceTaskManager();
   const { notify } = useNotificationsStore();
   const { awaitTask, isTaskRunning } = useTaskStore();
-  const { t } = useI18n();
+  const { t } = useI18n({ useScope: 'global' });
   const { fetchNetValue } = useStatisticsStore();
 
   const adjustPrices = (prices: MaybeRef<AssetPrices>): void => {
@@ -48,12 +50,13 @@ export const useBalances = createSharedComposable(() => {
     const unique = selectedAssets ? selectedAssets.filter(uniqueStrings) : null;
     const { setStatus } = useStatusUpdater(Section.PRICES);
     setStatus(Status.LOADING);
+    await cacheEuroCollectionAssets();
     if (ignoreCache)
       await fetchExchangeRates();
 
     await fetchPrices({
       ignoreCache,
-      selectedAssets: filterMissingAssets(unique && unique.length > 0 ? unique : get(assets())),
+      selectedAssets: filterMissingAssets(unique && unique.length > 0 ? unique : get(assets)),
     });
     adjustPrices(get(prices));
     setStatus(Status.LOADED);
@@ -71,7 +74,7 @@ export const useBalances = createSharedComposable(() => {
   };
 
   const pendingAssets = ref<string[]>([]);
-  const noPriceAssets = useArrayFilter(assets(), asset => !get(assetPrice(asset)));
+  const noPriceAssets = useArrayFilter(assets, asset => !hasCachedPrice(asset));
 
   watchDebounced(
     noPriceAssets,

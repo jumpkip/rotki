@@ -15,7 +15,7 @@ const { refreshPrices } = useBalances();
 const { isLoading } = useStatusStore();
 
 const refreshing = isLoading(Section.PRICES);
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const loadingData = logicOr(
   useIsTaskRunning(TaskType.QUERY_BALANCES),
@@ -28,7 +28,7 @@ const { assets } = useAggregatedBalances();
 
 async function refresh() {
   emit('click');
-  await refreshPrices(true, get(assets()));
+  await refreshPrices(true, get(assets));
 }
 
 const disabled = computed<boolean>(() => get(refreshing) || get(loadingData));

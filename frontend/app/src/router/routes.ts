@@ -66,7 +66,7 @@ export const Routes = {
 } as const;
 
 export const useAppRoutes = createSharedComposable(() => {
-  const { t } = useI18n();
+  const { t } = useI18n({ useScope: 'global' });
   const appRoutes = computed(() => ({
     ACCOUNTS: {
       icon: 'lu-wallet' as const,
@@ -217,7 +217,7 @@ export const useAppRoutes = createSharedComposable(() => {
       text: t('navigation_menu.nfts'),
     },
     ONCHAIN: {
-      icon: 'lu-coins' as const,
+      icon: 'lu-onchain' as const,
       route: Routes.ONCHAIN,
       text: t('navigation_menu.onchain'),
     },

@@ -12,7 +12,7 @@ import { useMainStore } from '@/store/main';
 
 const store = useMainStore();
 const { isPackaged, openPath, version: getVersion } = useInterop();
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const { dataDirectory, version } = toRefs(store);
 const versionInfo = asyncComputed<SystemVersion | WebVersion>(() => getVersion());
@@ -98,10 +98,7 @@ const { copy } = useClipboard({ source: versionText });
   >
     <template #custom-header>
       <div class="p-6 bg-rui-primary text-white">
-        <RotkiLogo
-          logo="about"
-          unique-key="00"
-        />
+        <RotkiLogo unique-key="00" />
         <h4 class="text-h4">
           {{ t('app.name') }}
         </h4>

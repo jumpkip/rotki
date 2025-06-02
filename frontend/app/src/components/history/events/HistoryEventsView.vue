@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { HistoryEventRequestPayload } from '@/modules/history/events/request-types';
 import type {
   GroupEventData,
   HistoryEventEditData,
@@ -6,11 +7,12 @@ import type {
   ShowFormData,
   StandaloneEventData,
 } from '@/modules/history/management/forms/form-types';
+import type { HistoryRefreshEventData } from '@/modules/history/refresh/types';
 import type { AddressData, BlockchainAccount } from '@/types/blockchain/accounts';
 import type {
   AddTransactionHashPayload,
-  HistoryEventRequestPayload,
   HistoryEventRow,
+  PullEthBlockEventPayload,
   PullEvmTransactionPayload,
   RepullingTransactionPayload,
 } from '@/types/history/events';
@@ -38,12 +40,18 @@ import { usePaginationFilters } from '@/composables/use-pagination-filter';
 import { useBlockchainAccountsStore } from '@/modules/accounts/use-blockchain-accounts-store';
 import { useHistoryEventsAutoFetch } from '@/modules/history/events/use-history-events-auto-fetch';
 import { useHistoryEventsStatus } from '@/modules/history/events/use-history-events-status';
+import { isEvmSwapEvent } from '@/modules/history/management/forms/form-guards';
 import { useConfirmStore } from '@/store/confirm';
 import { useHistoryStore } from '@/store/history';
 import { RouterAccountsSchema } from '@/types/route';
 import { getAccountAddress } from '@/utils/blockchain/accounts/utils';
 import { toEvmChainAndTxHash } from '@/utils/history';
-import { isEvmEvent, isEvmEventType, isOnlineHistoryEventType } from '@/utils/history/events';
+import {
+  isEthBlockEvent,
+  isEvmEvent,
+  isEvmEventType,
+  isOnlineHistoryEventType,
+} from '@/utils/history/events';
 import { type Account, type Blockchain, HistoryEventEntryType, toSnakeCase, type Writeable } from '@rotki/common';
 import { startPromise } from '@shared/utils';
 import { flatten, isEqual } from 'es-toolkit';
@@ -78,7 +86,7 @@ const props = withDefaults(defineProps<{
   validators: undefined,
 });
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 const router = useRouter();
 const route = useRoute();
 
@@ -101,8 +109,13 @@ const formData = ref<GroupEventData | StandaloneEventData>();
 const missingRuleData = ref<HistoryEventEditData>();
 const accounts = ref<BlockchainAccount<AddressData>[]>([]);
 const locationOverview = ref(get(location));
-const toggles = ref<{ customizedEventsOnly: boolean; showIgnoredAssets: boolean }>({
+const toggles = ref<{
+  customizedEventsOnly: boolean;
+  showIgnoredAssets: boolean;
+  matchExactEvents: boolean;
+}>({
   customizedEventsOnly: false,
+  matchExactEvents: false,
   showIgnoredAssets: false,
 });
 const decodingStatusDialogPersistent = ref<boolean>(false);
@@ -119,8 +132,19 @@ const { decodingStatus } = storeToRefs(useHistoryStore());
 const { getAccountByAddress } = useBlockchainAccountsStore();
 const { fetchHistoryEvents } = useHistoryEvents();
 const { refreshTransactions } = useHistoryTransactions();
-const { fetchUndecodedTransactionsStatus, pullAndRedecodeTransactions, redecodeTransactions } = useHistoryTransactionDecoding();
-const { eventTaskLoading, processing, refreshing, sectionLoading, shouldFetchEventsRegularly } = useHistoryEventsStatus();
+const {
+  fetchUndecodedTransactionsStatus,
+  pullAndRecodeEthBlockEvents,
+  pullAndRedecodeTransactions,
+  redecodeTransactions,
+} = useHistoryTransactionDecoding();
+const {
+  anyEventsDecoding,
+  processing,
+  refreshing,
+  sectionLoading,
+  shouldFetchEventsRegularly,
+} = useHistoryEventsStatus();
 const historyEventMappings = useHistoryEventMappings();
 useHistoryEventsAutoFetch(shouldFetchEventsRegularly, fetchDataAndLocations);
 
@@ -288,6 +312,22 @@ async function redecodeAllEventsHandler(): Promise<void> {
   await fetchData();
 }
 
+async function redecode(payload: 'all' | 'page' | string[]) {
+  if (Array.isArray(payload)) {
+    set(decodingStatusDialogPersistent, false);
+    set(currentAction, 'decode');
+    resetUndecodedTransactionsStatus();
+    await redecodeTransactions(payload);
+    await fetchData();
+  }
+  else if (payload === 'all') {
+    redecodeAllEvents();
+  }
+  else if (payload === 'page') {
+    await redecodePageTransactions();
+  }
+}
+
 async function forceRedecodeEvmEvents(data: PullEvmTransactionPayload): Promise<void> {
   set(currentAction, 'decode');
   await pullAndRedecodeTransactions(data);
@@ -316,7 +356,7 @@ function editMissingRulesEntry(data: ShowFormData): void {
   }));
 }
 
-async function refresh(userInitiated = false): Promise<void> {
+async function refresh(userInitiated = false, payload?: HistoryRefreshEventData): Promise<void> {
   if (userInitiated)
     startPromise(historyEventMappings.refresh());
   else
@@ -325,7 +365,12 @@ async function refresh(userInitiated = false): Promise<void> {
   set(currentAction, 'query');
   const entryTypesVal = get(entryTypes) || [];
   const disableEvmEvents = entryTypesVal.length > 0 && !entryTypesVal.includes(HistoryEventEntryType.EVM_EVENT);
-  await refreshTransactions(get(onlyChains), disableEvmEvents, userInitiated);
+  await refreshTransactions({
+    chains: get(onlyChains),
+    disableEvmEvents,
+    payload,
+    userInitiated,
+  });
   startPromise(fetchDataAndLocations());
 }
 
@@ -333,6 +378,12 @@ async function fetchAndRedecodeEvents(data?: PullEvmTransactionPayload): Promise
   await fetchDataAndLocations();
   if (data)
     await forceRedecodeEvmEvents(data);
+}
+
+async function redecodeBlockEvents(data: PullEthBlockEventPayload): Promise<void> {
+  set(currentAction, 'decode');
+  await pullAndRecodeEthBlockEvents(data);
+  await fetchData();
 }
 
 function onShowDialog(type: 'decode' | 'protocol-refresh'): void {
@@ -343,12 +394,24 @@ function onShowDialog(type: 'decode' | 'protocol-refresh'): void {
 }
 
 async function redecodePageTransactions(): Promise<void> {
-  const evmEvents = flatten(get(groups).data).filter(isEvmEvent);
-  const transactions = evmEvents.map(item => toEvmChainAndTxHash(item));
+  const events = flatten(get(groups).data);
+  const evmEvents = events.filter(event => isEvmEvent(event) || isEvmSwapEvent(event));
+  const ethBlockEvents = events.filter(isEthBlockEvent);
 
-  await pullAndRedecodeTransactions({ transactions });
-  await fetchUndecodedTransactionsStatus();
-  await fetchData();
+  if (evmEvents.length > 0 || ethBlockEvents.length > 0) {
+    if (evmEvents.length > 0) {
+      const redecodePayload = evmEvents.map(item => toEvmChainAndTxHash(item));
+      await pullAndRedecodeTransactions({ transactions: redecodePayload });
+      await fetchUndecodedTransactionsStatus();
+    }
+
+    if (ethBlockEvents.length > 0) {
+      const redecodePayload = ethBlockEvents.map(item => item.blockNumber);
+      await redecodeBlockEvents({ blockNumbers: redecodePayload });
+    }
+
+    await fetchData();
+  }
 }
 
 function removeIdentifierParam() {
@@ -388,7 +451,7 @@ watchImmediate(route, async (route) => {
   }
 });
 
-watch(eventTaskLoading, async (isLoading, wasLoading) => {
+watch(anyEventsDecoding, async (isLoading, wasLoading) => {
   if (!isLoading && wasLoading)
     await fetchDataAndLocations();
 });
@@ -426,9 +489,9 @@ onMounted(async () => {
       <HistoryEventsViewButtons
         v-model:open-decoding-dialog="decodingStatusDialogOpen"
         :processing="processing"
-        :loading="eventTaskLoading"
+        :loading="anyEventsDecoding"
         :include-evm-events="includes.evmEvents"
-        @refresh="refresh(true)"
+        @refresh="refresh(true, $event)"
         @show:form="showForm($event)"
         @show:add-transaction-form="addTxHash()"
         @show:repulling-transactions-form="repullingTransactions()"
@@ -460,8 +523,7 @@ onMounted(async () => {
           :export-params="pageParams"
           :hide-account-selector="useExternalAccountFilter"
           @update:accounts="onFilterAccountsChanged($event)"
-          @redecode="redecodeAllEvents()"
-          @redecode-page="redecodePageTransactions()"
+          @redecode="redecode($event)"
         />
 
         <div
@@ -498,11 +560,13 @@ onMounted(async () => {
           v-model:pagination="pagination"
           :group-loading="groupLoading"
           :groups="groups"
+          :page-params="toggles.matchExactEvents ? pageParams : undefined"
           :exclude-ignored="!toggles.showIgnoredAssets"
           :identifiers="identifiers"
           :highlighted-identifiers="highlightedIdentifiers"
           @show:form="showForm($event)"
           @refresh="fetchAndRedecodeEvents($event)"
+          @refresh:block-event="redecodeBlockEvents($event)"
           @set-page="setPage($event)"
         >
           <template #query-status="{ colspan }">
@@ -511,7 +575,6 @@ onMounted(async () => {
               :only-chains="onlyChains"
               :locations="locations"
               :decoding-status="decodingStatus"
-              :decoding="eventTaskLoading"
               :colspan="colspan"
               :loading="processing"
               @show:dialog="onShowDialog($event)"

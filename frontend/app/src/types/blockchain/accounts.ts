@@ -1,8 +1,7 @@
 import type { BlockchainAssetBalances } from '@/types/blockchain/balances';
 import type { PaginationRequestPayload } from '@/types/common';
 import type { Module } from '@/types/modules';
-import type { AssetBalance, Balance } from '@rotki/common';
-import type BigNumber from 'bignumber.js';
+import type { AssetBalance, Balance, BigNumber } from '@rotki/common';
 import { z } from 'zod';
 
 export interface AddressData {
@@ -21,6 +20,7 @@ export interface ValidatorData {
   readonly index: number;
   readonly publicKey: string;
   readonly status: string;
+  readonly consolidatedInto?: number;
   readonly ownershipPercentage?: string;
   readonly withdrawalAddress?: string;
   readonly activationTimestamp?: number;

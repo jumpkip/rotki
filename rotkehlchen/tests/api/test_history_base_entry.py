@@ -1,4 +1,5 @@
 import random
+from collections import defaultdict
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
@@ -6,10 +7,20 @@ from unittest.mock import patch
 import pytest
 import requests
 
+from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
 from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants import ZERO
-from rotkehlchen.constants.assets import A_ETH, A_SUSHI, A_USD, A_USDC, A_USDT, A_WBTC
+from rotkehlchen.constants.assets import (
+    A_ETH,
+    A_SUSHI,
+    A_USD,
+    A_USDC,
+    A_USDT,
+    A_WBNB,
+    A_WBTC,
+    A_WETH,
+)
 from rotkehlchen.db.evmtx import DBEvmTx
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
@@ -52,7 +63,9 @@ from rotkehlchen.utils.misc import ts_sec_to_ms
 
 if TYPE_CHECKING:
     from rotkehlchen.api.server import APIServer
+    from rotkehlchen.db.dbhandler import DBHandler
     from rotkehlchen.history.events.structures.base import HistoryBaseEntry
+    from rotkehlchen.types import EVMTxHash
 
 
 def assert_editing_works(
@@ -137,14 +150,50 @@ def assert_editing_works(
     assert_event_got_edited(entry)
 
 
+def add_test_evm_tx(database: 'DBHandler', tx_hash: 'EVMTxHash') -> None:
+    """Add a blank tx so evm events can be added/edited without the tx_hash validation failing."""
+    with database.conn.write_ctx() as write_cursor:
+        DBEvmTx(database).add_evm_transactions(
+            write_cursor=write_cursor,
+            evm_transactions=[EvmTransaction(
+                tx_hash=tx_hash,
+                chain_id=ChainID.ETHEREUM,
+                timestamp=Timestamp(0),
+                block_number=0,
+                from_address=ZERO_ADDRESS,
+                to_address=ZERO_ADDRESS,
+                value=0,
+                gas=0,
+                gas_price=0,
+                gas_used=0,
+                input_data=b'',
+                nonce=0,
+            )],
+            relevant_address=None,
+        )
+
+
 @pytest.mark.parametrize('have_decoders', [True])  # so we can run redecode after add/edit/delete
 @pytest.mark.parametrize('ethereum_accounts', [['0x690B9A9E9aa1C9dB991C7721a92d351Db4FaC990']])
 def test_add_edit_delete_entries(rotkehlchen_api_server: 'APIServer') -> None:
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
     db = DBHistoryEvents(rotki.data.db)
     entries = predefined_events_to_insert()
-    for group in (grouped_entries := maybe_group_entries(entries=entries.copy())):
+    grouped_entries = maybe_group_entries(entries=entries.copy())
+    # Check that adding evm events fails when the tx_hash is not present.
+    assert_error_response(
+        response=requests.put(
+            api_url_for(rotkehlchen_api_server, 'historyeventresource'),
+            json=entries_to_input_dict(grouped_entries[0], include_identifier=False),
+        ),
+        contained_in_msg='The provided transaction hash does not exist in the DB.',
+        status_code=HTTPStatus.BAD_REQUEST,
+    )
+
+    for group in grouped_entries:
         json_data = entries_to_input_dict(group, include_identifier=False)
+        if isinstance(event := group[0], EvmEvent):
+            add_test_evm_tx(database=rotki.data.db, tx_hash=event.tx_hash)
         response = requests.put(
             api_url_for(rotkehlchen_api_server, 'historyeventresource'),
             json=json_data,
@@ -203,6 +252,18 @@ def test_add_edit_delete_entries(rotkehlchen_api_server: 'APIServer') -> None:
         contained_in_msg='Failed to add event to the DB. It already exists',
         status_code=HTTPStatus.CONFLICT,
     )
+    # test setting tx_hash to a hash not in the db fails.
+    original_tx_hash = entry.tx_hash
+    entry.tx_hash = deserialize_evm_tx_hash('0x51a331dc069f6f7ed6e02e259ff31131799e1fad632c72d15b9d138ec43e2a87')  # noqa: E501
+    assert_error_response(
+        response=requests.patch(
+            api_url_for(rotkehlchen_api_server, 'historyeventresource'),
+            json=entries_to_input_dict(entries=[entry], include_identifier=True),
+        ),
+        contained_in_msg='The provided transaction hash does not exist in the DB.',
+        status_code=HTTPStatus.BAD_REQUEST,
+    )
+    entry.tx_hash = original_tx_hash
     assert_editing_works(entry, rotkehlchen_api_server, db, 4, also_redecode=True)  # evm event
     assert_editing_works(entries[5], rotkehlchen_api_server, db, 5)  # history event
     assert_editing_works(entries[6], rotkehlchen_api_server, db, 6, {'notes': 'Exit validator 1001 with 1500.1 ETH', 'event_identifier': 'EW_1001_19460'})  # eth withdrawal event  # noqa: E501
@@ -604,6 +665,45 @@ def test_get_events(rotkehlchen_api_server: 'APIServer') -> None:
         'Try redecoding the event(s) or check the logs for more details.',
     ]
 
+    # check that address filter shows incoming transactions to the filtered address.
+    with rotki.data.db.conn.write_ctx() as write_cursor:
+        DBHistoryEvents(rotki.data.db).add_history_events(
+            write_cursor=write_cursor,
+            history=[EvmEvent(
+                tx_hash=deserialize_evm_tx_hash('0x9a76e51e6feb83690b4f0ecb257adbceb73b6f8b38d7d5c5d3f5e22fd10e3c71'),
+                sequence_index=1,
+                timestamp=TimestampMS(1639924590000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.TRANSFER,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=FVal('2.5'),
+                location_label='0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12',
+                address=(address := string_to_evm_address('0xA7C8F1e13eDC5FBfB768f55ECF2Fee5d4C5BF964')),  # noqa: E501,
+                notes=f'Send 2.5 ETH to {address}',
+            ), EvmEvent(
+                tx_hash=deserialize_evm_tx_hash('0x9a76e51e6feb83690b4f0ecb257adbceb73b6f8b38d7d5c5d3f5e22fd10e3c72'),
+                sequence_index=100,
+                timestamp=TimestampMS(1639924590000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.TRANSFER,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=FVal('2.5'),
+                location_label=address,
+                notes='Receive 2.5 ETH from 0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12',
+                address=string_to_evm_address('0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12'),
+            )],
+        )
+    response = requests.post(
+        api_url_for(rotkehlchen_api_server, 'historyeventresource'),
+        json={'location_labels': [address], 'group_by_event_ids': True, 'offset': 0, 'limit': 5, 'exclude_ignored_assets': False},  # noqa: E501
+    )
+    result = assert_proper_sync_response_with_result(response)
+    assert result['entries_found'] == 2
+    assert result['entries'][0]['entry']['user_notes'] == f'Send 2.5 ETH to {address}'
+    assert result['entries'][1]['entry']['user_notes'] == 'Receive 2.5 ETH from 0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12'  # noqa: E501
+
 
 @pytest.mark.parametrize('added_exchanges', [(Location.KRAKEN,)])
 def test_query_new_events(rotkehlchen_api_server_with_exchanges: 'APIServer') -> None:
@@ -972,33 +1072,37 @@ def test_add_edit_evm_swap_events(rotkehlchen_api_server: 'APIServer') -> None:
         'entry_type': 'evm swap event',
         'timestamp': 1569924575000,
         'location': 'ethereum',
-        'location_label': '0x6e15887E2CEC81434C16D587709f64603b39b545',
-        'spend_amount': '0.16',
-        'spend_asset': 'ETH',
-        'receive_amount': '0.003',
-        'receive_asset': A_WBTC.identifier,
-        'fee_amount': '0.0002',
-        'fee_asset': 'ETH',
-        'user_notes': ['Example note', '', ''],
+        'spend': [
+            {'amount': '0.16', 'asset': A_ETH.identifier, 'user_notes': 'Example note', 'location_label': '0x6e15887E2CEC81434C16D587709f64603b39b545'},  # noqa: E501
+            {'amount': '0.54', 'asset': A_WBNB.identifier, 'location_label': '0x6e15887E2CEC81434C16D587709f64603b39b545'},  # noqa: E501
+        ],
+        'receive': [
+            {'amount': '0.003', 'asset': A_WBTC.identifier, 'location_label': '0x706A70067BE19BdadBea3600Db0626859Ff25D74'},  # noqa: E501
+        ],
+        'fee': [
+            {'amount': '0.0002', 'asset': A_ETH.identifier},
+            {'amount': '0.0012', 'asset': A_WETH.identifier},
+        ],
         'sequence_index': 0,
-        'tx_hash': '0x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f',
+        'tx_hash': (tx_hash_str := '0x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f'),  # noqa: E501
         'counterparty': 'some counterparty',
         'address': '0xA090e606E30bD747d4E6245a1517EbE430F0057e',
     }, {
         'entry_type': 'evm swap event',
         'timestamp': 1569924576000,
         'location': 'ethereum',
-        'location_label': '0x6e15887E2CEC81434C16D587709f64603b39b545',
-        'spend_amount': '50',
-        'spend_asset': A_USDT.identifier,
-        'receive_amount': '0.026',
-        'receive_asset': 'ETH',
+        'spend': [{'amount': '50', 'asset': A_USDT.identifier, 'location_label': '0x6e15887E2CEC81434C16D587709f64603b39b545'}],  # noqa: E501
+        'receive': [{'amount': '0.026', 'asset': A_ETH.identifier, 'location_label': '0x6e15887E2CEC81434C16D587709f64603b39b545'}],  # noqa: E501
         'sequence_index': 123,
-        'tx_hash': '0x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f',
+        'tx_hash': tx_hash_str,
         'counterparty': 'some counterparty',
         'product': 'pool',
         'address': '0xb5d85CBf7cB3EE0D56b3bB207D5Fc4B82f43F511',
     }]
+    add_test_evm_tx(
+        database=rotki.data.db,
+        tx_hash=(tx_hash := deserialize_evm_tx_hash(tx_hash_str)),
+    )
     for entry in entries:
         response = requests.put(
             api_url_for(rotkehlchen_api_server, 'historyeventresource'),
@@ -1006,20 +1110,70 @@ def test_add_edit_evm_swap_events(rotkehlchen_api_server: 'APIServer') -> None:
         )
         result = assert_proper_sync_response_with_result(response)
         assert 'identifier' in result
-        entry['identifier'] = result['identifier']
 
     with rotki.data.db.conn.read_ctx() as cursor:
-        assert len(db.get_history_events(
+        assert len(events := db.get_history_events(
             cursor=cursor,
             filter_query=HistoryEventFilterQuery.make(),
             has_premium=True,
             group_by_event_ids=False,
-        )) == 5  # spend/receive/fee (3) from first swap, and spend/receive (2) from the second
+        )) == 7
+        assert events[0].event_type == HistoryEventType.MULTI_TRADE
+        assert events[0].event_subtype == HistoryEventSubType.SPEND
+        assert events[1].event_subtype == HistoryEventSubType.SPEND
+        assert events[2].event_subtype == HistoryEventSubType.RECEIVE
+        assert events[3].event_subtype == HistoryEventSubType.FEE
+        assert events[4].event_subtype == HistoryEventSubType.FEE
+        assert events[5].event_type == HistoryEventType.TRADE
+        assert events[5].event_subtype == HistoryEventSubType.SPEND
+        assert events[6].event_subtype == HistoryEventSubType.RECEIVE
 
-    # Edit the event identifier of the second entry and add a fee
-    entry = entries[1].copy()
-    entry['fee_amount'], entry['fee_asset'], entry['event_identifier'] = '0.1', 'USD', 'test_id'
-    requests.patch(api_url_for(rotkehlchen_api_server, 'historyeventresource'), json=entry)
+    # Setup entry's identifiers for editing
+    entry = entries[0]
+    entry['identifiers'], ids_per_subtype = [], defaultdict(list)
+    for event in events:
+        if event.timestamp == Timestamp(1569924575000):
+            entry['identifiers'].append(event.identifier)  # type: ignore  # mypy doesn't understand what type the items in `entry` have
+            ids_per_subtype[event.event_subtype.serialize()].append(event.identifier)
+
+    for subtype in ('spend', 'receive', 'fee'):
+        assert len(data_list := entry[subtype]) == len(id_list := ids_per_subtype[subtype])  # type: ignore
+        for idx, identifier in enumerate(id_list):
+            data_list[idx]['identifier'] = identifier  # type: ignore
+
+    # Try adding a new fee event during edit with a colliding sequence index
+    entry['sequence_index'] = 118
+    entry['fee'].append({'amount': '1', 'asset': A_ETH.identifier})  # type: ignore
+    assert_error_response(
+        response=requests.patch(
+            api_url_for(rotkehlchen_api_server, 'historyeventresource'),
+            json=entry,
+        ),
+        contained_in_msg=f'Tried to insert an event with event_identifier {events[0].event_identifier} and sequence_index 123, but an event already exists at that sequence_index.',  # noqa: E501
+        status_code=HTTPStatus.CONFLICT,
+    )
+    entry['sequence_index'] = 0  # reset this so it doesn't affect later edits
+
+    # Try setting tx_hash to a hash not in the db.
+    entry['tx_hash'] = '0x51a331dc069f6f7ed6e02e259ff31131799e1fad632c72d15b9d138ec43e2a87'
+    assert_error_response(
+        response=requests.patch(
+            api_url_for(rotkehlchen_api_server, 'historyeventresource'),
+            json=entry,
+        ),
+        contained_in_msg='The provided transaction hash does not exist in the DB.',
+        status_code=HTTPStatus.BAD_REQUEST,
+    )
+    entry['tx_hash'] = tx_hash_str
+
+    # Edit the event identifier of the first entry, add a receive event, and remove a fee event.
+    entry['event_identifier'] = 'test_id'
+    entry['receive'].append({'amount': '0.034', 'asset': A_WETH.identifier})  # type: ignore
+    entry['fee'] = [entry['fee'][1]]  # type: ignore
+    assert_proper_sync_response_with_result(requests.patch(
+        api_url_for(rotkehlchen_api_server, 'historyeventresource'),
+        json=entry,
+    ))
     with rotki.data.db.conn.read_ctx() as cursor:
         assert (events := db.get_history_events(
             cursor=cursor,
@@ -1028,44 +1182,75 @@ def test_add_edit_evm_swap_events(rotkehlchen_api_server: 'APIServer') -> None:
             group_by_event_ids=False,
         )) == [EvmSwapEvent(
             identifier=1,
+            event_identifier='test_id',
             sequence_index=0,
             timestamp=TimestampMS(1569924575000),
             location=Location.ETHEREUM,
+            event_type=HistoryEventType.MULTI_TRADE,
             event_subtype=HistoryEventSubType.SPEND,
             asset=A_ETH,
             amount=FVal('0.16'),
             location_label=(location_label := '0x6e15887E2CEC81434C16D587709f64603b39b545'),
             notes='Example note',
-            tx_hash=(tx_hash := deserialize_evm_tx_hash('0x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f')),  # noqa: E501
+            tx_hash=tx_hash,
             counterparty=(counterparty := 'some counterparty'),
             address=(addr1 := string_to_evm_address('0xA090e606E30bD747d4E6245a1517EbE430F0057e')),
         ), EvmSwapEvent(
             identifier=2,
+            event_identifier='test_id',
             sequence_index=1,
             timestamp=TimestampMS(1569924575000),
             location=Location.ETHEREUM,
-            event_subtype=HistoryEventSubType.RECEIVE,
-            asset=A_WBTC,
-            amount=FVal('0.003'),
+            event_type=HistoryEventType.MULTI_TRADE,
+            event_subtype=HistoryEventSubType.SPEND,
+            asset=A_WBNB,
+            amount=FVal('0.54'),
             location_label=location_label,
             tx_hash=tx_hash,
             counterparty=counterparty,
             address=addr1,
         ), EvmSwapEvent(
             identifier=3,
+            event_identifier='test_id',
             sequence_index=2,
             timestamp=TimestampMS(1569924575000),
             location=Location.ETHEREUM,
-            event_subtype=HistoryEventSubType.FEE,
-            asset=A_ETH,
-            amount=FVal('0.0002'),
-            location_label=location_label,
+            event_type=HistoryEventType.MULTI_TRADE,
+            event_subtype=HistoryEventSubType.RECEIVE,
+            asset=A_WBTC,
+            amount=FVal('0.003'),
+            location_label='0x706A70067BE19BdadBea3600Db0626859Ff25D74',
             tx_hash=tx_hash,
             counterparty=counterparty,
             address=addr1,
         ), EvmSwapEvent(
-            identifier=4,
+            identifier=8,
             event_identifier='test_id',
+            sequence_index=3,
+            timestamp=TimestampMS(1569924575000),
+            location=Location.ETHEREUM,
+            event_type=HistoryEventType.MULTI_TRADE,
+            event_subtype=HistoryEventSubType.RECEIVE,
+            asset=A_WETH,
+            amount=FVal('0.034'),
+            tx_hash=tx_hash,
+            counterparty=counterparty,
+            address=addr1,
+        ), EvmSwapEvent(
+            identifier=5,
+            event_identifier='test_id',
+            sequence_index=4,
+            timestamp=TimestampMS(1569924575000),
+            location=Location.ETHEREUM,
+            event_type=HistoryEventType.MULTI_TRADE,
+            event_subtype=HistoryEventSubType.FEE,
+            asset=A_WETH,
+            amount=FVal('0.0012'),
+            tx_hash=tx_hash,
+            counterparty=counterparty,
+            address=addr1,
+        ), EvmSwapEvent(
+            identifier=6,
             sequence_index=123,
             timestamp=TimestampMS(1569924576000),
             location=Location.ETHEREUM,
@@ -1074,12 +1259,11 @@ def test_add_edit_evm_swap_events(rotkehlchen_api_server: 'APIServer') -> None:
             amount=FVal('50'),
             location_label=location_label,
             tx_hash=tx_hash,
-            counterparty='some counterparty',
+            counterparty=counterparty,
             product=(product := EvmProduct.POOL),
             address=(addr2 := string_to_evm_address('0xb5d85CBf7cB3EE0D56b3bB207D5Fc4B82f43F511')),
         ), EvmSwapEvent(
-            identifier=5,
-            event_identifier='test_id',
+            identifier=7,
             sequence_index=124,
             timestamp=TimestampMS(1569924576000),
             location=Location.ETHEREUM,
@@ -1091,24 +1275,10 @@ def test_add_edit_evm_swap_events(rotkehlchen_api_server: 'APIServer') -> None:
             counterparty=counterparty,
             product=product,
             address=addr2,
-        ), EvmSwapEvent(
-            identifier=6,
-            event_identifier='test_id',
-            sequence_index=125,
-            timestamp=TimestampMS(1569924576000),
-            location=Location.ETHEREUM,
-            event_subtype=HistoryEventSubType.FEE,
-            asset=A_USD,
-            amount=FVal('0.1'),
-            location_label=location_label,
-            tx_hash=tx_hash,
-            counterparty=counterparty,
-            product=product,
-            address=addr2,
         )]
 
     # Check event serialization.
-    assert generate_events_response(data=[events[3]])[0]['entry'] == {
+    assert generate_events_response(data=[events[5]])[0]['entry'] == {
         'timestamp': 1569924576000,
         'event_type': 'trade',
         'event_subtype': 'spend',
@@ -1116,9 +1286,9 @@ def test_add_edit_evm_swap_events(rotkehlchen_api_server: 'APIServer') -> None:
         'location_label': '0x6e15887E2CEC81434C16D587709f64603b39b545',
         'asset': A_USDT.identifier,
         'amount': '50',
-        'identifier': 4,
+        'identifier': 6,
         'entry_type': 'evm swap event',
-        'event_identifier': 'test_id',
+        'event_identifier': '10x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f',
         'sequence_index': 123,
         'extra_data': None,
         'tx_hash': '0x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f',
@@ -1194,7 +1364,7 @@ def test_event_grouping(rotkehlchen_api_server: 'APIServer') -> None:
                 event_subtype=HistoryEventSubType.NONE,
                 asset=A_ETH,
                 amount=ZERO,
-            ), EvmEvent(
+            ), EvmSwapEvent(
                 tx_hash=tx_hash,
                 sequence_index=5,
                 timestamp=timestamp,
@@ -1203,7 +1373,7 @@ def test_event_grouping(rotkehlchen_api_server: 'APIServer') -> None:
                 event_subtype=HistoryEventSubType.SPEND,
                 asset=A_ETH,
                 amount=FVal(0.123),
-            ), EvmEvent(
+            ), EvmSwapEvent(
                 tx_hash=tx_hash,
                 sequence_index=6,
                 timestamp=timestamp,
@@ -1212,7 +1382,7 @@ def test_event_grouping(rotkehlchen_api_server: 'APIServer') -> None:
                 event_subtype=HistoryEventSubType.SPEND,
                 asset=A_WBTC,
                 amount=FVal(0.0032),
-            ), EvmEvent(
+            ), EvmSwapEvent(
                 tx_hash=tx_hash,
                 sequence_index=7,
                 timestamp=timestamp,
@@ -1221,7 +1391,7 @@ def test_event_grouping(rotkehlchen_api_server: 'APIServer') -> None:
                 event_subtype=HistoryEventSubType.RECEIVE,
                 asset=A_USDC,
                 amount=FVal(120),
-            ), EvmEvent(
+            ), EvmSwapEvent(
                 tx_hash=tx_hash,
                 sequence_index=8,
                 timestamp=timestamp,
@@ -1230,7 +1400,7 @@ def test_event_grouping(rotkehlchen_api_server: 'APIServer') -> None:
                 event_subtype=HistoryEventSubType.RECEIVE,
                 asset=A_USDT,
                 amount=FVal(140),
-            ), EvmEvent(
+            ), EvmSwapEvent(
                 tx_hash=tx_hash,
                 sequence_index=9,
                 timestamp=timestamp,

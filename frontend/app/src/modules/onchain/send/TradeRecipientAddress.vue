@@ -6,6 +6,7 @@ import TradeAddressDisplay from '@/modules/onchain/send/TradeAddressDisplay.vue'
 import { useWalletStore } from '@/modules/onchain/use-wallet-store';
 import { useAddressesNamesStore } from '@/store/blockchain/accounts/addresses-names';
 import { isValidEthAddress } from '@rotki/common';
+import { startPromise } from '@shared/utils';
 import { useTemplateRef } from 'vue';
 
 const model = defineModel<string>({ required: true });
@@ -15,10 +16,11 @@ defineProps<{
   showWarning: boolean;
 }>();
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const openOptionsDialog = ref<boolean>(false);
 
+const resolvingEns = ref<boolean>(false);
 const addressBookOptions = ref<string[]>([]);
 const addressBookSearch = ref<string>('');
 const addressBookSearchDebounced = refDebounced(addressBookSearch, 200);
@@ -36,7 +38,7 @@ const { focused: menuFocusedWithin } = useFocusWithin(menuContainerRef);
 const { connected, connectedAddress } = storeToRefs(useWalletStore());
 const { addresses } = useAccountAddresses();
 const { fetchAddressBook, resolveEnsNames } = useAddressesNamesApi();
-const { updateEnsNamesState } = useAddressesNamesStore();
+const { fetchEnsNames, updateEnsNamesState } = useAddressesNamesStore();
 
 function isNotConnectedAddress(address: string) {
   const connected = get(connectedAddress);
@@ -113,10 +115,13 @@ watch(usedAnyFocused, (focus) => {
 watch(debouncedSearchValue, async (value) => {
   const values = [];
   const privateBooks = await getAddressBookData(value);
-  values.push(...privateBooks);
-
-  if (value.endsWith('.eth')) {
+  if (privateBooks.length > 0) {
+    values.push(...privateBooks);
+  }
+  else if (value.endsWith('.eth')) {
+    set(resolvingEns, true);
     const address = await resolveEnsNames(value);
+    set(resolvingEns, false);
     if (address && isValidEthAddress(address)) {
       values.push({
         address,
@@ -128,6 +133,12 @@ watch(debouncedSearchValue, async (value) => {
       });
     }
   }
+  else if (isValidEthAddress(value)) {
+    startPromise(fetchEnsNames([{ address: value, blockchain: null }]));
+    values.push({
+      address: value,
+    });
+  }
 
   set(directOptions, values.filter(item => isNotConnectedAddress(item.address)));
 });
@@ -136,6 +147,14 @@ watch(connectedAddress, (connectedAddress) => {
   if (connectedAddress && connectedAddress === get(model)) {
     set(model, '');
   }
+});
+
+const { containerProps: trackedContainerProps, list: trackedList, wrapperProps: trackedWrapperProps } = useVirtualList(trackedAddresses, {
+  itemHeight: 56,
+});
+
+const { containerProps: addressBookContainerProps, list: addressBookList, wrapperProps: addressBookWrapperProps } = useVirtualList(filteredAddressBookOptions, {
+  itemHeight: 56,
 });
 </script>
 
@@ -220,7 +239,14 @@ watch(connectedAddress, (connectedAddress) => {
     </template>
     <template #default="{ width }">
       <div
-        v-if="directOptions.length > 0"
+        v-if="resolvingEns"
+        class="p-4 w-full"
+        :style="{ width: `${width}px` }"
+      >
+        {{ t('trade.recipient.resolving_ens') }}
+      </div>
+      <div
+        v-else-if="directOptions.length > 0"
         ref="menuContainerRef"
         tabindex="-1"
         class="w-full py-2"
@@ -267,55 +293,76 @@ watch(connectedAddress, (connectedAddress) => {
           name="lu-x"
         />
       </RuiButton>
-      <div class="flex flex-col max-h-[calc(100vh-400px)] overflow-auto">
-        <div class="uppercase text-xs font-medium px-4 border-b border-default py-2 bg-rui-grey-50 dark:bg-rui-grey-900">
-          {{ t('trade.recipient.tracked_addresses') }}
+      <div class="flex flex-col max-h-[calc(100vh-200px)] overflow-hidden">
+        <div
+          class="flex flex-1 flex-col relative overflow-hidden"
+          :class="{ 'min-h-[calc(50vh-100px)]': trackedAddresses.length > 0 }"
+        >
+          <div class="uppercase text-xs font-medium px-4 border-b border-default py-2 bg-rui-grey-50 dark:bg-rui-grey-900">
+            {{ t('trade.recipient.tracked_addresses') }}
+          </div>
+          <div
+            v-if="trackedAddresses.length === 0"
+            class="p-4 text-rui-text-secondary"
+          >
+            {{ t('trade.recipient.no_addresses_found') }}
+          </div>
+          <div
+            v-else
+            class="flex-1"
+            v-bind="trackedContainerProps"
+          >
+            <div v-bind="trackedWrapperProps">
+              <TradeAddressDisplay
+                v-for="address in trackedList"
+                :key="address.data"
+                :address="address.data"
+                :chain="chain"
+                @click="select(address.data)"
+              />
+            </div>
+          </div>
         </div>
         <div
-          v-if="trackedAddresses.length === 0"
-          class="p-4 text-rui-text-secondary"
+          class="flex flex-1 flex-col overflow-hidden border-t border-default"
+          :class="{ 'min-h-[calc(50vh-100px)]': filteredAddressBookOptions.length > 0 }"
         >
-          {{ t('trade.recipient.no_addresses_found') }}
+          <div class="uppercase text-xs font-medium px-4 border-b border-default py-2">
+            {{ t('trade.recipient.from_private_address_book') }}
+          </div>
+          <div class="p-4">
+            <RuiTextField
+              v-model="addressBookSearch"
+              prepend-icon="lu-search"
+              variant="outlined"
+              dense
+              hide-details
+              color="primary"
+              :label="t('common.actions.search')"
+            />
+          </div>
+          <div
+            v-if="filteredAddressBookOptions.length === 0"
+            class="p-4 text-rui-text-secondary"
+          >
+            {{ t('trade.recipient.no_addresses_found') }}
+          </div>
+          <div
+            v-else
+            class="flex-1"
+            v-bind="addressBookContainerProps"
+          >
+            <div v-bind="addressBookWrapperProps">
+              <TradeAddressDisplay
+                v-for="address in addressBookList"
+                :key="address.data"
+                :address="address.data"
+                :chain="chain"
+                @click="select(address.data)"
+              />
+            </div>
+          </div>
         </div>
-        <template v-else>
-          <TradeAddressDisplay
-            v-for="address in trackedAddresses"
-            :key="address"
-            :address="address"
-            :chain="chain"
-            @click="select(address)"
-          />
-        </template>
-        <div class="uppercase text-xs font-medium px-4 border-y border-default py-2 bg-rui-grey-50 dark:bg-rui-grey-900">
-          {{ t('trade.recipient.from_private_address_book') }}
-        </div>
-        <div class="p-4">
-          <RuiTextField
-            v-model="addressBookSearch"
-            prepend-icon="lu-search"
-            variant="outlined"
-            dense
-            hide-details
-            color="primary"
-            :label="t('common.actions.search')"
-          />
-        </div>
-
-        <div
-          v-if="filteredAddressBookOptions.length === 0"
-          class="p-4 pt-0 text-rui-text-secondary"
-        >
-          {{ t('trade.recipient.no_addresses_found') }}
-        </div>
-        <template v-else>
-          <TradeAddressDisplay
-            v-for="address in filteredAddressBookOptions"
-            :key="address"
-            :address="address"
-            :chain="chain"
-            @click="select(address)"
-          />
-        </template>
       </div>
     </RuiCard>
   </RuiDialog>

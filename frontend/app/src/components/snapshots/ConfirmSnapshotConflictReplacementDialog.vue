@@ -13,7 +13,7 @@ const emit = defineEmits<{
   (e: 'cancel'): void;
   (e: 'confirm'): void;
 }>();
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const { snapshot } = toRefs(props);
 
@@ -39,19 +39,19 @@ const asset = computed<string>(() => get(snapshot)?.assetIdentifier ?? '');
         class="mr-4"
         no-icon
       />
+
+      <NftDetails
+        v-if="isNft(asset)"
+        :identifier="asset"
+        :class="$style.asset"
+      />
       <AssetDetails
-        v-if="!isNft(asset)"
+        v-else
+        hide-menu
         :class="$style.asset"
         :asset="asset"
-        :opens-details="false"
         :enable-association="false"
       />
-      <div v-else>
-        <NftDetails
-          :identifier="asset"
-          :class="$style.asset"
-        />
-      </div>
     </div>
   </ConfirmDialog>
 </template>

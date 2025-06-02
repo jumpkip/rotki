@@ -34,7 +34,7 @@ export function useEth2Staking(): UseEthStakingReturn {
   const premium = usePremium();
   const { awaitTask } = useTaskStore();
   const { notify } = useNotificationsStore();
-  const { t } = useI18n();
+  const { t } = useI18n({ useScope: 'global' });
 
   const api = useEth2Api();
 
@@ -121,8 +121,10 @@ export function useEth2Staking(): UseEthStakingReturn {
 
         const validator = accounts.find(x => x.data.index === index);
         const status = validator?.data?.status;
+        const consolidatedInto = validator?.data?.consolidatedInto;
         const total = validator?.amount;
         return {
+          consolidatedInto,
           index,
           status,
           total,

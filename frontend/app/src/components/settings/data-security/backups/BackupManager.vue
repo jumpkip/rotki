@@ -6,11 +6,11 @@ import { useBackupApi } from '@/composables/api/backup';
 import { useRefMap } from '@/composables/utils/useRefMap';
 import { useConfirmStore } from '@/store/confirm';
 import { useNotificationsStore } from '@/store/notifications';
-import { getFilepath } from '@/utils/backups';
+import { getFilepath } from '@/utils/file';
 import { logger } from '@/utils/logging';
 import { Severity } from '@rotki/common';
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const backupInfo = ref<DatabaseInfo>();
 const selected = ref<UserDbBackupWithId[]>([]);

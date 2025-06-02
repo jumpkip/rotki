@@ -12,7 +12,7 @@ const props = defineProps<{
   editMode: boolean;
 }>();
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const showReminders = ref<boolean>(false);
 const temporaryData = ref<CalendarReminderTemporaryPayload[]>([]);
@@ -171,6 +171,7 @@ async function updateData(index: number, { secsBefore }: CalendarReminderTempora
     if (!data.isTemporary) {
       try {
         await editCalendarReminder({
+          acknowledged: false,
           eventId: item.identifier,
           identifier: data.identifier,
           secsBefore,

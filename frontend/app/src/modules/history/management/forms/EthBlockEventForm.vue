@@ -25,7 +25,7 @@ interface EthBlockEventFormProps {
 const stateUpdated = defineModel<boolean>('stateUpdated', { default: false, required: false });
 const props = defineProps<EthBlockEventFormProps>();
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const { data } = toRefs(props);
 
@@ -211,6 +211,7 @@ defineExpose({
       asset="ETH"
       :v$="v$"
       :datetime="datetime"
+      location="ethereum"
       disable-asset
     />
 

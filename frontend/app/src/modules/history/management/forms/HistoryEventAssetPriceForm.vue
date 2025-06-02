@@ -7,7 +7,8 @@ import AmountInput from '@/components/inputs/AmountInput.vue';
 import AssetSelect from '@/components/inputs/AssetSelect.vue';
 import TwoFieldsAmountInput from '@/components/inputs/TwoFieldsAmountInput.vue';
 import { useAssetPricesApi } from '@/composables/api/assets/prices';
-import { useBalancePricesStore } from '@/store/balances/prices';
+import ToggleLocationLink from '@/modules/history/management/forms/common/ToggleLocationLink.vue';
+import { usePriceTaskManager } from '@/modules/prices/use-price-task-manager';
 import { useHistoricCachePriceStore } from '@/store/prices/historic';
 import { useGeneralSettingsStore } from '@/store/settings/general';
 import { useTaskStore } from '@/store/tasks';
@@ -24,6 +25,7 @@ interface HistoryEventAssetPriceFormProps {
   disableAsset?: boolean;
   v$: Validation;
   hidePriceFields?: boolean;
+  location: string | undefined;
 }
 
 const amount = defineModel<string>('amount', { required: true });
@@ -36,16 +38,17 @@ const props = withDefaults(defineProps<HistoryEventAssetPriceFormProps>(), {
 
 const { datetime, disableAsset, hidePriceFields } = toRefs(props);
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const fiatValue = ref<string>('');
 const assetToFiatPrice = ref<string>('');
 const fiatValueFocused = ref<boolean>(false);
 const fetchedAssetToFiatPrice = ref<string>('');
+const evmChain = ref<string>();
 
 const { useIsTaskRunning } = useTaskStore();
 const { resetHistoricalPricesData } = useHistoricCachePriceStore();
-const { getHistoricPrice } = useBalancePricesStore();
+const { getHistoricPrice } = usePriceTaskManager();
 const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
 const { addHistoricalPrice } = useAssetPricesApi();
 
@@ -123,12 +126,13 @@ async function submitPrice(payload: NewHistoryEventPayload): Promise<ActionStatu
   const timestamp = convertToTimestamp(get(datetime), DateFormat.DateMonthYearHourMinuteSecond);
 
   try {
-    if (get(assetToFiatPrice) !== get(fetchedAssetToFiatPrice)) {
+    const currency = get(currencySymbol);
+    if (get(assetToFiatPrice) !== get(fetchedAssetToFiatPrice) && assetVal !== currency) {
       await savePrice({
         fromAsset: assetVal,
         price: get(assetToFiatPrice),
         timestamp,
-        toAsset: get(currencySymbol),
+        toAsset: currency,
       });
     }
 
@@ -161,14 +165,6 @@ defineExpose({
       v-if="v$"
       class="grid md:grid-cols-2 gap-4 mb-4"
     >
-      <AssetSelect
-        v-model="asset"
-        outlined
-        :disabled="disableAsset"
-        data-cy="asset"
-        :error-messages="disableAsset ? [''] : toMessages(v$.asset)"
-        @blur="v$.asset.$touch()"
-      />
       <AmountInput
         v-model="amount"
         variant="outlined"
@@ -177,6 +173,22 @@ defineExpose({
         :error-messages="toMessages(v$.amount)"
         @blur="v$.amount.$touch()"
       />
+      <div class="flex">
+        <AssetSelect
+          v-model="asset"
+          outlined
+          :disabled="disableAsset"
+          data-cy="asset"
+          :evm-chain="evmChain"
+          :error-messages="disableAsset ? [''] : toMessages(v$.asset)"
+          @blur="v$.asset.$touch()"
+        />
+        <ToggleLocationLink
+          v-model="evmChain"
+          :disabled="disableAsset"
+          :location="location"
+        />
+      </div>
     </div>
     <template v-if="!hidePriceFields">
       <TwoFieldsAmountInput

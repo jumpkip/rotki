@@ -769,7 +769,6 @@
     },
     "name_non_empty": "The name of the asset cannot be empty",
     "optional": "Optional Fields",
-    "oracle_disable": "Disable/Enable the price fetching from the price oracle. If the oracle is not disabled, and there is no value specified, rotki will attempt to fetch a price using the asset symbol.",
     "replaced": "Αυτό το εικονίδιο θα εφαρμοστεί αφού κάνετε κλικ στην επιλογή \"«Αποθήκευση»\".",
     "type_non_empty": "The type of the asset cannot be empty",
     "types": {
@@ -888,6 +887,9 @@
     "up_to_version": "Only update up to version"
   },
   "assets": {
+    "action": {
+      "ignore": "Ignore Asset"
+    },
     "amount": "Total Owned",
     "backup": {
       "missing_directory": "Please select a directory"
@@ -913,7 +915,6 @@
       "type": "Filter by the type of the custom asset",
       "type_hint": "Search using the asset type"
     },
-    "ignore": "Ignore Asset",
     "multi_chain_assets": "Multi Chain Assets",
     "value": "Value"
   },
@@ -1592,7 +1593,8 @@
       "title": "Delete {chain} RPC Node"
     },
     "connected": {
-      "false": "Not connected",
+      "failure": "Απέτυχε",
+      "false": "Έτοιμο",
       "true": "Connected"
     },
     "delete_error": {
@@ -1712,7 +1714,6 @@
       "description": "Error while removing the external service api keys: {message}"
     },
     "etherscan": {
-      "delete_tooltip": "Deletes the Etherscan API key",
       "description": "Recommended for any EVM blockchain balances or transactions if you are not using your own node.",
       "hint": "Enter your Etherscan API key",
       "title": "Etherscan"
@@ -2533,12 +2534,6 @@
         "validator": "Validator"
       },
       "overview": "Overview",
-      "ranges": {
-        "one_day": "1D",
-        "one_month": "1M",
-        "one_week": "1W",
-        "one_year": "1Y"
-      },
       "staking_per_beacon_chain": "Staking per Validator",
       "staking_per_eth1_address": "Staking per ETH1 address",
       "total_based_on_eth_daily_prices": "The total is based on the daily prices of ETH",
@@ -3251,9 +3246,6 @@
   },
   "update_indicator": {
     "version": "An Updated Version ({appVersion}) of rotki is available"
-  },
-  "update_notifier": {
-    "update_available": "An updated version of the frontend is available."
   },
   "update_popup": {
     "download_failed": {

@@ -6,8 +6,8 @@ import DateDisplay from '@/components/display/DateDisplay.vue';
 import AssetDetails from '@/components/helper/AssetDetails.vue';
 import AmountInput from '@/components/inputs/AmountInput.vue';
 import { useAssetPricesApi } from '@/composables/api/assets/prices';
+import { usePriceTaskManager } from '@/modules/prices/use-price-task-manager';
 import { TableId, useRememberTableSorting } from '@/modules/table/use-remember-table-sorting';
-import { useBalancePricesStore } from '@/store/balances/prices';
 import { useHistoricCachePriceStore } from '@/store/prices/historic';
 import { ApiValidationError } from '@/types/api/errors';
 import { type DataTableColumn, type DataTableSortData, RuiDataTable } from '@rotki/ui-library';
@@ -22,7 +22,7 @@ defineSlots<{
   actions: (props: { items: EditableMissingPrice[] }) => any;
 }>();
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 const { isPinned, items } = toRefs(props);
 const prices = ref<HistoricalPrice[]>([]);
 const errorMessages = ref<Record<string, string[]>>({});
@@ -37,7 +37,7 @@ const tableContainer = computed(() => get(tableRef)?.$el);
 
 const { resetHistoricalPricesData } = useHistoricCachePriceStore();
 const { addHistoricalPrice, deleteHistoricalPrice, editHistoricalPrice, fetchHistoricalPrices } = useAssetPricesApi();
-const { getHistoricPrice } = useBalancePricesStore();
+const { getHistoricPrice } = usePriceTaskManager();
 
 function createKey(item: MissingPrice) {
   return item.fromAsset + item.toAsset + item.time;
@@ -184,16 +184,10 @@ onMounted(async () => {
       row-attr="fromAsset"
     >
       <template #item.fromAsset="{ row }">
-        <AssetDetails
-          link
-          :asset="row.fromAsset"
-        />
+        <AssetDetails :asset="row.fromAsset" />
       </template>
       <template #item.toAsset="{ row }">
-        <AssetDetails
-          link
-          :asset="row.toAsset"
-        />
+        <AssetDetails :asset="row.toAsset" />
       </template>
       <template #item.time="{ row }">
         <DateDisplay :timestamp="row.time" />

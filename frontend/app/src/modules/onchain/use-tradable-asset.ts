@@ -1,14 +1,11 @@
 import type { TradableAsset, TradableAssetWithoutValue } from '@/modules/onchain/types';
 import type { MaybeRef } from '@vueuse/core';
-import type BigNumber from 'bignumber.js';
 import type { ComputedRef } from 'vue';
 import { useSupportedChains } from '@/composables/info/chains';
 import { useBalancesStore } from '@/modules/balances/use-balances-store';
-import { useBalancePricesStore } from '@/store/balances/prices';
-import { useGeneralSettingsStore } from '@/store/settings/general';
-import { CURRENCY_USD } from '@/types/currencies';
+import { usePriceUtils } from '@/modules/prices/use-price-utils';
 import { sortDesc } from '@/utils/bignumbers';
-import { One, Zero } from '@rotki/common';
+import { Zero } from '@rotki/common';
 import { useWalletStore } from './use-wallet-store';
 
 interface UseTradableAssetReturn {
@@ -18,28 +15,9 @@ interface UseTradableAssetReturn {
 
 export function useTradableAsset(address: MaybeRef<string | undefined>): UseTradableAssetReturn {
   const { balances } = storeToRefs(useBalancesStore());
-  const { assetPrice, exchangeRate, isAssetPriceInCurrentCurrency } = useBalancePricesStore();
-  const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
+  const { assetPriceInCurrentCurrency } = usePriceUtils();
   const { supportedChainsForConnectedAccount } = storeToRefs(useWalletStore());
   const { isEvm } = useSupportedChains();
-
-  function priceInCurrentCurrency(asset: string): ComputedRef<BigNumber> {
-    return computed<BigNumber>(() => {
-      const currency = get(currencySymbol);
-      if (asset === currency) {
-        return One;
-      }
-
-      const price = get(assetPrice(asset)) || Zero;
-      const isCurrentCurrency = get(isAssetPriceInCurrentCurrency(asset));
-      if (isCurrentCurrency || currency === CURRENCY_USD) {
-        return price;
-      }
-
-      const currentExchangeRate = get(exchangeRate(currency));
-      return price.multipliedBy(currentExchangeRate || One);
-    });
-  }
 
   const allOwnedAssets = computed<TradableAsset[]>(() => {
     const addressVal = get(address);
@@ -98,7 +76,7 @@ export function useTradableAsset(address: MaybeRef<string | undefined>): UseTrad
     }
 
     return result.map((item) => {
-      const price = get(priceInCurrentCurrency(item.asset));
+      const price = get(assetPriceInCurrentCurrency(item.asset));
       return {
         ...item,
         fiatValue: price.multipliedBy(item.amount),

@@ -27,7 +27,7 @@ import { keyBy } from 'es-toolkit';
 
 defineProps<{ modules: Module[] }>();
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const prices = ref<Record<string, NftPrice>>({});
 const priceError = ref('');
@@ -241,13 +241,14 @@ const nftLimited = computed(() => get(error).includes('limit'));
     </template>
     <i18n-t
       v-if="nftLimited"
+      scope="global"
       keypath="nft_gallery.fill_api_key"
     >
       <template #link>
         <InternalLink
           :to="{
-            path: `${Routes.API_KEYS_EXTERNAL_SERVICES}`,
-            hash: '#open-sea-api-key',
+            path: Routes.API_KEYS_EXTERNAL_SERVICES.toString(),
+            query: { service: 'opensea' },
           }"
         >
           {{ t('nft_gallery.open_sea') }}
@@ -321,6 +322,7 @@ const nftLimited = computed(() => get(error).includes('limit'));
         type="info"
       >
         <i18n-t
+          scope="global"
           keypath="nft_gallery.upgrade"
           tag="span"
         >

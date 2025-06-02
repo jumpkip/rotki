@@ -33,7 +33,7 @@ export const useNotificationsStore = defineStore('notifications', () => {
   const lastDisplay: Ref<Record<string, number>> = useSessionStorage('rotki.notification.last_display', {});
   const messageOverflow = ref(false);
 
-  const { t } = useI18n();
+  const { t } = useI18n({ useScope: 'global' });
 
   const prioritized = computed<NotificationData[]>(() => {
     const byDate = orderBy(get(data), ['date'], ['desc']);
@@ -69,6 +69,14 @@ export const useNotificationsStore = defineStore('notifications', () => {
 
     set(data, notifications);
     set(messageOverflow, false);
+  }
+
+  function removeMatching(predicate: (notification: NotificationData) => boolean): void {
+    const notifications = [...get(data)];
+    const match = notifications.find(predicate);
+    if (match !== undefined) {
+      remove(match.id);
+    }
   }
 
   function setNotifications(notifications: NotificationData[]): void {
@@ -206,6 +214,7 @@ export const useNotificationsStore = defineStore('notifications', () => {
     prioritized,
     queue,
     remove,
+    removeMatching,
   };
 });
 

@@ -1,3 +1,4 @@
+import type { HistoryEventExportPayload, HistoryEventRequestPayload } from '@/modules/history/events/request-types';
 import type { ActionDataEntry, ActionStatus } from '@/types/action';
 import type { CollectionResponse } from '@/types/collection';
 import type { PendingTask } from '@/types/task';
@@ -17,10 +18,10 @@ import {
   type AddTransactionHashPayload,
   type HistoryEventCollectionRow,
   HistoryEventDetail,
-  type HistoryEventRequestPayload,
   HistoryEventsCollectionResponse,
   type ModifyHistoryEventPayload,
   type OnlineHistoryEventsRequestPayload,
+  type PullEthBlockEventPayload,
   type PullTransactionPayload,
   type RepullingTransactionPayload,
   TransactionChainType,
@@ -29,6 +30,7 @@ import {
 import { type HistoryEventProductData, HistoryEventTypeData } from '@/types/history/events/event-type';
 import { nonEmptyProperties } from '@/utils/data';
 import { downloadFileByUrl } from '@/utils/download';
+import { getFilename } from '@/utils/file';
 import { omit } from 'es-toolkit';
 
 interface QueryExchangePayload { name: string; location: string }
@@ -51,8 +53,10 @@ interface UseHistoryEventsApiReturn {
   fetchHistoryEvents: (payload: HistoryEventRequestPayload) => Promise<CollectionResponse<HistoryEventCollectionRow>>;
   queryOnlineHistoryEvents: (payload: OnlineHistoryEventsRequestPayload) => Promise<PendingTask>;
   queryExchangeEvents: (payload: QueryExchangePayload) => Promise<PendingTask>;
-  exportHistoryEventsCSV: (filters: HistoryEventRequestPayload, directoryPath?: string) => Promise<PendingTask>;
+  exportHistoryEventsCSV: (filters: HistoryEventExportPayload, directoryPath?: string) => Promise<PendingTask>;
   downloadHistoryEventsCSV: (filePath: string) => Promise<ActionStatus>;
+  deleteStakeEvents: (entryType: string) => Promise<boolean>;
+  pullAndRecodeEthBlockEventRequest: (payload: PullEthBlockEventPayload) => Promise<PendingTask>;
 }
 
 export function useHistoryEventsApi(): UseHistoryEventsApiReturn {
@@ -236,6 +240,7 @@ export function useHistoryEventsApi(): UseHistoryEventsApiReturn {
       '/history/events',
       snakeCaseTransformer(payload),
       {
+        timeout: 90_000,
         validateStatus: validStatus,
       },
     );
@@ -270,7 +275,7 @@ export function useHistoryEventsApi(): UseHistoryEventsApiReturn {
   };
 
   const exportHistoryEventsCSV = async (
-    filters: HistoryEventRequestPayload & { accounts?: [] },
+    filters: HistoryEventExportPayload & { accounts?: [] },
     directoryPath?: string,
   ): Promise<PendingTask> => {
     const requestBody = snakeCaseTransformer({
@@ -293,7 +298,7 @@ export function useHistoryEventsApi(): UseHistoryEventsApiReturn {
     try {
       const fullUrl = api.instance.getUri({ params: snakeCaseTransformer({ filePath }), url: '/history/events/export/download' });
 
-      downloadFileByUrl(fullUrl, 'history_events.csv');
+      downloadFileByUrl(fullUrl, getFilename(filePath));
       return { success: true };
     }
     catch (error: any) {
@@ -301,11 +306,35 @@ export function useHistoryEventsApi(): UseHistoryEventsApiReturn {
     }
   };
 
+  const deleteStakeEvents = async (entryType: string): Promise<boolean> => {
+    const response = await api.instance.delete<ActionResult<boolean>>('/blockchains/eth2/stake/events', {
+      data: snakeCaseTransformer({ entryType }),
+      validateStatus: validStatus,
+    });
+
+    return handleResponse(response);
+  };
+
+  const pullAndRecodeEthBlockEventRequest = async (
+    payload: PullEthBlockEventPayload,
+  ): Promise<PendingTask> => {
+    const response = await api.instance.put<ActionResult<PendingTask>>(
+      '/blockchains/eth2/stake/events',
+      snakeCaseTransformer({
+        asyncQuery: true,
+        ...payload,
+      }),
+    );
+
+    return handleResponse(response);
+  };
+
   return {
     addHistoryEvent,
     addTransactionHash,
     decodeTransactions,
     deleteHistoryEvent,
+    deleteStakeEvents,
     deleteTransactions,
     downloadHistoryEventsCSV,
     editHistoryEvent,
@@ -317,6 +346,7 @@ export function useHistoryEventsApi(): UseHistoryEventsApiReturn {
     getHistoryEventProductsData,
     getTransactionTypeMappings,
     getUndecodedTransactionsBreakdown,
+    pullAndRecodeEthBlockEventRequest,
     pullAndRecodeTransactionRequest,
     queryExchangeEvents,
     queryOnlineHistoryEvents,

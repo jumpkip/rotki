@@ -6,6 +6,7 @@ import requests
 
 from rotkehlchen.assets.asset import UnderlyingToken
 from rotkehlchen.assets.utils import TokenEncounterInfo, get_or_create_evm_token
+from rotkehlchen.chain.evm.decoding.curve.constants import CURVE_BASE_API_URL
 from rotkehlchen.chain.evm.decoding.utils import get_vault_price, update_cached_vaults
 from rotkehlchen.constants import ONE
 from rotkehlchen.db.settings import CachedSettings
@@ -40,7 +41,7 @@ def _query_curve_lending_vaults_api() -> list[dict[str, Any]] | None:
     Returns vault list or None if there was an error."""
     try:
         response_data = requests.get(
-            url='https://api.curve.fi/v1/getLendingVaults/all',
+            url=f'{CURVE_BASE_API_URL}/v1/getLendingVaults/all',
             timeout=CachedSettings().get_timeout_tuple(),
         )
         vault_list = response_data.json()['data']['lendingVaultData']
@@ -69,7 +70,7 @@ def _process_curve_lending_vault(database: 'DBHandler', vault: dict[str, Any]) -
         chain_id=vault_chain_id,
         decimals=deserialize_int(vault['assets']['borrowed']['decimals']),
         symbol=vault['assets']['borrowed']['symbol'],
-        encounter=TokenEncounterInfo(description='Querying Curve lending vaults', should_notify=False),  # noqa: E501
+        encounter=(encounter := TokenEncounterInfo(description='Querying Curve lending vaults', should_notify=False)),  # noqa: E501
     )
     vault_token = get_or_create_evm_token(
         userdb=database,
@@ -83,16 +84,17 @@ def _process_curve_lending_vault(database: 'DBHandler', vault: dict[str, Any]) -
             token_kind=EvmTokenKind.ERC20,
             weight=ONE,
         )],
-        encounter=TokenEncounterInfo(description='Querying Curve lending vaults', should_notify=False),  # noqa: E501
+        encounter=encounter,
     )
-    if (gauge_address := vault.get('gaugeAddress')) is not None:
+    gauge_address = None
+    if (raw_gauge_address := vault.get('gaugeAddress')) is not None:
         get_or_create_evm_token(
             userdb=database,
             chain_id=vault_chain_id,
             name=f'Curve.fi {vault_token.name} Gauge Deposit',
             symbol=f'{vault_token.symbol}-gauge',
-            evm_address=deserialize_evm_address(gauge_address),
-            encounter=TokenEncounterInfo(description='Querying Curve lending vaults', should_notify=False),  # noqa: E501
+            evm_address=(gauge_address := deserialize_evm_address(raw_gauge_address)),
+            encounter=encounter,
         )
 
     # Cache the controller and AMM addresses to avoid having to make a call
@@ -101,14 +103,14 @@ def _process_curve_lending_vault(database: 'DBHandler', vault: dict[str, Any]) -
         globaldb_set_unique_cache_value(
             write_cursor=write_cursor,
             key_parts=[CacheType.CURVE_LENDING_VAULT_CONTROLLER, vault_token.evm_address],
-            value=(controller_address := vault['controllerAddress']),
+            value=(controller_address := deserialize_evm_address(vault['controllerAddress'])),
         )
         globaldb_set_unique_cache_value(
             write_cursor=write_cursor,
             key_parts=[CacheType.CURVE_CRVUSD_AMM, controller_address],
-            value=vault['ammAddress'],
+            value=deserialize_evm_address(vault['ammAddress']),
         )
-        if gauge_address:
+        if gauge_address is not None:
             globaldb_set_unique_cache_value(
                 write_cursor=write_cursor,
                 key_parts=[CacheType.CURVE_LENDING_VAULT_GAUGE, vault_token.evm_address],

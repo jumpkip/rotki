@@ -1,6 +1,6 @@
 import datetime
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, get_args
 from unittest.mock import MagicMock, patch
 
 import gevent
@@ -25,7 +25,7 @@ from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.tests.utils.constants import A_GNOSIS_EURE, A_LPT
 from rotkehlchen.tests.utils.factories import make_evm_address
 from rotkehlchen.types import (
-    ETHERSCAN_TO_CHAINID,
+    SUPPORTED_CHAIN_IDS,
     ChainID,
     ChecksumEvmAddress,
     EvmTokenKind,
@@ -540,19 +540,22 @@ def test_erc721_token_ownership_verification(
             )],
         )
 
-    with patch('rotkehlchen.chain.ethereum.tokens.EthereumTokens._detect_tokens', return_value=None):  # noqa: E501
+    # regression test: dai token added here to ensure detected erc20 tokens
+    # aren't removed when erc721 tokens are detected
+    # see https://github.com/orgs/rotki/projects/11/views/2?pane=issue&itemId=112828923
+    with patch('rotkehlchen.chain.ethereum.tokens.EthereumTokens._detect_tokens', return_value={ethereum_accounts[0]: [A_DAI]}):  # noqa: E501
         user_tokens = EthereumTokens(database, ethereum_inquirer).detect_tokens(
             only_cache=False,
             addresses=ethereum_accounts,
         )
-        assert user_tokens[user_address][0] == [token_7776]
+        assert user_tokens[user_address][0] == [A_DAI, token_7776]
 
 
 def test_superfluid_constant_flow_nfts_are_in_token_exceptions(
         blockchain: 'ChainsAggregator',
         globaldb: 'GlobalDBHandler',
 ) -> None:
-    for chain_id in ETHERSCAN_TO_CHAINID.values():
+    for chain_id in get_args(SUPPORTED_CHAIN_IDS):
         manager = getattr(blockchain, chain_id.to_name())
         for token in manager.tokens.token_exceptions:
             get_or_create_evm_token(

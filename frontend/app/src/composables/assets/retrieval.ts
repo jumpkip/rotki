@@ -44,14 +44,14 @@ interface UseAssetInfoRetrievalReturn {
 }
 
 export function useAssetInfoRetrieval(): UseAssetInfoRetrievalReturn {
-  const { t } = useI18n();
+  const { t } = useI18n({ useScope: 'global' });
   const { assetSearch: assetSearchCaller, erc20details } = useAssetInfoApi();
   const { queueIdentifier, retrieve } = useAssetCacheStore();
   const { treatEth2AsEth } = storeToRefs(useGeneralSettingsStore());
   const { notify } = useNotificationsStore();
   const { awaitTask } = useTaskStore();
 
-  const { isEvm } = useSupportedChains();
+  const { getChain } = useSupportedChains();
 
   const assetAssociationMap = computed<Record<string, string>>(() => {
     const associationMap: Record<string, string> = {};
@@ -184,7 +184,7 @@ export function useAssetInfoRetrieval(): UseAssetInfoRetrievalReturn {
 
   const assetSearch = async (params: AssetSearchParams): Promise<AssetsWithId> => {
     try {
-      const evmChain = params.evmChain && get(isEvm(params.evmChain)) ? params.evmChain : undefined;
+      const evmChain = params.evmChain && getChain(params.evmChain) ? params.evmChain : undefined;
       return await assetSearchCaller({ ...params, evmChain });
     }
     catch (error: any) {

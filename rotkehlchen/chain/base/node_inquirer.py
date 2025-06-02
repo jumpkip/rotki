@@ -1,5 +1,5 @@
 import logging
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal
 
 from rotkehlchen.chain.constants import DEFAULT_EVM_RPC_TIMEOUT
 from rotkehlchen.chain.evm.constants import BALANCE_SCANNER_ADDRESS
@@ -17,14 +17,12 @@ from .constants import (
     ARCHIVE_NODE_CHECK_ADDRESS,
     ARCHIVE_NODE_CHECK_BLOCK,
     ARCHIVE_NODE_CHECK_EXPECTED_BALANCE,
-    BASE_ETHERSCAN_NODE,
-    BASE_ETHERSCAN_NODE_NAME,
     PRUNED_NODE_CHECK_TX_HASH,
 )
-from .etherscan import BaseEtherscan
 
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
+    from rotkehlchen.externalapis.etherscan import Etherscan
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -36,20 +34,15 @@ class BaseInquirer(L2WithL1FeesInquirer):
             self,
             greenlet_manager: GreenletManager,
             database: 'DBHandler',
+            etherscan: 'Etherscan',
             rpc_timeout: int = DEFAULT_EVM_RPC_TIMEOUT,
     ) -> None:
-        etherscan = BaseEtherscan(
-            database=database,
-            msg_aggregator=database.msg_aggregator,
-        )
         contracts = EvmContracts[Literal[ChainID.BASE]](chain_id=ChainID.BASE)
         super().__init__(
             greenlet_manager=greenlet_manager,
             database=database,
             etherscan=etherscan,
             blockchain=SupportedBlockchain.BASE,
-            etherscan_node=BASE_ETHERSCAN_NODE,
-            etherscan_node_name=BASE_ETHERSCAN_NODE_NAME,
             contracts=contracts,
             rpc_timeout=rpc_timeout,
             contract_multicall=contracts.contract(string_to_evm_address('0xeDF6D2a16e8081F777eB623EeB4411466556aF3d')),
@@ -61,7 +54,6 @@ class BaseInquirer(L2WithL1FeesInquirer):
                 msg_aggregator=database.msg_aggregator,
             ),
         )
-        self.etherscan = cast('BaseEtherscan', self.etherscan)
 
     # -- Implementation of EvmNodeInquirer base methods --
 

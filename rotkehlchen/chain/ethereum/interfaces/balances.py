@@ -5,6 +5,7 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Literal
 
 from rotkehlchen.accounting.structures.balance import Balance, BalanceSheet
+from rotkehlchen.api.v1.types import IncludeExcludeFilterData
 from rotkehlchen.assets.asset import Asset, EvmToken
 from rotkehlchen.chain.ethereum.utils import token_normalized_value
 from rotkehlchen.chain.evm.tokens import get_chunk_size_call_order
@@ -13,6 +14,7 @@ from rotkehlchen.db.filtering import EvmEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.fval import FVal
+from rotkehlchen.history.events.structures.base import HistoryBaseEntryType
 from rotkehlchen.history.events.structures.evm_event import EvmProduct
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.inquirer import Inquirer
@@ -91,7 +93,9 @@ class ProtocolWithBalance(abc.ABC):
         db_filter = EvmEventFilterQuery.make(
             counterparties=[self.counterparty],
             products=products,
+            type_and_subtype_combinations=event_types,
             location=Location.from_chain_id(self.evm_inquirer.chain_id),
+            entry_types=IncludeExcludeFilterData(values=[HistoryBaseEntryType.EVM_EVENT]),
         )
         with self.event_db.db.conn.read_ctx() as cursor:
             events = self.event_db.get_history_events(
@@ -101,12 +105,9 @@ class ProtocolWithBalance(abc.ABC):
             )
 
         addresses_with_activity = defaultdict(list)
-        for event in events:  # TODO: HistoryEventFilterquery should allow querying by type/subtype combos to avoid this  # noqa: E501
-            if (event.event_type, event.event_subtype) not in event_types:
-                continue
-            if event.location_label is None:
-                continue
-            addresses_with_activity[string_to_evm_address(event.location_label)].append(event)
+        for event in events:
+            if event.location_label is not None:
+                addresses_with_activity[string_to_evm_address(event.location_label)].append(event)
 
         return addresses_with_activity
 

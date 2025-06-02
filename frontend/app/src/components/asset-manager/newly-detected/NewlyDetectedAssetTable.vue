@@ -19,7 +19,7 @@ interface Token extends NewDetectedToken {
   evmChain: Blockchain;
 }
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const selected = ref<string[]>([]);
 const sort = ref<DataTableSortData<NewDetectedToken>>();
@@ -202,8 +202,8 @@ async function markAsSpam(identifiers?: string | string[]): Promise<void> {
       >
         <template #item.tokenIdentifier="{ row }">
           <AssetDetails
+            hide-menu
             :asset="row.tokenIdentifier"
-            opens-details
           />
         </template>
 

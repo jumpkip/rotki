@@ -78,7 +78,7 @@ const childSort = ref<DataTableSortData<MissingAcquisition>>({
 
 const tableContainer = computed(() => get(tableRef)?.$el);
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const headers = computed<DataTableColumn<MappedGroupedItems>[]>(() => [{
   cellClass: '!py-0 !pr-0 !pl-3',
@@ -183,10 +183,7 @@ async function showInHistoryEvent(identifier: number) {
       :dense="isPinned"
     >
       <template #item.asset="{ row }">
-        <AssetDetails
-          :asset="row.asset"
-          link
-        />
+        <AssetDetails :asset="row.asset" />
         <ReuseDate
           v-if="isPinned"
           :row="row"
@@ -229,7 +226,7 @@ async function showInHistoryEvent(identifier: number) {
               >
                 <template #prepend>
                   <RuiIcon name="lu-eye-off" />
-                  {{ t('assets.ignore') }}
+                  {{ t('assets.action.ignore') }}
                 </template>
               </RuiButton>
             </div>

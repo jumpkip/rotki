@@ -30,6 +30,7 @@ REMOVE_LIQUIDITY_EVENTS: Final = {
     b'\xa4\x9dL\xf0&V\xae\xbf\x8cw\x1fZ\x85\x85c\x8a*\x15\xeel\x97\xcfr\x05\xd4 \x8e\xd7\xc1\xdf%-',  # REMOVE_LIQUIDITY_3_ASSETS  # noqa: E501
     b'\x98x\xca7^\x10o*C\xc3\xb5\x99\xfcbEh\x13\x1cL\x9aK\xa6j\x14V7\x15v;\xe9\xd5\x9d',  # REMOVE_LIQUIDITY_4_ASSETS  # noqa: E501
     b'\xdd<\x036\xa1o\x1bd\xf1r\xb7\xbb\r\xad[+<|v\xf9\x1e\x8cJ\xaf\xd6\xaa\xe6\r\xce\x80\x01S',  # RemoveLiquidity in CurveTwocryptoOptimized  # noqa: E501
+    b"oH\x12\x9d\xb1\xf3|\xcb\x9c\xc5\xdd~\x11\x9c\xb3'P\xca\xbd\xf7[H7]s\r&\xce6Y\xbb\xe1",  # RemoveLiquidityOne  # noqa: E501
 }
 GAUGE_DEPOSIT: Final = b'\xe1\xff\xfc\xc4\x92=\x04\xb5Y\xf4\xd2\x9a\x8b\xfcl\xda\x04\xeb[\r<F\x07Q\xc2@,\\\\\xc9\x10\x9c'  # noqa: E501
 GAUGE_WITHDRAW: Final = b'\x88N\xda\xd9\xceo\xa2D\r\x8aT\xcc\x124\x90\xeb\x96\xd2v\x84y\xd4\x9f\xf9\xc76a%\xa9BCd'  # noqa: E501
@@ -45,7 +46,8 @@ MINTED_CRV: Final = b'\x9d"\x8di\xb5\xfd\xb8\xd2s\xa23o\x8f\xb8a-\x03\x961\x02N\
 
 # list of pools that we know contain bad tokens
 IGNORED_CURVE_POOLS = {'0x066B6e1E93FA7dcd3F0Eb7f8baC7D5A747CE0BF9'}
-CURVE_API_URL = 'https://api.curve.fi/v1/getPools/all/{curve_blockchain_id}'
+CURVE_BASE_API_URL = 'https://api.curve.finance'
+CURVE_API_URL = f'{CURVE_BASE_API_URL}/' + 'v1/getPools/all/{curve_blockchain_id}'
 CURVE_CHAIN_ID = {
     ChainID.ETHEREUM: 'ethereum',
     ChainID.POLYGON_POS: 'polygon',
@@ -77,3 +79,7 @@ CURVE_ADDRESS_PROVIDER: Final = string_to_evm_address('0x5ffe7FB82894076ECB99A30
 CURVE_SWAP_ROUTER_NG: Final = string_to_evm_address('0xF0d4c12A5768D806021F80a262B4d39d26C58b8D')
 DEPOSIT_AND_STAKE_ZAP: Final = string_to_evm_address('0x37c5ab57AF7100Bdc9B668d766e193CCbF6614FD')
 CHILD_LIQUIDITY_GAUGE_FACTORY: Final = string_to_evm_address('0xabC000d88f23Bb45525E447528DBF656A9D55bf5')  # noqa: E501
+# Maximum number of pools to query from the onchain metaregistry. Querying too many pools onchain
+# takes a very long time.  When testing this ~500 pools took ~10 minutes. Setting the max to 50
+# here so it should only spend about 1 minute on each chain.
+MAX_ONCHAIN_POOLS_QUERY: Final = 50

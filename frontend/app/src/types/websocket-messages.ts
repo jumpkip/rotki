@@ -1,4 +1,4 @@
-import { CalendarEventPayload } from '@/types/history/calendar';
+import { CalendarEventWithReminder } from '@/types/history/calendar';
 import { EvmChainAddress, EvmChainLikeAddress } from '@/types/history/events';
 import { Blockchain, CommonQueryStatusData, type MaybePromise, type Notification } from '@rotki/common';
 import { z } from 'zod';
@@ -150,7 +150,6 @@ export const NewDetectedToken = z.object({
 export type NewDetectedToken = z.infer<typeof NewDetectedToken>;
 
 export const MissingApiKey = z.object({
-  location: z.string(),
   service: z.string(),
 });
 
@@ -334,7 +333,7 @@ const AccountingRuleConflictMessage = z.object({
 });
 
 const CalendarReminderMessage = z.object({
-  data: CalendarEventPayload,
+  data: CalendarEventWithReminder,
   type: z.literal(SocketMessageType.CALENDAR_REMINDER),
 });
 

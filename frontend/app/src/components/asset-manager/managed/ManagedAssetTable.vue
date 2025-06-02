@@ -65,7 +65,7 @@ const emit = defineEmits<{
 
 const { collection } = toRefs(props);
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const cols = computed<DataTableColumn<SupportedAsset>[]>(() => [
   {
@@ -98,7 +98,7 @@ const cols = computed<DataTableColumn<SupportedAsset>[]>(() => [
   {
     cellClass: 'py-0',
     key: 'ignored',
-    label: t('assets.ignore'),
+    label: t('assets.action.ignore'),
   },
   {
     key: 'actions',
@@ -133,9 +133,11 @@ function getAsset(item: SupportedAsset) {
 
   return {
     customAssetType: item.customAssetType ?? '',
+    evmChain: item.evmChain,
     identifier: item.identifier,
     isCustomAsset: item.assetType === CUSTOM_ASSET,
     name,
+    protocol: item.protocol,
     symbol: item.symbol ?? '',
   };
 }
@@ -239,7 +241,7 @@ const disabledRows = computed(() => {
 <template>
   <div data-cy="managed-assets-table">
     <div class="flex flex-row flex-wrap items-center gap-2 mb-4">
-      <div class="flex flex-row gap-2">
+      <div class="flex flex-row gap-3">
         <IgnoreButtons
           :disabled="selected.length === 0"
           :disabled-actions="disabledIgnoreActions"
@@ -247,14 +249,20 @@ const disabledRows = computed(() => {
         />
         <div
           v-if="selected.length > 0"
-          class="flex flex-row items-center gap-2"
+          class="flex gap-2 items-center text-sm"
         >
           {{ t('asset_table.selected', { count: selected.length }) }}
           <RuiButton
             size="sm"
-            variant="text"
+            class="!py-0 !px-1.5 !gap-0.5 dark:!bg-opacity-30 dark:!text-white"
             @click="selected = []"
           >
+            <template #prepend>
+              <RuiIcon
+                name="lu-x"
+                size="14"
+              />
+            </template>
             {{ t('common.actions.clear_selection') }}
           </RuiButton>
         </div>
@@ -301,7 +309,6 @@ const disabledRows = computed(() => {
           <template #item.symbol="{ row }">
             <AssetDetailsBase
               :changeable="!loading"
-              opens-details
               :asset="getAsset(row)"
             />
           </template>

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import type { ShowEventForm } from '@/modules/history/management/forms/form-types';
+import type { HistoryRefreshEventData } from '@/modules/history/refresh/types';
+import HistoryRefreshButton from '@/modules/history/refresh/HistoryRefreshButton.vue';
 
 const openDecodingDialog = defineModel<boolean>('openDecodingDialog', { required: true });
 
@@ -10,32 +12,20 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
-  'refresh': [];
+  'refresh': [payload?: HistoryRefreshEventData];
   'show:form': [payload: ShowEventForm];
   'show:add-transaction-form': [];
   'show:repulling-transactions-form': [];
 }>();
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 </script>
 
 <template>
-  <RuiTooltip :open-delay="400">
-    <template #activator>
-      <RuiButton
-        :disabled="processing"
-        variant="outlined"
-        color="primary"
-        @click="emit('refresh')"
-      >
-        <template #prepend>
-          <RuiIcon name="lu-refresh-ccw" />
-        </template>
-        {{ t('common.refresh') }}
-      </RuiButton>
-    </template>
-    {{ t('transactions.refresh_tooltip') }}
-  </RuiTooltip>
+  <HistoryRefreshButton
+    :processing="processing"
+    @refresh="emit('refresh', $event)"
+  />
 
   <RuiButton
     color="primary"

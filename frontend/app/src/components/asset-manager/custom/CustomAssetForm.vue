@@ -27,7 +27,7 @@ const notes = refOptional(useRefPropVModel(modelValue, 'notes'), '');
 
 const assetIconFormRef = ref<InstanceType<typeof AssetIconForm> | null>(null);
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const rules = {
   name: {
@@ -74,6 +74,7 @@ defineExpose({
         clearable
         :label="t('common.name')"
         :error-messages="toMessages(v$.name)"
+        @blur="v$.name.$touch()"
       />
       <AutoCompleteWithSearchSync
         v-model="customAssetType"
@@ -82,6 +83,7 @@ defineExpose({
         clearable
         :label="t('common.type')"
         :error-messages="toMessages(v$.type)"
+        @blur="v$.type.$touch()"
       />
     </div>
     <RuiTextArea
@@ -94,6 +96,7 @@ defineExpose({
       auto-grow
       clearable
       :label="t('common.notes')"
+      @blur="v$.notes.$touch()"
     />
 
     <AssetIconForm

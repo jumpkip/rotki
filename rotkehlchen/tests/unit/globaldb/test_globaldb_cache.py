@@ -1,5 +1,7 @@
 import datetime
 import json
+import logging
+from collections.abc import Callable
 from contextlib import suppress
 from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock, _Call, call, patch
@@ -36,18 +38,20 @@ from rotkehlchen.chain.evm.decoding.gearbox.gearbox_cache import (
     query_gearbox_data,
     read_gearbox_data_from_cache,
 )
-from rotkehlchen.chain.evm.decoding.velodrome.constants import CPT_VELODROME
 from rotkehlchen.chain.evm.decoding.velodrome.velodrome_cache import (
+    POOL_DATA_CHUNK_SIZE,
     query_velodrome_like_data,
     read_velodrome_pools_and_gauges_from_cache,
 )
 from rotkehlchen.chain.evm.types import string_to_evm_address
+from rotkehlchen.chain.optimism.modules.velodrome.constants import A_VELO
 from rotkehlchen.constants.resolver import evm_address_to_identifier
 from rotkehlchen.constants.timing import WEEK_IN_SECONDS
 from rotkehlchen.db.addressbook import DBAddressbook
 from rotkehlchen.db.filtering import AddressbookFilterQuery
 from rotkehlchen.errors.misc import InputError
 from rotkehlchen.globaldb.handler import GlobalDBHandler
+from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.tests.utils.factories import make_evm_address
 from rotkehlchen.tests.utils.mock import MockResponse
 from rotkehlchen.types import (
@@ -61,6 +65,9 @@ if TYPE_CHECKING:
     from rotkehlchen.chain.evm.decoding.interfaces import ReloadableDecoderMixin
     from rotkehlchen.chain.optimism.node_inquirer import OptimismInquirer
 
+
+logger = logging.getLogger(__name__)
+log = RotkehlchenLogsAdapter(logger)
 
 CURVE_EXPECTED_LP_TOKENS_TO_POOLS = {
     # first 2 are registry pools
@@ -144,9 +151,9 @@ VELODROME_SOME_EXPECTED_GAUGES = {
 }
 
 VELODROME_SOME_EXPECTED_ASSETS = [
-    'eip155:10/erc20:0x8134A2fDC127549480865fB8E5A9E8A8a95a54c5',
-    'eip155:10/erc20:0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1',
-    'eip155:10/erc20:0x7F5c764cBc14f9669B88837ca1490cCa17c31607',
+    'eip155:10/erc20:0x7A7f1187c4710010DB17d0a9ad3fcE85e6ecD90a',  # RED/VELO pool token
+    'eip155:10/erc20:0x7F5c764cBc14f9669B88837ca1490cCa17c31607',  # USDC
+    A_VELO.identifier,
 ]
 
 GEARBOX_SOME_EXPECTED_POOLS = {
@@ -229,7 +236,7 @@ def test_velodrome_cache(optimism_inquirer):
             write_cursor.execute('DELETE FROM address_book WHERE address=?', (pool,))
 
         for asset in VELODROME_SOME_EXPECTED_ASSETS:
-            write_cursor.execute(f"DELETE FROM assets WHERE identifier LIKE '%{asset}%'")
+            write_cursor.execute('DELETE FROM assets WHERE identifier=?', (asset,))
 
     pools, gauges = read_velodrome_pools_and_gauges_from_cache()
     assert not pools & VELODROME_SOME_EXPECTED_POOLS
@@ -237,13 +244,45 @@ def test_velodrome_cache(optimism_inquirer):
     addressbook_entries, asset_identifiers = get_velodrome_addressbook_and_asset_identifiers(optimism_inquirer)  # noqa: E501
     assert not any(entry in addressbook_entries for entry in VELODROME_SOME_EXPECTED_ADDRESBOOK_ENTRIES)  # noqa: E501
     assert not any((identifier,) in asset_identifiers for identifier in VELODROME_SOME_EXPECTED_ASSETS)  # noqa: E501
+    call_count = 0
 
-    notify_patch = patch.object(optimism_inquirer.database.msg_aggregator, 'add_message')
-    with notify_patch as mock_notify:
-        optimism_inquirer.ensure_cache_data_is_updated(
-            cache_type=CacheType.VELODROME_POOL_ADDRESS,
-            query_method=query_velodrome_like_data,
-        )  # populates cache, addressbook and assets tables
+    def make_mock_call_contract(force_refresh: bool) -> Callable:
+        def mock_call_contract(contract, node_inquirer, method_name, **kwargs):
+            """Limit pool query to only the first five pools"""
+            nonlocal call_count
+            if method_name == 'all':
+                if force_refresh is True:
+                    assert kwargs['arguments'] == [POOL_DATA_CHUNK_SIZE, 0]  # starts from the beginning  # noqa: E501
+                    return []  # don't return any pools. Will test the rest of the pool processing when force_refresh is False  # noqa: E501
+
+                if call_count > 0:
+                    return []  # only do a single chunk
+
+                assert kwargs['arguments'] == [POOL_DATA_CHUNK_SIZE, 1402]  # only tries to query new pools  # noqa: E501
+                kwargs['arguments'] = [5, 0]  # Only query the first 5 pools for simpler testing
+                call_count += 1
+
+            return node_inquirer.call_contract(
+                contract_address=contract.address,
+                abi=contract.abi,
+                method_name=method_name,
+                **kwargs,
+            )
+
+        return mock_call_contract
+
+    for force_refresh in (True, False):
+        with (
+            patch(target='rotkehlchen.chain.evm.contracts.EvmContract.call', new=make_mock_call_contract(force_refresh)),  # noqa: E501
+            patch.object(optimism_inquirer.database.msg_aggregator, 'add_message'),
+            patch('rotkehlchen.chain.evm.node_inquirer.should_update_protocol_cache', return_value=True),  # noqa: E501
+        ):
+            optimism_inquirer.ensure_cache_data_is_updated(
+                cache_type=CacheType.VELODROME_POOL_ADDRESS,
+                query_method=query_velodrome_like_data,
+                force_refresh=force_refresh,
+            )  # populates cache, addressbook and assets tables
+
     pools, gauges = read_velodrome_pools_and_gauges_from_cache()
     assert pools >= VELODROME_SOME_EXPECTED_POOLS
     assert gauges >= VELODROME_SOME_EXPECTED_GAUGES
@@ -251,19 +290,12 @@ def test_velodrome_cache(optimism_inquirer):
     assert all(entry in addressbook_entries for entry in VELODROME_SOME_EXPECTED_ADDRESBOOK_ENTRIES)  # noqa: E501
     assert all((identifier,) in asset_identifiers for identifier in VELODROME_SOME_EXPECTED_ASSETS)
 
-    # New messages are sent only after a delay of 5 secs and the test runs fast
-    # due to the vcr, so only the first message from each loop gets sent.
-    assert mock_notify.call_args_list == [
-        make_call_object(CPT_VELODROME, ChainID.OPTIMISM, 0, 200),
-        make_call_object(CPT_VELODROME, ChainID.OPTIMISM, 1, 282),
-    ]
-
 
 class MockEvmContract:
     """A mock contract class that returns a desired result for a `call` function.
     Used for `test_velodrome_cache_with_no_symbol`."""
     def call(self, **kwargs):
-        if kwargs['arguments'][1] == 0:
+        if kwargs['method_name'] == 'all':
             return [{
                 0: '0x3241738149B24C9164dA14Fa2040159FFC6Dd237',
                 1: '',
@@ -290,6 +322,7 @@ def test_velodrome_cache_with_no_symbol(optimism_inquirer: 'OptimismInquirer'):
             inquirer=optimism_inquirer,
             cache_type=CacheType.VELODROME_POOL_ADDRESS,
             msg_aggregator=optimism_inquirer.database.msg_aggregator,
+            reload_all=False,
         )
 
     assert EvmToken('eip155:10/erc20:0x3241738149B24C9164dA14Fa2040159FFC6Dd237').symbol == 'CL10-USDC/MAI'  # noqa: E501
@@ -328,11 +361,16 @@ def test_curve_cache(rotkehlchen_instance, use_curve_api, globaldb):
     """Test curve pools fetching mechanism"""
     # Set initial cache data to check that it is gone after the cache update
     with GlobalDBHandler().conn.write_ctx() as write_cursor:
-        # make sure that curve cache is clear of expected pools and addressbook entries
-        for lp_token in CURVE_EXPECTED_LP_TOKENS_TO_POOLS:
-            write_cursor.execute(f"DELETE FROM unique_cache WHERE key LIKE '%{lp_token}%'")
+        # Make sure that curve cache is clear of ethereum pools and expected addressbook entries
+        write_cursor.execute("DELETE FROM unique_cache WHERE key LIKE 'CURVE_POOL_ADDRESS10x%'")
         for entry in CURVE_EXPECTED_ADDRESBOOK_ENTRIES_FROM_CHAIN:
             write_cursor.execute('DELETE FROM address_book WHERE address=?', (entry.address,))
+
+        # Ensure addresses for optimism (chain id 10 + 0x of address) are present. Regression test
+        # for a problem where the 0x wasn't included and chain id 1 would also match chain id 10.
+        assert write_cursor.execute(
+            "SELECT COUNT(*) FROM unique_cache WHERE key LIKE 'CURVE_POOL_ADDRESS100x%'",
+        ).fetchone()[0] > 0
 
     # delete one of the tokens to check that it is created during the update
     token_id = evm_address_to_identifier(
@@ -485,6 +523,7 @@ def test_reload_cache_timestamps(blockchain: ChainsAggregator, freezer):
         datetime.datetime(year=2024, month=9, day=25, hour=15, minute=30, tzinfo=datetime.UTC),
     )
     assert should_update_protocol_cache(
+        userdb=blockchain.database,
         cache_key=CacheType.CURVE_LP_TOKENS,
         args=(str(ChainID.ETHEREUM.serialize_for_db()),),
     ) is True
@@ -503,6 +542,7 @@ def test_reload_cache_timestamps(blockchain: ChainsAggregator, freezer):
         datetime.datetime(year=2024, month=9, day=26, hour=15, minute=30, tzinfo=datetime.UTC),
     )
     assert should_update_protocol_cache(
+        userdb=blockchain.database,
         cache_key=CacheType.CURVE_LP_TOKENS,
         args=(str(ChainID.ETHEREUM.serialize_for_db()),),
     ) is False
@@ -526,12 +566,13 @@ def test_balancer_cache(ethereum_inquirer):
 
     ethereum_inquirer.ensure_cache_data_is_updated(
         cache_type=CacheType.BALANCER_V2_POOLS,
-        query_method=lambda inquirer, cache_type, msg_aggregator: query_balancer_data(
+        query_method=lambda inquirer, cache_type, msg_aggregator, reload_all: query_balancer_data(
             inquirer=inquirer,
             cache_type=cache_type,
             protocol=CPT_BALANCER_V2,
             msg_aggregator=msg_aggregator,
             version=2,
+            reload_all=reload_all,
         ),
     )
     pools, gauges = read_balancer_pools_and_gauges_from_cache(

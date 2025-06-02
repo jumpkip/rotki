@@ -30,11 +30,13 @@ const props = withDefaults(defineProps<{
   hideDetails?: boolean;
   includeNfts?: boolean;
   asset?: AssetInfoWithId | NftAsset;
+  evmChain?: string;
 }>(), {
   asset: undefined,
   clearable: false,
   disabled: false,
   errorMessages: () => [],
+  evmChain: undefined,
   excludes: () => [],
   hideDetails: false,
   hint: '',
@@ -65,7 +67,7 @@ const loading = ref(false);
 let pending: AbortController | null = null;
 
 const { assetMapping, assetSearch } = useAssetInfoApi();
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const errors = computed(() => {
   const messages = [...get(errorMessages)];
@@ -102,6 +104,7 @@ async function searchAssets(keyword: string, signal: AbortSignal): Promise<void>
   set(loading, true);
   try {
     const fetchedAssets = await assetSearch({
+      evmChain: props.evmChain,
       limit: 50,
       searchNfts: get(includeNfts),
       signal,
@@ -109,7 +112,8 @@ async function searchAssets(keyword: string, signal: AbortSignal): Promise<void>
     });
     if (get(modelValue))
       await retainSelectedValueInOptions(fetchedAssets);
-    else set(assets, fetchedAssets);
+    else
+      set(assets, fetchedAssets);
 
     pending = null;
     set(loading, false);
@@ -130,32 +134,6 @@ function onUpdateModelValue(value: string) {
   set(modelValue, value);
   emit('update:asset', getVisibleAsset(value));
 }
-
-watch(search, (search) => {
-  if (search)
-    set(loading, true);
-  else if (!pending)
-    set(loading, false);
-});
-
-watchDebounced(
-  search,
-  async (search) => {
-    if (!search)
-      return set(loading, false);
-
-    if (pending) {
-      pending.abort();
-      pending = null;
-    }
-    set(error, '');
-    pending = new AbortController();
-    await searchAssets(search, pending.signal);
-  },
-  {
-    debounce: 800,
-  },
-);
 
 async function retainSelectedValueInOptions(newAssets: (AssetInfoWithId | NftAsset)[]) {
   try {
@@ -183,18 +161,52 @@ async function checkValue() {
   await retainSelectedValueInOptions(get(assets));
 }
 
-onMounted(async () => {
-  await checkValue();
-});
-
 watch(modelValue, async () => {
   await checkValue();
 });
+
+watch(search, (search) => {
+  if (search)
+    set(loading, true);
+  else if (!pending)
+    set(loading, false);
+});
+
+watchDebounced(search, async (search) => {
+  if (!search)
+    return set(loading, false);
+
+  if (pending) {
+    pending.abort();
+    pending = null;
+  }
+  set(error, '');
+  pending = new AbortController();
+  await searchAssets(search, pending.signal);
+}, { debounce: 800 });
 
 watch(visibleAssets, () => {
   const identifier = get(modelValue);
   if (identifier && !getVisibleAsset(identifier))
     onUpdateModelValue('');
+});
+
+watch(() => props.evmChain, async () => {
+  if (!get(modelValue)) {
+    return;
+  }
+  await retainSelectedValueInOptions([]);
+});
+
+onMounted(async () => {
+  await checkValue();
+});
+
+onUnmounted(() => {
+  if (!isDefined(pending)) {
+    return;
+  }
+  get(pending).abort();
 });
 </script>
 
@@ -235,6 +247,7 @@ watch(visibleAssets, () => {
           v-else
           class="py-0 pl-1"
           :asset="item"
+          hide-menu
         />
       </template>
     </template>
@@ -250,6 +263,7 @@ watch(visibleAssets, () => {
         :id="`asset-${getValidSelectorFromEvmAddress(item.identifier.toLocaleLowerCase())}`"
         class="py-0 -my-1"
         :asset="item"
+        hide-menu
       />
     </template>
     <template #no-data>

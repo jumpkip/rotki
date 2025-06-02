@@ -1,10 +1,13 @@
+import json
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
+import requests
 
 from rotkehlchen.chain.accounts import BlockchainAccountData
-from rotkehlchen.chain.ethereum.constants import ETHEREUM_ETHERSCAN_NODE_NAME
+from rotkehlchen.chain.ethereum.constants import ETHEREUM_ETHERSCAN_NODE
 from rotkehlchen.chain.ethereum.modules.thegraph.constants import CONTRACT_STAKING
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
 from rotkehlchen.chain.evm.decoding.constants import ERC20_OR_ERC721_TRANSFER
@@ -166,8 +169,7 @@ def test_use_open_nodes(ethereum_inquirer, database):
     Change test to use a more recent transaction.
     """
     # Wait until all nodes are connected
-    rpc_nodes_all = database.get_rpc_nodes(blockchain=SupportedBlockchain.ETHEREUM, only_active=True)  # noqa: E501
-    rpc_nodes = [node for node in rpc_nodes_all if node.node_info.name != ETHEREUM_ETHERSCAN_NODE_NAME]  # noqa: E501
+    rpc_nodes = database.get_rpc_nodes(blockchain=SupportedBlockchain.ETHEREUM, only_active=True)
     ethereum_inquirer.connect_to_multiple_nodes(rpc_nodes)
     wait_until_all_nodes_connected(
         connect_at_start=rpc_nodes,
@@ -205,6 +207,44 @@ def test_call_contract(ethereum_inquirer, ethereum_manager_connect_at_start):
         arguments=['0x5dbcF33D8c2E976c6b560249878e6F1491Bca25c'],
     )
     assert result >= 0
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('ethereum_manager_connect_at_start', [(INFURA_ETH_NODE, ETHEREUM_ETHERSCAN_NODE)])  # noqa: E501
+def test_rpc_request_timeout(
+        ethereum_inquirer: 'EthereumInquirer',
+        ethereum_manager_connect_at_start: list[WeightedNode],
+) -> None:
+    """Test that rpc timeout errors result in the node being marked as `failed to connect`.
+    Regression test for https://github.com/orgs/rotki/projects/11/views/2?pane=issue&itemId=111711513
+    """
+    wait_until_all_nodes_connected(
+        connect_at_start=ethereum_manager_connect_at_start,
+        evm_inquirer=ethereum_inquirer,
+    )
+    yearn_ycrv_vault = ethereum_inquirer.contracts.contract(string_to_evm_address('0x5dbcF33D8c2E976c6b560249878e6F1491Bca25c'))  # noqa: E501
+
+    def make_mock_post(
+            timeout_exception: type[requests.ReadTimeout | requests.ConnectTimeout],
+    ) -> Callable:
+        def mock_post(url, data, **kwargs):
+            data_j = json.loads(data)
+            if data_j.get('method') == 'eth_call':
+                raise timeout_exception
+
+            return requests.post(url, data, **kwargs)
+        return mock_post
+
+    for exception in (requests.ReadTimeout, requests.ConnectTimeout):  # test both read and connect timeouts  # noqa: E501
+        ethereum_inquirer.failed_to_connect_nodes = set()  # reset failed nodes
+        with patch('requests.sessions.Session.post', side_effect=make_mock_post(exception)):
+            ethereum_inquirer.call_contract(
+                contract_address=yearn_ycrv_vault.address,
+                abi=yearn_ycrv_vault.abi,
+                method_name='symbol',
+            )
+
+        assert ethereum_inquirer.failed_to_connect_nodes == {INFURA_ETH_NODE.node_info.name}
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
@@ -325,17 +365,18 @@ def _test_get_blocknumber_by_time(ethereum_inquirer):
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 def test_get_blocknumber_by_time_blockscout(ethereum_inquirer):
     """Queries blockscout api for known block times"""
-    with patch(
-        'rotkehlchen.externalapis.etherscan.Etherscan.get_blocknumber_by_time',
-        side_effect=RemoteError('Mocked failed etherscan api query'),
-    ):
-        _test_get_blocknumber_by_time(ethereum_inquirer)
+    _test_get_blocknumber_by_time(ethereum_inquirer)
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 def test_get_blocknumber_by_time_etherscan(ethereum_inquirer):
     """Queries etherscan for known block times"""
-    _test_get_blocknumber_by_time(ethereum_inquirer)
+    with patch.object(
+        ethereum_inquirer.blockscout,
+        'get_blocknumber_by_time',
+        side_effect=RemoteError('Intentional blockscout remote error to test etherscan'),
+    ):
+        _test_get_blocknumber_by_time(ethereum_inquirer)
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
@@ -405,21 +446,16 @@ def test_get_pruned_nodes_behaviour_in_txn_queries(
         assert tx_or_tx_receipt_calls == 2
 
     # now reduce the rpc to just a pruned node & etherscan and see that etherscan is called.
-    pruned_node_and_etherscan = [
-        ethereum_manager_connect_at_start[0],
-        ethereum_manager_connect_at_start[2],
-    ]
-    call_order = pruned_node_and_etherscan
-    ethereum_inquirer.connect_to_multiple_nodes(pruned_node_and_etherscan)
+    pruned_node = [ethereum_manager_connect_at_start[0]]
+    ethereum_inquirer.connect_to_multiple_nodes(pruned_node)
     wait_until_all_nodes_connected(
-        connect_at_start=pruned_node_and_etherscan,
+        connect_at_start=pruned_node,
         evm_inquirer=ethereum_inquirer,
     )
-    assert len(ethereum_inquirer.web3_mapping) == 1
-
+    assert len(ethereum_inquirer.web3_mapping) == 2
     etherscan_tx_or_tx_receipt_calls = 0
 
-    def mock_etherscan_get_tx(tx_hash):
+    def mock_etherscan_get_tx(chain_id, tx_hash):
         nonlocal etherscan_tx_or_tx_receipt_calls
         assert tx_hash == txn_hash
         etherscan_tx_or_tx_receipt_calls += 1
@@ -436,6 +472,7 @@ def test_get_pruned_nodes_behaviour_in_txn_queries(
         side_effect=mock_etherscan_get_tx,
         autospec=True,
     )
+    call_order = pruned_node + [ETHEREUM_ETHERSCAN_NODE]
     with etherscan_get_tx_patch, etherscan_get_tx_receipt_patch:
         ethereum_inquirer.maybe_get_transaction_by_hash(txn_hash, call_order)
         ethereum_inquirer.maybe_get_transaction_receipt(txn_hash, call_order)
@@ -475,7 +512,7 @@ def test_get_logs_graph_delegation(ethereum_inquirer, ethereum_manager_connect_a
 
     original_etherscan_query = ethereum_inquirer.etherscan._query
 
-    def mock_etherscan_query(module, action, options, timeout):
+    def mock_etherscan_query(chain_id, module, action, options, timeout):
         """Mock etherscan query to check the options are formulated correctly."""
         assert options == {
             'address': CONTRACT_STAKING,
@@ -484,7 +521,7 @@ def test_get_logs_graph_delegation(ethereum_inquirer, ethereum_manager_connect_a
             'topic2': f'0x000000000000000000000000{user_address.lower()[2:]}',
             'topic2_3opr': 'and',
         }
-        return original_etherscan_query(module, action, options, timeout)
+        return original_etherscan_query(chain_id, module, action, options, timeout)
 
     original_query_web3_get_logs = _query_web3_get_logs
 
@@ -559,7 +596,7 @@ def test_get_logs_anonymous(ethereum_inquirer, ethereum_manager_connect_at_start
     }
     deployment_block, v_to_block, topic0 = 8928160, 8928170, '0x049878f300000000000000000000000000000000000000000000000000000000'  # noqa: E501
 
-    def mock_etherscan_query(module, action, options=None, timeout=None):
+    def mock_etherscan_query(chain_id, module, action, options=None, timeout=None):
         """Mock etherscan query to check the options are formulated correctly."""
         if action == 'eth_blockNumber':
             return '0x883baa'  # int: 8928170

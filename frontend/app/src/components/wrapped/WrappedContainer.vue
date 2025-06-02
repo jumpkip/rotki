@@ -30,7 +30,7 @@ const props = defineProps<{
   highlightedYear?: number;
 }>();
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 const premium = usePremium();
 const { apiKey } = useExternalApiKeys(t);
 const { useIsTaskRunning } = useTaskStore();
@@ -45,6 +45,8 @@ const loading = ref(false);
 const end = ref('');
 const start = ref('');
 const summary = ref<WrapStatisticsResult>();
+
+const { isMdAndDown } = useBreakpoint();
 
 const { getEarliestEventTimestamp } = useHistoryEvents();
 
@@ -215,6 +217,7 @@ defineExpose({
       type="info"
     >
       <i18n-t
+        scope="global"
         keypath="wrapped.history_events_nudge"
       >
         <template #link>
@@ -257,8 +260,8 @@ defineExpose({
       </div>
     </RuiAlert>
 
-    <div class="flex gap-2 -mb-4 items-start">
-      <div class="mt-2 mr-4 font-semibold">
+    <div class="flex flex-col md:flex-row md:grid-cols-4 gap-2 -mb-4 md:items-start">
+      <div class="my-2 mr-4 font-semibold">
         {{ t('wrapped.filter_by_date') }}
       </div>
       <DateTimePicker
@@ -281,7 +284,7 @@ defineExpose({
       />
       <RuiButton
         color="primary"
-        class="h-10"
+        class="h-10 mb-4"
         :disabled="refreshing"
         @click="fetchData()"
       >
@@ -366,8 +369,9 @@ defineExpose({
         </template>
         <template #label="{ item }">
           <HashLink
-            class="bg-rui-grey-200 dark:bg-rui-grey-800 rounded-full pr-1"
+            class="bg-rui-grey-200 dark:bg-rui-grey-800 rounded-full pr-1 pl-2"
             :text="item[0]"
+            :truncate-length="isMdAndDown ? 4 : 10"
           />
         </template>
         <template #value="{ item }">
@@ -404,7 +408,7 @@ defineExpose({
             :value="item[1]"
             integer
           />
-          {{ t('actions.trades.task.title') }}
+          {{ t('common.trades', item[1].toNumber()) }}
         </template>
       </WrappedCard>
 

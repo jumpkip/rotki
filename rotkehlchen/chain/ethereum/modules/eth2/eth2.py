@@ -7,13 +7,11 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import gevent
 from gevent.lock import Semaphore
-from pysqlcipher3 import dbapi2 as sqlcipher
 
 from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.chain.ethereum.modules.eth2.beacon import BeaconInquirer
 from rotkehlchen.chain.structures import TimestampOrBlockRange
 from rotkehlchen.constants import ONE, ZERO
-from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.constants.timing import DAY_IN_SECONDS, HOUR_IN_SECONDS, YEAR_IN_SECONDS
 from rotkehlchen.db.cache import DBCacheDynamic, DBCacheStatic
 from rotkehlchen.db.eth2 import DBEth2
@@ -24,19 +22,25 @@ from rotkehlchen.errors.misc import InputError, RemoteError
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.base import HistoryBaseEntryType
-from rotkehlchen.history.events.structures.eth2 import EthBlockEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.premium.premium import Premium, has_premium_check
-from rotkehlchen.types import ChecksumEvmAddress, Eth2PubKey, Timestamp, deserialize_evm_tx_hash
+from rotkehlchen.types import (
+    ChecksumEvmAddress,
+    Eth2PubKey,
+    Timestamp,
+    TimestampMS,
+)
 from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.data_structures import LRUCacheWithRemove
 from rotkehlchen.utils.interfaces import EthereumModule
-from rotkehlchen.utils.misc import ts_now
+from rotkehlchen.utils.misc import ts_now, ts_sec_to_ms
 
 from .constants import (
     CPT_ETH2,
     FREE_VALIDATORS_LIMIT,
+    MAX_EFFECTIVE_BALANCE,
+    MIN_EFFECTIVE_BALANCE,
     UNKNOWN_VALIDATOR_INDEX,
     VALIDATOR_STATS_QUERY_BACKOFF_EVERY_N_VALIDATORS,
     VALIDATOR_STATS_QUERY_BACKOFF_TIME,
@@ -134,6 +138,39 @@ class Eth2(EthereumModule):
 
         return balances
 
+    @staticmethod
+    def _time_weighted_average(
+            balance_data: dict[TimestampMS, FVal],
+            from_ts_ms: TimestampMS,
+            to_ts_ms: TimestampMS,
+    ) -> FVal:
+        """Calculate the time weighted average balance for a single validator.
+        If the time range specified is too small to contain any entries, the entry closest
+        to the specified to timestamp will be used.
+        """
+        if len(balance_data) == 0:
+            return ZERO
+        elif len(balance_data) == 1:
+            return next(iter(balance_data.values()))
+
+        sorted_times = sorted(balance_data.keys())
+        filtered_times = [ts for ts in sorted_times if from_ts_ms <= ts <= to_ts_ms]
+        if len(filtered_times) == 0:  # There are no timestamps in the range specified.
+            # First try to use the value at the latest timestamp before to_ts_ms
+            if len(before_ts_list := [ts for ts in sorted_times if ts <= to_ts_ms]) != 0:
+                return balance_data[before_ts_list[-1]]
+            else:  # If none before to_ts_ms, simply use the earliest ts
+                return balance_data[sorted_times[0]]
+
+        total_weighted_sum = ZERO
+        filtered_times.append(to_ts_ms)
+        for idx, current_ts in enumerate(filtered_times[:-1]):
+            # sum += balance * duration for which this was the balance
+            total_weighted_sum += balance_data[current_ts] * (filtered_times[idx + 1] - current_ts)
+
+        # avg = total sum divided by the total duration
+        return total_weighted_sum / (to_ts_ms - filtered_times[0])
+
     def get_performance(
             self,
             from_ts: Timestamp,
@@ -190,8 +227,13 @@ class Eth2(EthereumModule):
             with self.database.conn.read_ctx() as cursor:
                 if status == PerformanceStatusFilter.ACTIVE:
                     got_indices = dbeth2.get_active_validator_indices(cursor)
+                elif status == PerformanceStatusFilter.CONSOLIDATED:
+                    got_indices = set(dbeth2.get_consolidated_validators(cursor))
                 else:  # can only be EXITED
-                    got_indices = dbeth2.get_exited_validator_indices(cursor)
+                    got_indices = dbeth2.get_exited_validator_indices(
+                        cursor=cursor,
+                        validator_indices=validator_indices,
+                    )
 
             to_filter_indices = got_indices if to_filter_indices is None else to_filter_indices & got_indices  # noqa: E501
             to_query_indices = got_indices if to_query_indices is None else to_query_indices & got_indices  # noqa: E501
@@ -212,7 +254,12 @@ class Eth2(EthereumModule):
         with self.database.conn.read_ctx() as cursor:
             accounts = self.database.get_blockchain_accounts(cursor)
 
-        withdrawals_filter_query, exits_filter_query, blocks_execution_filter_query, mev_execution_filter_query = create_profit_filter_queries(  # noqa: E501
+        balances_over_time, withdrawals_pnl, exits_pnl = dbeth2.process_validators_balances_and_pnl(  # noqa: E501
+            from_ts=from_ts,
+            to_ts=to_ts,
+            validator_indices=to_filter_indices,
+        )
+        blocks_execution_filter_query, mev_execution_filter_query = create_profit_filter_queries(
             from_ts=from_ts,
             to_ts=to_ts,
             validator_indices=list(to_filter_indices) if to_filter_indices is not None else None,
@@ -220,10 +267,8 @@ class Eth2(EthereumModule):
         )
 
         with self.database.conn.read_ctx() as cursor:
-            withdrawals_amounts, exits_pnl, blocks_rewards_amounts, mev_rewards_amounts = dbeth2.get_validators_profit(  # noqa: E501
+            blocks_rewards_amounts, mev_rewards_amounts = dbeth2.get_validators_block_and_mev_rewards(  # noqa: E501
                 cursor=cursor,
-                exits_filter_query=exits_filter_query,
-                withdrawals_filter_query=withdrawals_filter_query,
                 blocks_execution_filter_query=blocks_execution_filter_query,
                 mev_execution_filter_query=mev_execution_filter_query,
                 to_filter_indices=to_filter_indices,
@@ -232,7 +277,7 @@ class Eth2(EthereumModule):
         pnls: defaultdict[int, dict] = defaultdict(dict)
         sums: defaultdict[str, FVal] = defaultdict(FVal)
         for key_label, mapping in (
-                ('withdrawals', withdrawals_amounts),
+                ('withdrawals', withdrawals_pnl),
                 ('exits', exits_pnl),
                 ('execution_blocks', blocks_rewards_amounts),
                 ('execution_mev', mev_rewards_amounts),
@@ -253,19 +298,30 @@ class Eth2(EthereumModule):
             to_query_indices = all_validator_indices
 
         if now - to_ts <= DAY_IN_SECONDS:
+            _, accumulating_validators = dbeth2.group_validators_by_type(
+                database=self.database,
+                validator_indices=to_query_indices,
+            )
             balances = self.beacon_inquirer.get_balances(
                 indices_or_pubkeys=list(to_query_indices),
                 has_premium=has_premium_check(self.premium),
             )
             for pubkey, balance in balances.items():
-                entry = pnls[pubkey_to_index[pubkey]]
+                entry = pnls[v_index := pubkey_to_index[pubkey]]
                 if 'exits' in entry:
                     continue  # no outstanding balance for exits
 
                 if balance.amount == ZERO:
                     continue
 
-                outstanding_pnl = balance.amount - FVal(32)
+                if v_index in accumulating_validators:
+                    if balance.amount < MAX_EFFECTIVE_BALANCE:
+                        continue  # no outstanding balance for accumulating validators with balance less than 2048  # noqa: E501
+                    max_balance = MAX_EFFECTIVE_BALANCE
+                else:
+                    max_balance = MIN_EFFECTIVE_BALANCE
+
+                outstanding_pnl = balance.amount - max_balance
                 entry['outstanding_consensus_pnl'] = outstanding_pnl
                 sums['outstanding_consensus_pnl'] += outstanding_pnl
                 entry['sum'] = entry.get('sum', ZERO) + outstanding_pnl
@@ -279,7 +335,15 @@ class Eth2(EthereumModule):
 
             profit_from_ts = max(index_to_activation_ts.get(vindex, from_ts), from_ts)
             profit_to_ts = min(index_to_withdrawable_ts.get(vindex, to_ts), to_ts)
-            data['apr'] = ((YEAR_IN_SECONDS * validator_sum) / (profit_to_ts - profit_from_ts)) / 32  # noqa: E501
+            time_weighted_avg = self._time_weighted_average(
+                balance_data=balances_over_time[vindex],
+                from_ts_ms=ts_sec_to_ms(profit_from_ts),
+                to_ts_ms=ts_sec_to_ms(profit_to_ts),
+            )
+            data['apr'] = (
+                ((YEAR_IN_SECONDS * validator_sum) / (profit_to_ts - profit_from_ts)) / time_weighted_avg  # noqa: E501
+                if time_weighted_avg != ZERO else ZERO
+            )
             sum_apr += data['apr']
 
         if count_apr != ZERO:
@@ -306,8 +370,9 @@ class Eth2(EthereumModule):
             deposit_events = dbevents.get_history_events(
                 cursor=cursor,
                 filter_query=EvmEventFilterQuery.make(
-                    event_types=[HistoryEventType.STAKING],
-                    event_subtypes=[HistoryEventSubType.DEPOSIT_ASSET],
+                    type_and_subtype_combinations=[
+                        (HistoryEventType.STAKING, HistoryEventSubType.DEPOSIT_ASSET),
+                    ],
                     counterparties=[CPT_ETH2],
                 ),
                 has_premium=True,  # need all events here
@@ -413,9 +478,10 @@ class Eth2(EthereumModule):
         log.debug(f'Querying {address} ETH withdrawals from {from_ts} to {to_ts}')
 
         try:
+            period = self.ethereum.maybe_timestamp_to_block_range(TimestampOrBlockRange('timestamps', from_ts, to_ts))  # noqa: E501
             untracked_validator_indices = self.ethereum.etherscan.get_withdrawals(
                 address=address,
-                period=TimestampOrBlockRange('timestamps', from_ts, to_ts),
+                period=period,
             )
         except (DeserializationError, RemoteError) as e:
             log.error(f'Failed to query ethereum withdrawals for {address} through etherscan due to {e}. Will try blockscout.')  # noqa: E501
@@ -579,69 +645,7 @@ class Eth2(EthereumModule):
     def combine_block_with_tx_events(self) -> None:
         """Get all mev reward block production events and combine them with the
         transaction events if they can be found"""
-        with self.database.conn.read_ctx() as cursor:
-            cursor.execute(
-                """SELECT B_H.identifier, B_T.block_number, B_H.notes, B_T.tx_hash, (
-                    SELECT A_S.validator_index FROM history_events A_H
-                    LEFT JOIN eth_staking_events_info A_S ON A_H.identifier=A_S.identifier
-                    WHERE A_H.subtype=? AND A_S.is_exit_or_blocknumber=B_T.block_number
-                    AND A_H.location_label=B_H.location_label
-                ) as validator_index
-                FROM evm_transactions B_T LEFT JOIN evm_events_info B_E ON B_T.tx_hash=B_E.tx_hash
-                LEFT JOIN history_events B_H ON B_E.identifier=B_H.identifier
-                WHERE B_H.asset=? AND B_H.type=? AND B_H.subtype=? AND B_T.block_number=(
-                    SELECT A_S.is_exit_or_blocknumber FROM history_events A_H
-                    LEFT JOIN eth_staking_events_info A_S ON A_H.identifier=A_S.identifier
-                    WHERE A_H.subtype=? AND A_S.is_exit_or_blocknumber=B_T.block_number
-                    AND A_H.location_label=B_H.location_label
-                )""",
-                (
-                    HistoryEventSubType.MEV_REWARD.serialize(),
-                    A_ETH.identifier,
-                    HistoryEventType.RECEIVE.serialize(),
-                    HistoryEventSubType.NONE.serialize(),
-                    HistoryEventSubType.MEV_REWARD.serialize(),
-                ),
-            )
-            changes = []
-            for entry in cursor:
-                event_identifier = EthBlockEvent.form_event_identifier(entry[1])
-                tx_hash = deserialize_evm_tx_hash(entry[3])
-                changes.append((
-                    event_identifier,
-                    event_identifier,
-                    f'{entry[2]} as mev reward for block {entry[1]} in {tx_hash.hex()}',  # pylint: disable=no-member
-                    HistoryEventType.STAKING.serialize(),
-                    HistoryEventSubType.MEV_REWARD.serialize(),
-                    json.dumps({'validator_index': entry[4]}),  # extra data
-                    entry[0],  # identifier
-                    tx_hash,
-                ))
-
-        with self.database.user_write() as write_cursor:
-            for changes_entry in changes:
-                result = write_cursor.execute(
-                    'SELECT COUNT(*) FROM history_events HE LEFT JOIN evm_events_info EE ON '
-                    'HE.identifier = EE.identifier WHERE HE.event_identifier=? AND EE.tx_hash=?',
-                    (changes_entry[0], changes_entry[7]),
-                ).fetchone()[0]
-                if result == 1:  # Has already been moved.
-                    log.debug(f'Did not move history event with {changes_entry} in combine_block_with_tx_events since event with same tx_hash already combined in the block')  # noqa: E501
-                    write_cursor.execute('DELETE FROM history_events WHERE identifier=?', (changes_entry[6],))  # noqa: E501
-                    continue
-
-                try:
-                    write_cursor.execute(
-                        'UPDATE history_events '
-                        'SET event_identifier=?, sequence_index=('
-                        'SELECT MAX(sequence_index) FROM history_events E2 WHERE E2.event_identifier=?)+1, '  # noqa: E501
-                        'notes=?, type=?, subtype=?, extra_data=? WHERE identifier=?',
-                        changes_entry[:-1],
-                    )
-                except sqlcipher.IntegrityError as e:  # pylint: disable=no-member
-                    log.warning(f'Could not update history events with {changes_entry} in combine_block_with_tx_events due to {e!s}')  # noqa: E501
-                    # already exists. Probably right after resetting events? Delete old one
-                    write_cursor.execute('DELETE FROM history_events WHERE identifier=?', (changes_entry[6],))  # noqa: E501
+        DBEth2(self.database).combine_block_with_tx_events()
 
     def detect_exited_validators(self) -> None:
         """This function will detect any validators that have exited from the ones that
@@ -733,7 +737,7 @@ class Eth2(EthereumModule):
 
             staking_changes.append((result.validator_index, identifier))
             history_changes.append((f'Deposit {amount_str} ETH to validator {result.validator_index}', identifier))  # noqa: E501
-            validators.append((result.validator_index, result.public_key, '1.0'))
+            validators.append((result.validator_index, result.public_key, result.validator_type.serialize_for_db(), '1.0'))  # noqa: E501
 
         if len(staking_changes) == 0:
             return
@@ -748,7 +752,7 @@ class Eth2(EthereumModule):
                 history_changes,
             )
             write_cursor.executemany(
-                'INSERT OR IGNORE INTO eth2_validators(validator_index, public_key, ownership_proportion) VALUES(?, ?, ?)',  # noqa: E501
+                'INSERT OR IGNORE INTO eth2_validators(validator_index, public_key, validator_type, ownership_proportion) VALUES(?, ?, ?, ?)',  # noqa: E501
                 validators,
             )
 

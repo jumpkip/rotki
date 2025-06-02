@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import AssetLink from '@/components/assets/AssetLink.vue';
 import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
-import AssetIcon from '@/components/helper/display/icons/AssetIcon.vue';
+import AssetDetails from '@/components/helper/AssetDetails.vue';
 import { useRefMap } from '@/composables/utils/useRefMap';
 import { useValueOrDefault } from '@/composables/utils/useValueOrDefault';
-import { useBalancePricesStore } from '@/store/balances/prices';
+import { usePriceUtils } from '@/modules/prices/use-price-utils';
 import { useGeneralSettingsStore } from '@/store/settings/general';
 import { type Balance, Zero } from '@rotki/common';
 
@@ -49,7 +48,7 @@ const usdValue = useValueOrDefault(
 );
 
 const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
-const { assetPrice, toSelectedCurrency } = useBalancePricesStore();
+const { assetPrice, toSelectedCurrency } = usePriceUtils();
 
 const valueCurrency = computed(() => {
   if (!get(calculateValue))
@@ -104,15 +103,11 @@ const valueInCurrency = computed(() => {
         class="block text-rui-text-secondary"
       />
     </div>
-    <AssetLink
+    <AssetDetails
       v-if="!noIcon"
       :asset="asset"
-    >
-      <AssetIcon
-        :identifier="asset"
-        :size="iconSize"
-        class="flex"
-      />
-    </AssetLink>
+      icon-only
+      :size="iconSize"
+    />
   </div>
 </template>

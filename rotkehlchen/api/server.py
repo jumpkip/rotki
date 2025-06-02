@@ -67,6 +67,7 @@ from rotkehlchen.api.v1.resources import (
     ERC20TokenInfo,
     Eth2DailyStatsResource,
     Eth2StakePerformanceResource,
+    Eth2StakingEventsResource,
     Eth2ValidatorsResource,
     EthereumAirdropsResource,
     EthereumModuleDataResource,
@@ -156,6 +157,7 @@ from rotkehlchen.api.v1.resources import (
     create_blueprint,
 )
 from rotkehlchen.api.v1.wallet_resources import (
+    AccountTokenBalanceResource,
     AddressesInteractedResource,
     PrepareNativeTransferResource,
     PrepareTokenTransferResource,
@@ -259,6 +261,7 @@ URLS_V1: URLS = [
     ('/blockchains/eth2/validators', Eth2ValidatorsResource),
     ('/blockchains/eth2/stake/performance', Eth2StakePerformanceResource),
     ('/blockchains/eth2/stake/dailystats', Eth2DailyStatsResource),
+    ('/blockchains/eth2/stake/events', Eth2StakingEventsResource),
     ('/blockchains/eth/airdrops', EthereumAirdropsResource),
     ('/blockchains/evm/erc20details', ERC20TokenInfo),
     ('/blockchains/eth/modules/<string:module_name>/data', NamedEthereumModuleDataResource),
@@ -333,6 +336,7 @@ URLS_V1: URLS = [
     ('/wallet/transfer/token', PrepareTokenTransferResource),
     ('/wallet/transfer/native', PrepareNativeTransferResource),
     ('/wallet/interacted', AddressesInteractedResource),
+    ('/wallet/balance', AccountTokenBalanceResource),
 ]
 
 logger = logging.getLogger(__name__)

@@ -11,7 +11,7 @@ from rotkehlchen.assets.asset import EvmToken, UnderlyingToken
 from rotkehlchen.chain.bitcoin.hdkey import HDKey
 from rotkehlchen.chain.bitcoin.xpub import XpubData
 from rotkehlchen.chain.ethereum.constants import LAST_GRAPH_DELEGATIONS
-from rotkehlchen.chain.ethereum.modules.eth2.structures import ValidatorDetails
+from rotkehlchen.chain.ethereum.modules.eth2.structures import ValidatorDetails, ValidatorType
 from rotkehlchen.chain.ethereum.modules.thegraph.constants import CONTRACT_STAKING
 from rotkehlchen.chain.evm.decoding.aave.constants import CPT_AAVE_V3
 from rotkehlchen.chain.evm.decoding.pendle.constants import (
@@ -25,7 +25,7 @@ from rotkehlchen.constants.assets import A_COMP, A_DAI, A_GRT, A_LUSD, A_USDC, A
 from rotkehlchen.constants.misc import ONE, ZERO
 from rotkehlchen.constants.timing import DATA_UPDATES_REFRESH, DAY_IN_SECONDS, WEEK_IN_SECONDS
 from rotkehlchen.db.cache import DBCacheDynamic, DBCacheStatic
-from rotkehlchen.db.calendar import CalendarEntry, CalendarFilterQuery, DBCalendar
+from rotkehlchen.db.calendar import CalendarEntry, CalendarFilterQuery, DBCalendar, ReminderEntry
 from rotkehlchen.db.eth2 import DBEth2
 from rotkehlchen.db.evmtx import DBEvmTx
 from rotkehlchen.db.history_events import DBHistoryEvents
@@ -607,8 +607,8 @@ def test_maybe_query_ethereum_withdrawals(task_manager, ethereum_accounts):
     with task_manager.database.user_write() as cursor:
         # Add an active and an exited validator, and also leave one address with no validators
         DBEth2(task_manager.database).add_or_update_validators(cursor, [
-            ValidatorDetails(validator_index=1, public_key=Eth2PubKey('0xfoo1'), withdrawal_address=ethereum_accounts[0]),  # noqa: E501
-            ValidatorDetails(validator_index=2, public_key=Eth2PubKey('0xfoo2'), withdrawal_address=ethereum_accounts[1], exited_timestamp=Timestamp(1730000000)),  # noqa: E501
+            ValidatorDetails(validator_index=1, public_key=Eth2PubKey('0xfoo1'), withdrawal_address=ethereum_accounts[0], validator_type=ValidatorType.DISTRIBUTING),  # noqa: E501
+            ValidatorDetails(validator_index=2, public_key=Eth2PubKey('0xfoo2'), withdrawal_address=ethereum_accounts[1], validator_type=ValidatorType.DISTRIBUTING, exited_timestamp=Timestamp(1730000000)),  # noqa: E501
         ])
 
     def maybe_run_task(
@@ -635,7 +635,7 @@ def test_maybe_query_ethereum_withdrawals(task_manager, ethereum_accounts):
             ),
         ):
             task_manager.schedule()
-            gevent.sleep(0)
+            gevent.joinall(task_manager.greenlet_manager.greenlets)
             assert get_withdrawals_mock.call_count == expected_call_count
             assert queried_addresses == expected_addresses
 
@@ -659,8 +659,8 @@ def test_maybe_query_produced_blocks(task_manager, ethereum_accounts):
     with task_manager.database.user_write() as cursor:
         # Add both an active and an exited validator
         DBEth2(task_manager.database).add_or_update_validators(cursor, [
-            ValidatorDetails(validator_index=1, public_key=Eth2PubKey('0xfoo1'), withdrawal_address=ethereum_accounts[0]),  # noqa: E501
-            ValidatorDetails(validator_index=2, public_key=Eth2PubKey('0xfoo2'), withdrawal_address=ethereum_accounts[0], exited_timestamp=Timestamp(1730000000)),  # noqa: E501
+            ValidatorDetails(validator_index=1, public_key=Eth2PubKey('0xfoo1'), withdrawal_address=ethereum_accounts[0], validator_type=ValidatorType.DISTRIBUTING),  # noqa: E501
+            ValidatorDetails(validator_index=2, public_key=Eth2PubKey('0xfoo2'), withdrawal_address=ethereum_accounts[0], validator_type=ValidatorType.DISTRIBUTING, exited_timestamp=Timestamp(1730000000)),  # noqa: E501
         ])
 
     def maybe_run_task(expected_call_count: int, expected_indices: list[int]) -> None:
@@ -912,9 +912,9 @@ def test_send_ws_calendar_reminder(
 ) -> None:
     """
     Test that reminders work correctly by:
-    - Checking we get the notifications
-    - Checking we remove the reminders once fired
-    - Checking that starting the app after an event with a reminder passes, triggers the reminder
+    - Checking we get notifications.
+    - Checking that older reminders for the same event are deleted.
+    - Checking that unacknowledged reminders remain in the database.
     """
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
     database = rotki.data.db
@@ -944,6 +944,7 @@ def test_send_ws_calendar_reminder(
             'INSERT INTO calendar_reminders(event_id, secs_before) VALUES (?, ?)',
             [
                 (2, WEEK_IN_SECONDS),  # 13/04/2024
+                (2, DAY_IN_SECONDS * 2),  # Added a second reminder for event 2
                 (3, DAY_IN_SECONDS * 5),  # 24/04/2024
             ],
         )
@@ -963,6 +964,10 @@ def test_send_ws_calendar_reminder(
     assert msg == {
         'data': {
             'identifier': 2,
+            'reminder': {
+                'identifier': 2,
+                'secs_before': DAY_IN_SECONDS * 2,
+            },
             'name': 'CRV unlock',
             'description': 'Unlock date for CRV',
             'timestamp': 1713621899,
@@ -971,22 +976,43 @@ def test_send_ws_calendar_reminder(
         'type': 'calendar_reminder',
     }
 
-    # check that the reminder got deleted
+    # check that the older reminder for that event got deleted.
     with database.conn.read_ctx() as cursor:
         assert cursor.execute(
-            'SELECT COUNT(*) FROM calendar_reminders WHERE event_id=1',
-        ).fetchone()[0] == 0
+            'SELECT COUNT(*) FROM calendar_reminders WHERE event_id=2',
+        ).fetchone()[0] == 1
 
     # move to the timestamp to trigger the second reminder. Even though we are after
     # the event, we should still get the notification
     freezer.move_to(datetime.datetime(2024, 5, 20, 20, 0, 1, tzinfo=datetime.UTC))
     task_manager.schedule()
     gevent.joinall(task_manager.running_greenlets[task_manager._maybe_trigger_calendar_reminder])  # wait for the task to finish since it might context switch while running  # noqa: E501
-    websocket_connection.wait_until_messages_num(num=1, timeout=2)
+    websocket_connection.wait_until_messages_num(num=2, timeout=5)
+    msg = websocket_connection.pop_message()
+    # first, we get the previous reminder since it was never acknowledged
+    assert msg == {
+        'data': {
+            'identifier': 2,
+            'reminder': {
+                'identifier': 2,
+                'secs_before': DAY_IN_SECONDS * 2,
+            },
+            'name': 'CRV unlock',
+            'description': 'Unlock date for CRV',
+            'timestamp': 1713621899,
+            'auto_delete': False,
+        },
+        'type': 'calendar_reminder',
+    }
+    # the next websocket message will be the ens renewal reminder
     msg = websocket_connection.pop_message()
     assert msg == {
         'data': {
             'identifier': 3,
+            'reminder': {
+                'identifier': 3,
+                'secs_before': DAY_IN_SECONDS * 5,
+            },
             'name': 'ENS renewal',
             'description': 'renew yabir.eth',
             'timestamp': 1714399499,
@@ -995,9 +1021,9 @@ def test_send_ws_calendar_reminder(
         'type': 'calendar_reminder',
     }
 
-    # check that the reminder got deleted
+    # ensure that we still have two reminders since they never got acknowledged
     with database.conn.read_ctx() as cursor:
-        assert cursor.execute('SELECT COUNT(*) FROM calendar_reminders').fetchone()[0] == 0
+        assert cursor.execute('SELECT COUNT(*) FROM calendar_reminders').fetchone()[0] == 2
 
 
 @pytest.mark.parametrize('max_tasks_num', [5])
@@ -1010,14 +1036,14 @@ def test_calendar_entries_get_deleted(
         freezer,
 ) -> None:
     """
-    Test that reminders work correctly by:
-    - Checking we get the notifications
-    - Checking we remove the reminders once fired
-    - Checking that starting the app after an event with a reminder passes, triggers the reminder
-    """
+    Tests the auto-deletion of calendar entries based on settings and reminder status:
+    - Verifies entries are not deleted when auto_delete_calendar_entries is False
+    - Confirms entries with auto_delete=True remain when their reminders are unacknowledged
+    - Validates that entries with auto_delete=True are removed after their reminders are acknowledged
+    """  # noqa: E501
     database = task_manager.database
     calendar_db = DBCalendar(database)
-    calendar_db.create_calendar_entry(
+    calendar_id = calendar_db.create_calendar_entry(
         calendar=CalendarEntry(
             name='ENS renewal',
             description='renew yabir.eth',
@@ -1041,6 +1067,12 @@ def test_calendar_entries_get_deleted(
             auto_delete=False,
         ),
     )
+    calendar_db.create_reminder_entries([ReminderEntry(
+        identifier=1,
+        event_id=calendar_id,
+        secs_before=0,
+        acknowledged=False,
+    )])
     with database.conn.read_ctx() as cursor:
         assert cursor.execute('SELECT COUNT(*) FROM calendar').fetchone()[0] == 2
 
@@ -1063,6 +1095,21 @@ def test_calendar_entries_get_deleted(
     task_manager.schedule()
     gevent.joinall(task_manager.running_greenlets[task_manager._maybe_delete_past_calendar_events])
 
+    with database.conn.read_ctx() as cursor:  # the calendar should still be present as the reminder has not been acknowledged  # noqa: E501
+        assert cursor.execute(
+            'SELECT description FROM calendar',
+        ).fetchall() == [('renew yabir.eth',), ('renew hania.eth',)]
+
+    # acknowledge the reminder, move the time again and see that calendar entries that can be auto-deleted are removed  # noqa: E501
+    freezer.move_to(datetime.datetime(2024, 6, 5, 20, 0, 1, tzinfo=datetime.UTC))
+    calendar_db.update_reminder_entry(ReminderEntry(
+            identifier=1,
+            event_id=calendar_id,
+            secs_before=0,
+            acknowledged=True,
+    ))
+    task_manager.schedule()
+    gevent.joinall(task_manager.running_greenlets[task_manager._maybe_delete_past_calendar_events])
     with database.conn.read_ctx() as cursor:  # events that are allowed to be deleted shouldn't be there anymore  # noqa: E501
         assert cursor.execute(
             'SELECT description FROM calendar',
@@ -1312,7 +1359,7 @@ def test_graph_query_query_delegations(
 
     block_offset, address_check_counter = 0, 0
 
-    def mock_get_logs(contract_address, topics, from_block, to_block):
+    def mock_get_logs(chain_id, contract_address, topics, from_block, to_block):
         nonlocal block_offset, address_check_counter
         assert contract_address == CONTRACT_STAKING
         if from_block == 11546786:

@@ -13,8 +13,8 @@ import RowActions from '@/components/helper/RowActions.vue';
 import AssetSelect from '@/components/inputs/AssetSelect.vue';
 import ConfirmSnapshotConflictReplacementDialog
   from '@/components/snapshots/ConfirmSnapshotConflictReplacementDialog.vue';
+import { usePriceUtils } from '@/modules/prices/use-price-utils';
 import { TableId, useRememberTableSorting } from '@/modules/table/use-remember-table-sorting';
-import { useBalancePricesStore } from '@/store/balances/prices';
 import { useGeneralSettingsStore } from '@/store/settings/general';
 import { BalanceType } from '@/types/balances';
 import { CURRENCY_USD } from '@/types/currencies';
@@ -32,7 +32,7 @@ const emit = defineEmits<{
   (e: 'update:model-value', value: Snapshot): void;
 }>();
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 type IndexedBalanceSnapshot = BalanceSnapshot & { index: number; categoryLabel: string };
 
@@ -56,8 +56,8 @@ const sort = ref<DataTableSortData<BalanceSnapshot>>({
 const assetSearch = ref<string>('');
 const form = ref<InstanceType<typeof EditBalancesSnapshotForm>>();
 
-const { exchangeRate } = useBalancePricesStore();
-const fiatExchangeRate = computed<BigNumber>(() => get(exchangeRate(get(currencySymbol))) ?? One);
+const { useExchangeRate } = usePriceUtils();
+const fiatExchangeRate = computed<BigNumber>(() => get(useExchangeRate(get(currencySymbol))) ?? One);
 
 const data = computed<IndexedBalanceSnapshot[]>(() =>
   props.modelValue.balancesSnapshot.map((item, index) => ({
@@ -403,7 +403,6 @@ function confirmDelete() {
           v-if="!isNft(row.assetIdentifier)"
           class="[&_.avatar]:ml-1.5 [&_.avatar]:mr-2"
           :asset="row.assetIdentifier"
-          :opens-details="false"
           :enable-association="false"
         />
         <NftDetails

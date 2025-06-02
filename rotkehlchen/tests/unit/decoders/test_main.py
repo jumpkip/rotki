@@ -56,7 +56,6 @@ def test_decoders_initialization(ethereum_transaction_decoder: EthereumTransacti
         'Curve',
         'Curvelend',
         'Curvecrvusd',
-        'Curvesavings',
         'Diva',
         'Defisaver',
         'Dripsv1',
@@ -230,6 +229,8 @@ def test_decoders_initialization(ethereum_transaction_decoder: EthereumTransacti
         'puffer',
         'openocean',
         'rainbow_swaps',
+        'poloniex',
+        'uphold',
     }
 
 

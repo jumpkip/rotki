@@ -10,7 +10,6 @@ import { VueRouterAutoImports } from 'unplugin-vue-router';
 import VueRouter from 'unplugin-vue-router/vite';
 import checker from 'vite-plugin-checker';
 import istanbul from 'vite-plugin-istanbul';
-import { VitePWA } from 'vite-plugin-pwa';
 import vueDevTools from 'vite-plugin-vue-devtools';
 import { defineConfig } from 'vitest/config';
 
@@ -80,6 +79,8 @@ export default defineConfig({
       '@reown/appkit-adapter-wagmi',
       '@reown/walletkit',
       '@walletconnect/core',
+      '@walletconnect/jsonrpc-utils',
+      '@walletconnect/utils',
       'ethers',
     ],
   },
@@ -146,12 +147,6 @@ export default defineConfig({
           }),
         ]
       : []),
-    VitePWA({
-      base: publicPath,
-      registerType: 'prompt',
-      manifest: false,
-      disable: isTest,
-    }),
   ],
   server: {
     port: 8080,

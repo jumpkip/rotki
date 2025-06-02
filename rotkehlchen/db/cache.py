@@ -26,6 +26,7 @@ class DBCacheStatic(Enum):
     LAST_GRAPH_DELEGATIONS_CHECK_TS: Final = 'last_graph_delegations_check_ts'
     LAST_GNOSISPAY_QUERY_TS: Final = 'last_gnosispay_query_ts'
     LAST_SPARK_ASSETS_UPDATE: Final = 'last_spark_assets_update'
+    LAST_DB_UPGRADE: Final = 'last_db_upgrade'
 
 
 class LabeledLocationArgsType(TypedDict):
@@ -52,7 +53,9 @@ class IndexArgType(TypedDict):
 class ExtraTxArgType(TypedDict):
     """Type of kwargs, used to get the value of `DBCacheDynamic.EXTRA_INTERNAL_TX`"""
     chain_id: int
-    receiver: ChecksumEvmAddress
+    # Receiver is optional since in at least one decoder (rainbow) the receiver address
+    # of the needed internal transaction is unknown.
+    receiver: ChecksumEvmAddress | None
     tx_hash: str  # using str instead of EVMTxHash because DB schema is in TEXT
 
 

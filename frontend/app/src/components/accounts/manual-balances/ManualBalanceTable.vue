@@ -35,7 +35,7 @@ const emit = defineEmits<{
 
 const { type } = toRefs(props);
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
 const tags = ref<string[]>([]);
 
@@ -232,8 +232,8 @@ watchDebounced(
       <template #item.asset="{ row }">
         <AssetDetails
           v-if="!row.assetIsMissing"
+          hide-actions
           class="[&>div]:max-w-[12rem] xl:[&>div]:max-w-[16rem] 2xl:[&>div]:max-w-[20rem]"
-          opens-details
           :asset="row.asset"
         />
         <ManualBalanceMissingAssetWarning v-else />
