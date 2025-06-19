@@ -12,7 +12,7 @@ import requests
 from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.converters import asset_from_kucoin
 from rotkehlchen.constants import ONE
-from rotkehlchen.constants.assets import A_BNB, A_BTC, A_ETH, A_LINK, A_SOL, A_USDC, A_USDT
+from rotkehlchen.constants.assets import A_BNB, A_BTC, A_ETH, A_LINK, A_USDC, A_USDT
 from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.exchanges.kucoin import Kucoin, KucoinCase
@@ -20,7 +20,8 @@ from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.asset_movement import AssetMovement
 from rotkehlchen.history.events.structures.swap import SwapEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
-from rotkehlchen.tests.utils.constants import A_BSV, A_KCS, A_NANO
+from rotkehlchen.history.events.utils import create_event_identifier_from_unique_id
+from rotkehlchen.tests.utils.constants import A_BSV, A_KCS, A_NANO, A_SOL
 from rotkehlchen.tests.utils.exchanges import get_exchange_asset_symbols
 from rotkehlchen.tests.utils.globaldb import is_asset_symbol_unsupported
 from rotkehlchen.tests.utils.mock import MockResponse
@@ -44,6 +45,7 @@ def test_name():
     assert exchange.name == 'kucoin1'
 
 
+@pytest.mark.asset_test
 def test_kucoin_exchange_assets_are_known(mock_kucoin, globaldb):
     request_url = f'{mock_kucoin.base_uri}/api/v1/currencies'
     try:
@@ -268,7 +270,10 @@ def test_deserialize_v2_trade_buy(mock_kucoin):
         asset=A_USDT,
         amount=FVal('200.0'),
         location_label=mock_kucoin.name,
-        unique_id=unique_id,
+        event_identifier=create_event_identifier_from_unique_id(
+            location=Location.KUCOIN,
+            unique_id=unique_id,
+        ),
     ), SwapEvent(
         timestamp=timestamp,
         location=Location.KUCOIN,
@@ -276,7 +281,10 @@ def test_deserialize_v2_trade_buy(mock_kucoin):
         asset=A_KCS,
         amount=FVal('0.2'),
         location_label=mock_kucoin.name,
-        unique_id=unique_id,
+        event_identifier=create_event_identifier_from_unique_id(
+            location=Location.KUCOIN,
+            unique_id=unique_id,
+        ),
     ), SwapEvent(
         timestamp=timestamp,
         location=Location.KUCOIN,
@@ -284,7 +292,10 @@ def test_deserialize_v2_trade_buy(mock_kucoin):
         asset=A_USDT,
         amount=FVal('0.14'),
         location_label=mock_kucoin.name,
-        unique_id=unique_id,
+        event_identifier=create_event_identifier_from_unique_id(
+            location=Location.KUCOIN,
+            unique_id=unique_id,
+        ),
     )]
 
 
@@ -318,7 +329,10 @@ def test_deserialize_v2_trade_sell(mock_kucoin):
         asset=A_BSV,
         amount=FVal('0.0013'),
         location_label=mock_kucoin.name,
-        unique_id=unique_id,
+        event_identifier=create_event_identifier_from_unique_id(
+            location=Location.KUCOIN,
+            unique_id=unique_id,
+        ),
     ), SwapEvent(
         timestamp=timestamp,
         location=Location.KUCOIN,
@@ -326,7 +340,10 @@ def test_deserialize_v2_trade_sell(mock_kucoin):
         asset=A_USDT,
         amount=FVal('48.91172'),
         location_label=mock_kucoin.name,
-        unique_id=unique_id,
+        event_identifier=create_event_identifier_from_unique_id(
+            location=Location.KUCOIN,
+            unique_id=unique_id,
+        ),
     ), SwapEvent(
         timestamp=timestamp,
         location=Location.KUCOIN,
@@ -334,7 +351,10 @@ def test_deserialize_v2_trade_sell(mock_kucoin):
         asset=A_USDT,
         amount=FVal('0.034238204'),
         location_label=mock_kucoin.name,
-        unique_id=unique_id,
+        event_identifier=create_event_identifier_from_unique_id(
+            location=Location.KUCOIN,
+            unique_id=unique_id,
+        ),
     )]
 
 
@@ -359,7 +379,10 @@ def test_deserialize_v1_trade(mock_kucoin):
         asset=A_NANO,
         amount=FVal('0.002186'),
         location_label=mock_kucoin.name,
-        unique_id=unique_id,
+        event_identifier=create_event_identifier_from_unique_id(
+            location=Location.KUCOIN,
+            unique_id=unique_id,
+        ),
     ), SwapEvent(
         timestamp=timestamp,
         location=Location.KUCOIN,
@@ -367,7 +390,10 @@ def test_deserialize_v1_trade(mock_kucoin):
         asset=A_ETH,
         amount=FVal('0.000034414198'),
         location_label=mock_kucoin.name,
-        unique_id=unique_id,
+        event_identifier=create_event_identifier_from_unique_id(
+            location=Location.KUCOIN,
+            unique_id=unique_id,
+        ),
     ), SwapEvent(
         timestamp=timestamp,
         location=Location.KUCOIN,
@@ -375,7 +401,10 @@ def test_deserialize_v1_trade(mock_kucoin):
         asset=A_ETH,
         amount=FVal('3E-8'),
         location_label=mock_kucoin.name,
-        unique_id=unique_id,
+        event_identifier=create_event_identifier_from_unique_id(
+            location=Location.KUCOIN,
+            unique_id=unique_id,
+        ),
     )]
 
 
@@ -680,7 +709,10 @@ def test_query_trades(mock_kucoin: Kucoin):
         asset=A_USDT,
         amount=FVal('4.96872'),
         location_label=mock_kucoin.name,
-        unique_id=(unique_id_1 := '13983206078699521'),
+        event_identifier=create_event_identifier_from_unique_id(
+            location=Location.KUCOIN,
+            unique_id=(unique_id_1 := '13983206078699521'),
+        ),
     ), SwapEvent(
         timestamp=timestamp_1,
         location=Location.KUCOIN,
@@ -688,7 +720,10 @@ def test_query_trades(mock_kucoin: Kucoin):
         asset=A_BNB,
         amount=FVal('0.009'),
         location_label=mock_kucoin.name,
-        unique_id=unique_id_1,
+        event_identifier=create_event_identifier_from_unique_id(
+            location=Location.KUCOIN,
+            unique_id=unique_id_1,
+        ),
     ), SwapEvent(
         timestamp=timestamp_1,
         location=Location.KUCOIN,
@@ -696,7 +731,10 @@ def test_query_trades(mock_kucoin: Kucoin):
         asset=A_USDT,
         amount=FVal('0.00496872'),
         location_label=mock_kucoin.name,
-        unique_id=unique_id_1,
+        event_identifier=create_event_identifier_from_unique_id(
+            location=Location.KUCOIN,
+            unique_id=unique_id_1,
+        ),
     ), SwapEvent(
         timestamp=(timestamp_2 := TimestampMS(1744132671985)),
         location=Location.KUCOIN,
@@ -704,7 +742,10 @@ def test_query_trades(mock_kucoin: Kucoin):
         asset=A_ETH,
         amount=FVal('0.0026585'),
         location_label=mock_kucoin.name,
-        unique_id=(unique_id_2 := '14218680720705537'),
+        event_identifier=create_event_identifier_from_unique_id(
+            location=Location.KUCOIN,
+            unique_id=(unique_id_2 := '14218680720705537'),
+        ),
     ), SwapEvent(
         timestamp=timestamp_2,
         location=Location.KUCOIN,
@@ -712,7 +753,10 @@ def test_query_trades(mock_kucoin: Kucoin):
         asset=A_USDT,
         amount=FVal('3.920250685'),
         location_label=mock_kucoin.name,
-        unique_id=unique_id_2,
+        event_identifier=create_event_identifier_from_unique_id(
+            location=Location.KUCOIN,
+            unique_id=unique_id_2,
+        ),
     ), SwapEvent(
         timestamp=timestamp_2,
         location=Location.KUCOIN,
@@ -720,7 +764,10 @@ def test_query_trades(mock_kucoin: Kucoin):
         asset=A_USDT,
         amount=FVal('0.003920250685'),
         location_label=mock_kucoin.name,
-        unique_id=unique_id_2,
+        event_identifier=create_event_identifier_from_unique_id(
+            location=Location.KUCOIN,
+            unique_id=unique_id_2,
+        ),
     ), SwapEvent(
         timestamp=(timestamp_3 := TimestampMS(1744132630457)),
         location=Location.KUCOIN,
@@ -728,7 +775,10 @@ def test_query_trades(mock_kucoin: Kucoin):
         asset=A_USDT,
         amount=FVal('2.9998368'),
         location_label=mock_kucoin.name,
-        unique_id=(unique_id_3 := '13983241039403009'),
+        event_identifier=create_event_identifier_from_unique_id(
+            location=Location.KUCOIN,
+            unique_id=(unique_id_3 := '13983241039403009'),
+        ),
     ), SwapEvent(
         timestamp=timestamp_3,
         location=Location.KUCOIN,
@@ -736,7 +786,10 @@ def test_query_trades(mock_kucoin: Kucoin):
         asset=A_SOL,
         amount=FVal('0.0288'),
         location_label=mock_kucoin.name,
-        unique_id=unique_id_3,
+        event_identifier=create_event_identifier_from_unique_id(
+            location=Location.KUCOIN,
+            unique_id=unique_id_3,
+        ),
     ), SwapEvent(
         timestamp=timestamp_3,
         location=Location.KUCOIN,
@@ -744,7 +797,10 @@ def test_query_trades(mock_kucoin: Kucoin):
         asset=A_USDT,
         amount=FVal('0.0029998368'),
         location_label=mock_kucoin.name,
-        unique_id=unique_id_3,
+        event_identifier=create_event_identifier_from_unique_id(
+            location=Location.KUCOIN,
+            unique_id=unique_id_3,
+        ),
     ), SwapEvent(
         timestamp=(timestamp_4 := TimestampMS(1744132705815)),
         location=Location.KUCOIN,
@@ -752,7 +808,10 @@ def test_query_trades(mock_kucoin: Kucoin):
         asset=A_USDT,
         amount=FVal('4.11'),
         location_label=mock_kucoin.name,
-        unique_id=(unique_id_4 := '11759667966785537'),
+        event_identifier=create_event_identifier_from_unique_id(
+            location=Location.KUCOIN,
+            unique_id=(unique_id_4 := '11759667966785537'),
+        ),
     ), SwapEvent(
         timestamp=timestamp_4,
         location=Location.KUCOIN,
@@ -760,7 +819,10 @@ def test_query_trades(mock_kucoin: Kucoin):
         asset=A_USDC,
         amount=FVal('4.107945'),
         location_label=mock_kucoin.name,
-        unique_id=unique_id_4,
+        event_identifier=create_event_identifier_from_unique_id(
+            location=Location.KUCOIN,
+            unique_id=unique_id_4,
+        ),
     ), SwapEvent(
         timestamp=timestamp_4,
         location=Location.KUCOIN,
@@ -768,7 +830,10 @@ def test_query_trades(mock_kucoin: Kucoin):
         asset=A_USDC,
         amount=FVal('0.004107945'),
         location_label=mock_kucoin.name,
-        unique_id=unique_id_4,
+        event_identifier=create_event_identifier_from_unique_id(
+            location=Location.KUCOIN,
+            unique_id=unique_id_4,
+        ),
     )]
 
 

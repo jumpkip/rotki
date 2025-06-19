@@ -4,14 +4,14 @@ from typing import TYPE_CHECKING, Any
 
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED
+from rotkehlchen.db.migration_utils import (
+    create_swap_events_v47_v48,
+    get_swap_spend_receive_v47_48,
+)
 from rotkehlchen.db.utils import update_table_schema
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
-from rotkehlchen.history.events.structures.swap import (
-    SwapEvent,
-    create_swap_events,
-    get_swap_spend_receive,
-)
+from rotkehlchen.history.events.structures.swap import SwapEvent
 from rotkehlchen.history.events.structures.types import HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter, enter_exit_debug_log
 from rotkehlchen.types import AssetAmount, Location, Price
@@ -45,7 +45,7 @@ def upgrade_trade_to_swap_events(
     - DeserializationError
     - ValueError
     """
-    spend, receive = get_swap_spend_receive(
+    spend, receive = get_swap_spend_receive_v47_48(
         is_buy=row[4] in {'A', 'C'},  # A,C = buy, settlement buy; B,D = sell, settlement sell
         base_asset=Asset(row[2]),
         quote_asset=Asset(row[3]),
@@ -84,7 +84,7 @@ def upgrade_trade_to_swap_events(
             # Remove timestamp from link to get trade ID for label lookup.
             location_label = kraken_ids_to_labels.get(link[:-10])
 
-    return create_swap_events(
+    return create_swap_events_v47_v48(
         timestamp=ts_sec_to_ms(row[0]),
         location=location,
         spend=spend,
@@ -279,7 +279,9 @@ def upgrade_v47_to_v48(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
         )
         write_cursor.execute('DROP TABLE trades')
         write_cursor.execute('DROP TABLE trade_type')
-        write_cursor.execute('DELETE FROM used_query_ranges WHERE name LIKE "%_trades_%"')
+        write_cursor.execute(
+            'DELETE FROM used_query_ranges WHERE name LIKE ? ESCAPE ?', ('%\\_trades\\_%', '\\'),
+        )
 
     @progress_step(description='Replacing specific history note locations with HISTORY')
     def _replace_history_note_locations(write_cursor: 'DBCursor') -> None:
@@ -338,7 +340,7 @@ def upgrade_v47_to_v48(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
         )
 
     @progress_step(description='Upgrade internal transactions table')
-    def _ugrade_internal_transactions(write_cursor: 'DBCursor') -> None:
+    def _upgrade_internal_transactions(write_cursor: 'DBCursor') -> None:
         """Update the internal transactions table
 
         Again we need to add more info in the internal transactions data due to examples like this:
@@ -365,5 +367,25 @@ def upgrade_v47_to_v48(db: 'DBHandler', progress_handler: 'DBUpgradeProgressHand
             insert_columns="parent_tx, trace_id, from_address, to_address, value, '0', '0'",
             insert_order='(parent_tx, trace_id, from_address, to_address, value, gas, gas_used)',
         )
+
+    @progress_step(description='Upgrade history events table')
+    def _upgrade_history_events(write_cursor: 'DBCursor') -> None:
+        """Update the history events table, adding a new ignored column and populating it from
+        the ignored asset values in multisettings.
+        Also adds indexes to improve query speed when filtering events.
+        """
+        write_cursor.execute('ALTER TABLE history_events ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0;')  # noqa: E501
+        write_cursor.execute("""
+            UPDATE history_events SET ignored = 1 FROM multisettings ms
+            WHERE history_events.asset = ms.value AND ms.name = 'ignored_asset'
+        """)
+        write_cursor.execute('CREATE INDEX idx_history_events_entry_type ON history_events(entry_type);')  # noqa: E501
+        write_cursor.execute('CREATE INDEX idx_history_events_timestamp ON history_events(timestamp);')  # noqa: E501
+        write_cursor.execute('CREATE INDEX idx_history_events_location ON history_events(location);')  # noqa: E501
+        write_cursor.execute('CREATE INDEX idx_history_events_location_label ON history_events(location_label);')  # noqa: E501
+        write_cursor.execute('CREATE INDEX idx_history_events_asset ON history_events(asset);')
+        write_cursor.execute('CREATE INDEX idx_history_events_type ON history_events(type);')
+        write_cursor.execute('CREATE INDEX idx_history_events_subtype ON history_events(subtype);')
+        write_cursor.execute('CREATE INDEX idx_history_events_ignored ON history_events(ignored);')
 
     perform_userdb_upgrade_steps(db=db, progress_handler=progress_handler, should_vacuum=True)

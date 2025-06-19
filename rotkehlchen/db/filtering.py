@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Generic, Literal, NamedTuple, Self, TypeVar
+from typing import Any, Final, Generic, Literal, NamedTuple, Self, TypeVar
 
 from rotkehlchen.accounting.types import SchemaEventType
 from rotkehlchen.api.v1.types import IncludeExcludeFilterData
@@ -50,19 +50,16 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-ALL_EVENTS_DATA_JOIN = """FROM history_events
+ALL_EVENTS_DATA_JOIN: Final = """FROM history_events
 LEFT JOIN evm_events_info ON history_events.identifier=evm_events_info.identifier
 LEFT JOIN eth_staking_events_info ON history_events.identifier=eth_staking_events_info.identifier """  # noqa: E501
-EVM_EVENT_JOIN = 'FROM history_events INNER JOIN evm_events_info ON history_events.identifier=evm_events_info.identifier '  # noqa: E501
-ETH_STAKING_EVENT_JOIN = 'FROM history_events INNER JOIN eth_staking_events_info ON history_events.identifier=eth_staking_events_info.identifier '  # noqa: E501
+EVM_EVENT_JOIN: Final = 'FROM history_events INNER JOIN evm_events_info ON history_events.identifier=evm_events_info.identifier '  # noqa: E501
+ETH_STAKING_EVENT_JOIN: Final = 'FROM history_events INNER JOIN eth_staking_events_info ON history_events.identifier=eth_staking_events_info.identifier '  # noqa: E501
 ETH_DEPOSIT_EVENT_JOIN = ALL_EVENTS_DATA_JOIN
 
 
 T = TypeVar('T')
 V = TypeVar('V')
-T_FilterQ = TypeVar('T_FilterQ', bound='DBFilterQuery')
-T_HistoryBaseEntryFilterQ = TypeVar('T_HistoryBaseEntryFilterQ', bound='HistoryBaseEntryFilterQuery')  # noqa: E501
-T_EthSTakingFilterQ = TypeVar('T_EthSTakingFilterQ', bound='EthStakingEventFilterQuery')
 
 
 class DBFilterOrder(NamedTuple):
@@ -781,8 +778,8 @@ class HistoryBaseEntryFilterQuery(DBFilterQuery, FilterWithTimestamp, FilterWith
             event_identifiers: list[str] | None = None,
             entry_types: IncludeExcludeFilterData | None = None,
             exclude_ignored_assets: bool = False,
-            exclude_entire_event_group_on_ignored_asset: bool = True,
             customized_events_only: bool = False,
+            notes_substring: str | None = None,
     ) -> Self:
         """May raise:
         - InvalidFilter for invalid combination of filters
@@ -897,20 +894,25 @@ class HistoryBaseEntryFilterQuery(DBFilterQuery, FilterWithTimestamp, FilterWith
                 ),
             )
         if exclude_ignored_assets is True:
-            if exclude_entire_event_group_on_ignored_asset is True:
-                filters.append(DBIgnoredEventFilter(and_op=True))
-            else:
-                filters.append(DBIgnoredAssetsFilter(
-                    and_op=True,
-                    asset_key='asset',
-                    operator='NOT IN',
-                ))
+            filters.append(DBEqualsFilter(
+                and_op=True,
+                column='ignored',
+                value=0,
+            ))
         if identifiers is not None:
             filters.append(
                 DBMultiIntegerFilter(
                     and_op=True,
                     column='history_events_identifier',
                     values=identifiers,
+                ),
+            )
+        if notes_substring is not None:
+            filters.append(
+                DBSubStringFilter(
+                    and_op=True,
+                    field='notes',
+                    search_string=notes_substring,
                 ),
             )
 
@@ -985,8 +987,8 @@ class EvmEventFilterQuery(HistoryBaseEntryFilterQuery):
             event_identifiers: list[str] | None = None,
             entry_types: IncludeExcludeFilterData | None = None,
             exclude_ignored_assets: bool = False,
-            exclude_entire_event_group_on_ignored_asset: bool = True,
             customized_events_only: bool = False,
+            notes_substring: str | None = None,
             tx_hashes: list[EVMTxHash] | None = None,
             counterparties: list[str] | None = None,
             products: list[EvmProduct] | None = None,
@@ -1018,7 +1020,7 @@ class EvmEventFilterQuery(HistoryBaseEntryFilterQuery):
             entry_types=entry_types,
             exclude_ignored_assets=exclude_ignored_assets,
             customized_events_only=customized_events_only,
-            exclude_entire_event_group_on_ignored_asset=exclude_entire_event_group_on_ignored_asset,
+            notes_substring=notes_substring,
         )
         if counterparties is not None:
             filter_query.filters.append(DBMultiStringFilter(
@@ -1109,8 +1111,8 @@ class EthStakingEventFilterQuery(HistoryBaseEntryFilterQuery, ABC):
             event_identifiers: list[str] | None = None,
             entry_types: IncludeExcludeFilterData | None = None,
             exclude_ignored_assets: bool = False,
-            exclude_entire_event_group_on_ignored_asset: bool = True,
             customized_events_only: bool = False,
+            notes_substring: str | None = None,
             validator_indices: list[int] | None = None,
     ) -> Self:
         if entry_types is None:
@@ -1139,7 +1141,7 @@ class EthStakingEventFilterQuery(HistoryBaseEntryFilterQuery, ABC):
             entry_types=entry_types,
             exclude_ignored_assets=exclude_ignored_assets,
             customized_events_only=customized_events_only,
-            exclude_entire_event_group_on_ignored_asset=exclude_entire_event_group_on_ignored_asset,
+            notes_substring=notes_substring,
         )
         if validator_indices is not None:
             filter_query.filters.append(DBMultiIntegerFilter(
@@ -1191,8 +1193,8 @@ class EthWithdrawalFilterQuery(EthStakingEventFilterQuery):
             event_identifiers: list[str] | None = None,
             entry_types: IncludeExcludeFilterData | None = None,
             exclude_ignored_assets: bool = False,
-            exclude_entire_event_group_on_ignored_asset: bool = True,
             customized_events_only: bool = False,
+            notes_substring: str | None = None,
             validator_indices: list[int] | None = None,
             withdrawal_types_filter: WithdrawalTypesFilter = WithdrawalTypesFilter.ALL,
     ) -> 'EthWithdrawalFilterQuery':
@@ -1221,8 +1223,8 @@ class EthWithdrawalFilterQuery(EthStakingEventFilterQuery):
             event_identifiers=event_identifiers,
             entry_types=entry_types,
             exclude_ignored_assets=exclude_ignored_assets,
-            exclude_entire_event_group_on_ignored_asset=exclude_entire_event_group_on_ignored_asset,
             customized_events_only=customized_events_only,
+            notes_substring=notes_substring,
             validator_indices=validator_indices,
         )
         if withdrawal_types_filter != WithdrawalTypesFilter.ALL:
@@ -1271,7 +1273,6 @@ class EthDepositEventFilterQuery(EvmEventFilterQuery, EthStakingEventFilterQuery
             event_identifiers: list[str] | None = None,
             entry_types: IncludeExcludeFilterData | None = None,
             exclude_ignored_assets: bool = False,
-            exclude_entire_event_group_on_ignored_asset: bool = True,
             customized_events_only: bool = False,
             tx_hashes: list[EVMTxHash] | None = None,
             validator_indices: list[int] | None = None,
@@ -1303,7 +1304,6 @@ class EthDepositEventFilterQuery(EvmEventFilterQuery, EthStakingEventFilterQuery
             exclude_ignored_assets=exclude_ignored_assets,
             tx_hashes=tx_hashes,
             customized_events_only=customized_events_only,
-            exclude_entire_event_group_on_ignored_asset=exclude_entire_event_group_on_ignored_asset,
         )
         if validator_indices is not None:
             filter_query.filters.append(DBMultiIntegerFilter(
@@ -1350,22 +1350,6 @@ class DBIgnoredAssetsFilter(DBSubtableSelectFilter):
     select_value: str = field(default='value', init=False)
     select_table: str = field(default='multisettings', init=False)
     select_condition: str = field(default="name='ignored_asset'", init=False)
-
-
-@dataclass(init=True, repr=True, eq=True, order=False, unsafe_hash=False, frozen=False)
-class DBIgnoredEventFilter(DBFilter):
-    """Filter that excludes all events with the same event_identifier if any of them has an ignored asset"""  # noqa: E501
-
-    def prepare(self) -> tuple[list[str], list[Any]]:
-        query = """
-        event_identifier NOT IN (
-            SELECT DISTINCT he.event_identifier
-            FROM history_events he
-            JOIN multisettings ms ON he.asset = ms.value
-            WHERE ms.name = 'ignored_asset'
-        )
-        """
-        return [query], []
 
 
 class UserNotesFilterQuery(DBFilterQuery, FilterWithTimestamp):

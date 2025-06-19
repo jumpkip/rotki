@@ -60,6 +60,7 @@ if TYPE_CHECKING:
     from rotkehlchen.api.server import APIServer
 
 
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('have_decoders', [True])
 @pytest.mark.parametrize(
     'added_exchanges',
@@ -489,6 +490,7 @@ def test_missing_prices_in_pnl_report(rotkehlchen_api_server: 'APIServer') -> No
                 location=Location.EXTERNAL,
                 spend=AssetAmount(amount=FVal('1'), asset=A_EUR),
                 receive=AssetAmount(amount=FVal('320'), asset=A_DAI),
+                event_identifier='tradeid1',
             )],
         )
 
@@ -527,7 +529,7 @@ def test_missing_prices_in_pnl_report(rotkehlchen_api_server: 'APIServer') -> No
         ),
     )
     result = assert_proper_sync_response_with_result(response=response, status_code=HTTPStatus.OK)
-    assert coingecko_api_calls == 1
+    assert coingecko_api_calls == 2  # 1 for BTC and 1 for DAI
     assert result['report_id'] == 1
     assert result['missing_prices'] == [{
         'from_asset': 'BTC',

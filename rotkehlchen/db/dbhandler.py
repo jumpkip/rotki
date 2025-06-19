@@ -51,6 +51,7 @@ from rotkehlchen.db.constants import (
     EVM_ACCOUNTS_DETAILS_LAST_QUERIED_TS,
     EVM_ACCOUNTS_DETAILS_TOKENS,
     EXTRAINTERNALTXPREFIX,
+    KDF_ITER,
     KRAKEN_ACCOUNT_TYPE_KEY,
     USER_CREDENTIAL_MAPPING_KEYS,
 )
@@ -84,11 +85,13 @@ from rotkehlchen.db.utils import (
     db_tuple_to_str,
     deserialize_tags_from_db,
     form_query_to_filter_timestamps,
+    get_query_chunks,
     insert_tag_mappings,
     is_valid_db_blockchain_account,
     protect_password_sqlcipher,
     replace_tag_mappings,
     str_to_bool,
+    unlock_database,
 )
 from rotkehlchen.errors.api import (
     AuthenticationError,
@@ -126,6 +129,7 @@ from rotkehlchen.types import (
     AnyBlockchainAddress,
     ApiKey,
     ApiSecret,
+    BlockchainAddress,
     BTCAddress,
     ChecksumEvmAddress,
     ExchangeApiCredentials,
@@ -148,10 +152,8 @@ from rotkehlchen.utils.serialization import rlk_jsondumps
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
-KDF_ITER = 64000
 DBINFO_FILENAME = 'dbinfo.json'
 TRANSIENT_DB_NAME = 'rotkehlchen_transient.db'
-
 
 # Tuples that contain first the name of a table and then the columns that
 # reference assets ids. This is used to query all assets that a user has ever owned.
@@ -161,7 +163,6 @@ TABLES_WITH_ASSETS = (
     ('timed_balances', 'currency'),
     ('history_events', 'asset'),
 )
-
 
 DB_BACKUP_RE = re.compile(r'(\d+)_rotkehlchen_db_v(\d+).backup')
 
@@ -478,20 +479,12 @@ class DBHandler:
                 f'Could not open database file: {fullpath}. Permission errors?',
             ) from e
 
-        password_for_sqlcipher = protect_password_sqlcipher(self.password)
-        script = f"PRAGMA key='{password_for_sqlcipher}';"
-        if self.sqlcipher_version == 3:
-            script += f'PRAGMA kdf_iter={KDF_ITER};'
         try:
-            conn.executescript(script)
-            conn.execute('PRAGMA foreign_keys=ON')
-            # Optimizations for the combined trades view
-            # the following will fail with DatabaseError in case of wrong password.
-            # If this goes away at any point it needs to be replaced by something
-            # that checks the password is correct at this same point in the code
-            conn.execute('PRAGMA cache_size = -32768')
-            # switch to WAL mode: https://www.sqlite.org/wal.html
-            conn.execute('PRAGMA journal_mode=WAL;')
+            unlock_database(
+                db_connection=conn,
+                password=self.password,
+                sqlcipher_version=self.sqlcipher_version,
+            )
         except sqlcipher.DatabaseError as e:  # pylint: disable=no-member
             conn.close()
             raise AuthenticationError(
@@ -964,26 +957,41 @@ class DBHandler:
 
     def add_to_ignored_assets(self, write_cursor: 'DBCursor', asset: Asset) -> None:
         """Add a new asset to the set of ignored assets. If the asset was already marked as
-        ignored then we don't do anything.
+        ignored then we don't do anything. Also ignore history events with this asset.
         """
         write_cursor.execute(
             'INSERT OR IGNORE INTO multisettings(name, value) VALUES(?, ?)',
             ('ignored_asset', asset.identifier),
         )
+        write_cursor.execute(
+            'UPDATE history_events SET ignored=? WHERE asset=?',
+            (1, asset.identifier),
+        )
 
     def ignore_multiple_assets(self, write_cursor: 'DBCursor', assets: list[str]) -> None:
         """Add the provided identifiers to the list of ignored assets. If any asset was already
-        marked as ignored then we don't do anything.
+        marked as ignored then we don't do anything. Also ignore history events with these assets.
         """
-        write_cursor.executemany(
-            'INSERT OR IGNORE INTO multisettings(name, value) VALUES(?, ?)',
-            [('ignored_asset', asset_identifier) for asset_identifier in assets],
-        )
+        for chunk, placeholders in get_query_chunks(data=assets):
+            ms_placeholders = ','.join(["('ignored_asset', ?)"] * len(chunk))
+            write_cursor.execute(
+                f'INSERT OR IGNORE INTO multisettings(name, value) VALUES {ms_placeholders}',
+                chunk,
+            )
+            write_cursor.execute(
+                f'UPDATE history_events SET ignored=1 WHERE asset IN ({placeholders})',
+                chunk,
+            )
 
     def remove_from_ignored_assets(self, write_cursor: 'DBCursor', asset: Asset) -> None:
+        """Remove an asset from the ignored assets and un-ignore history events with this asset."""
         write_cursor.execute(
             "DELETE FROM multisettings WHERE name='ignored_asset' AND value=?;",
             (asset.identifier,),
+        )
+        write_cursor.execute(
+            'UPDATE history_events SET ignored=? WHERE asset=?',
+            (0, asset.identifier),
         )
 
     def get_ignored_asset_ids(self, cursor: 'DBCursor', only_nfts: bool = False) -> set[str]:
@@ -1101,7 +1109,10 @@ class DBHandler:
 
     def delete_loopring_data(self, write_cursor: 'DBCursor') -> None:
         """Delete all loopring related data"""
-        write_cursor.execute("DELETE FROM multisettings WHERE name LIKE 'loopring_%';")
+        write_cursor.execute(
+            'DELETE FROM multisettings WHERE name LIKE ? ESCAPE ?',
+            ('loopring\\_%', '\\'),
+        )
 
     def get_used_query_range(self, cursor: 'DBCursor', name: str) -> tuple[Timestamp, Timestamp] | None:  # noqa: E501
         """Get the last start/end timestamp range that has been queried for name
@@ -1395,6 +1406,49 @@ class DBHandler:
             insert_rows,
         )
 
+    def _deserialize_account_blockchain_from_db(
+            self,
+            chain_str: str,
+            account: str,
+    ) -> SupportedBlockchain | None:
+        try:
+            blockchain = SupportedBlockchain.deserialize(chain_str)
+        except DeserializationError:
+            log.warning(f'Unsupported blockchain {chain_str} found in DB. Ignoring...')
+            return None
+
+        if blockchain is None or is_valid_db_blockchain_account(blockchain=blockchain, account=account) is False:  # noqa: E501
+            self.msg_aggregator.add_warning(
+                f'Invalid {chain_str} account in DB: {account}. '
+                f'This should not happen unless the DB was manually modified. '
+                f'Skipping entry. This needs to be fixed manually. If you '
+                f'can not do that alone ask for help in the issue tracker',
+            )
+            return None
+
+        return blockchain
+
+    def get_blockchains_for_accounts(
+            self,
+            cursor: 'DBCursor',
+            accounts: list[BlockchainAddress],
+    ) -> list[tuple[BlockchainAddress, SupportedBlockchain]]:
+        """Gets all blockchains for the specified accounts.
+        Returns a list of tuples containing the address and blockchain entries.
+        """
+        return [
+            (account, blockchain)
+            for entry in cursor.execute(
+                'SELECT blockchain, account FROM blockchain_accounts '
+                f"WHERE account IN ({','.join(['?'] * len(accounts))});",
+                accounts,
+            )
+            if (blockchain := self._deserialize_account_blockchain_from_db(
+                chain_str=entry[0],
+                account=(account := entry[1]),
+            )) is not None
+        ]
+
     def get_evm_accounts(self, cursor: 'DBCursor') -> list[ChecksumEvmAddress]:
         """Returns a list of unique EVM accounts from all EVM chains."""
         placeholders = ','.join('?' * len(SUPPORTED_EVM_CHAINS))
@@ -1411,22 +1465,11 @@ class DBHandler:
         )
         accounts_lists = defaultdict(list)
         for entry in cursor:
-            try:
-                blockchain = SupportedBlockchain.deserialize(entry[0])
-            except DeserializationError:
-                log.warning(f'Unsupported blockchain {entry[0]} found in DB. Ignoring...')
-                continue
-
-            if blockchain is None or is_valid_db_blockchain_account(blockchain=blockchain, account=entry[1]) is False:  # noqa: E501
-                self.msg_aggregator.add_warning(
-                    f'Invalid {entry[0]} account in DB: {entry[1]}. '
-                    f'This should not happen unless the DB was manually modified. '
-                    f'Skipping entry. This needs to be fixed manually. If you '
-                    f'can not do that alone ask for help in the issue tracker',
-                )
-                continue
-
-            accounts_lists[blockchain.get_key()].append(entry[1])
+            if (blockchain := self._deserialize_account_blockchain_from_db(
+                chain_str=entry[0],
+                account=(account := entry[1]),
+            )) is not None:
+                accounts_lists[blockchain.get_key()].append(account)
 
         return BlockchainAccounts(**{x: tuple(y) for x, y in accounts_lists.items()})
 
@@ -2149,8 +2192,8 @@ class DBHandler:
         if blockchain == SupportedBlockchain.ETHEREUM:  # mainnet only behaviour
             write_cursor.execute('DELETE FROM used_query_ranges WHERE name = ?', (f'aave_events_{address}',))  # noqa: E501
             write_cursor.execute(  # queried addresses per module
-                "DELETE FROM multisettings WHERE name LIKE 'queried_address_%' AND value = ?",
-                (address,),
+                'DELETE FROM multisettings WHERE name LIKE ? ESCAPE ? AND value = ?',
+                ('queried\\_address\\_%', '\\', address),
             )
             loopring = DBLoopring(self)
             loopring.remove_accountid_mapping(write_cursor, address)
@@ -2164,8 +2207,8 @@ class DBHandler:
         )
 
         write_cursor.execute(
-            f"DELETE FROM key_value_cache WHERE name LIKE '{EXTRAINTERNALTXPREFIX}_{blockchain.to_chain_id().value}%' AND value = ?",  # noqa: E501
-            (address,),
+            'DELETE FROM key_value_cache WHERE name LIKE ? ESCAPE ? AND value = ?',
+            (f'{EXTRAINTERNALTXPREFIX}\\_{blockchain.to_chain_id().value}%', '\\', address),
         )
 
         dbtx = DBEvmTx(self)
@@ -2580,9 +2623,9 @@ class DBHandler:
                 'SELECT identifier FROM evm_tokens WHERE protocol=?',
                 (SPAM_PROTOCOL,),
             ).fetchall()
-            write_cursor.executemany(
-                'INSERT OR IGNORE INTO multisettings(name, value) VALUES(?, ?)',
-                [('ignored_asset', identifier[0]) for identifier in globaldb_spam],
+            self.ignore_multiple_assets(
+                write_cursor=write_cursor,
+                assets=[identifier[0] for identifier in globaldb_spam],
             )
 
     def delete_asset_identifier(self, write_cursor: 'DBCursor', asset_id: str) -> None:

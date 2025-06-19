@@ -683,6 +683,14 @@
         "title": "Querying events"
       }
     },
+    "report_events": {
+      "fetch": {
+        "error": {
+          "description": "An unexpected error occurred while loading the report events: {error}",
+          "title": "Loading generated report events"
+        }
+      }
+    },
     "reports": {
       "csv_export": {
         "message": {
@@ -2082,16 +2090,6 @@
     "example": "Resulting date ({example})",
     "subtitle": "These are the supported date formatting options",
     "title": "Date Format"
-  },
-  "date_time_picker": {
-    "date_only_format": "Date should be in {dateFormat} format",
-    "default_format": "Date should be in {dateFormat} [HH:mm:[ss]] format",
-    "limit_now": "Cannot use future date",
-    "milliseconds_format": "Date should be in {dateFormat} [HH:mm[:ss[.SSS]]] format",
-    "select_timezone": "Select timezone",
-    "timezone_field": {
-      "non_empty": "Timezone should be specified"
-    }
   },
   "docker_warning": {
     "action": "Yes, I understand",
@@ -3596,7 +3594,8 @@
   },
   "overall_balances": {
     "loading": "LOADING",
-    "premium_hint": "Get the full experience by upgrading to rotki premium"
+    "premium_hint": "Get the full experience by upgrading to rotki premium",
+    "total_balance": "Total Balance"
   },
   "page_not_found": {
     "back": "Back to dashboard",
@@ -4336,7 +4335,6 @@
   "trade": {
     "actions": {
       "change_network": "Change Network",
-      "change_network_in_your_wallet": "Change network in your wallet!",
       "connect_wallet": "Connect Wallet",
       "disconnect": "Disconnect",
       "open_wallet": "Open Wallet",
@@ -4356,9 +4354,10 @@
       "hint": "In Electron App, choose \"Wallet Connect\" and then \"Copy link\"",
       "label": "Paste the Pair URI here",
       "link_session": "Link session using Wallet Connect Pair URI",
+      "placeholder": "e.g. wc:b27f7767308...",
       "start_pairing": "Start Pairing",
       "title": "rotki Browser Wallet Bridge",
-      "warning": "Keep this page open! Otherwise, you will need to create a new session to connect."
+      "warning": "Keep this page open! Otherwise, you will need to create a new session to connect. Also, you need this browser tab to be focused to sign the transaction."
     },
     "never_interacted": "You have never interacted with this address before.",
     "recent_transactions": {
@@ -4385,7 +4384,7 @@
     },
     "waiting_for_confirmation": {
       "not_wallet_connect": "Check your wallet to sign the transaction",
-      "wallet_connect": "Check your browser / wallet to sign the transaction"
+      "wallet_connect": "Check your browser / wallet to sign the transaction. If you are using a browser wallet bridge, make sure that the browser tab is focused."
     },
     "warning": {
       "not_tracked": "This wallet address is not tracked in rotki, so you can't see your tokens.",
@@ -4687,6 +4686,7 @@
       "location": "filter by event location",
       "match_exact_filter": "Should match exact filter",
       "match_exact_filter_hint": "If enabled, it will show only the events that match the filter, excluding the other events in the same group.",
+      "notes": "filter by notes content",
       "product": "filter by product",
       "protocol": "filter by the protocol of the events",
       "show_ignored_assets": "Show entries with ignored assets",

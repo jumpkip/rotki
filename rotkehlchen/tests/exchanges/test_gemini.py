@@ -8,7 +8,7 @@ import requests
 
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.constants import ZERO
-from rotkehlchen.constants.assets import A_BCH, A_BTC, A_ETH, A_GUSD, A_LINK, A_LTC, A_USD
+from rotkehlchen.constants.assets import A_BCH, A_BTC, A_ETH, A_GUSD, A_LINK, A_USD
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.errors.asset import UnknownAsset, UnprocessableTradePair, UnsupportedAsset
@@ -17,11 +17,12 @@ from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.asset_movement import AssetMovement
 from rotkehlchen.history.events.structures.swap import SwapEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
+from rotkehlchen.history.events.utils import create_event_identifier_from_unique_id
 from rotkehlchen.tests.fixtures.exchanges.gemini import (
     SANDBOX_GEMINI_WP_API_KEY,
     SANDBOX_GEMINI_WP_API_SECRET,
 )
-from rotkehlchen.tests.utils.constants import A_PAXG, A_ZEC
+from rotkehlchen.tests.utils.constants import A_LTC, A_PAXG, A_ZEC
 from rotkehlchen.tests.utils.exchanges import get_exchange_asset_symbols
 from rotkehlchen.tests.utils.globaldb import is_asset_symbol_unsupported
 from rotkehlchen.tests.utils.mock import MockResponse
@@ -68,6 +69,7 @@ def test_gemini_wrong_key(sandbox_gemini):
     assert 'Invalid API Key or API secret' in msg
 
 
+@pytest.mark.asset_test
 @pytest.mark.skipif('CI' in os.environ, reason='temporarily skip gemini in CI')
 @pytest.mark.parametrize('gemini_test_base_uri', ['https://api.gemini.com'])
 def test_gemini_all_symbols_are_known(sandbox_gemini, globaldb):
@@ -151,7 +153,10 @@ def test_gemini_query_trades(sandbox_gemini):
         asset=A_USD,
         amount=FVal('3311.315'),
         location_label='gemini',
-        unique_id='560627330',
+        event_identifier=create_event_identifier_from_unique_id(
+            location=Location.GEMINI,
+            unique_id='560627330',
+        ),
     ), SwapEvent(
         timestamp=TimestampMS(1584720549000),
         location=Location.GEMINI,
@@ -159,7 +164,10 @@ def test_gemini_query_trades(sandbox_gemini):
         asset=A_BTC,
         amount=FVal('0.5'),
         location_label='gemini',
-        unique_id='560627330',
+        event_identifier=create_event_identifier_from_unique_id(
+            location=Location.GEMINI,
+            unique_id='560627330',
+        ),
     ), SwapEvent(
         timestamp=TimestampMS(1584720549000),
         location=Location.GEMINI,
@@ -167,7 +175,10 @@ def test_gemini_query_trades(sandbox_gemini):
         asset=A_USD,
         amount=FVal('33.11315'),
         location_label='gemini',
-        unique_id='560627330',
+        event_identifier=create_event_identifier_from_unique_id(
+            location=Location.GEMINI,
+            unique_id='560627330',
+        ),
     ), SwapEvent(
         timestamp=TimestampMS(1584721109000),
         location=Location.GEMINI,
@@ -175,7 +186,10 @@ def test_gemini_query_trades(sandbox_gemini):
         asset=A_ETH,
         amount=FVal('1'),
         location_label='gemini',
-        unique_id='560628883',
+        event_identifier=create_event_identifier_from_unique_id(
+            location=Location.GEMINI,
+            unique_id='560628883',
+        ),
     ), SwapEvent(
         timestamp=TimestampMS(1584721109000),
         location=Location.GEMINI,
@@ -183,7 +197,10 @@ def test_gemini_query_trades(sandbox_gemini):
         asset=A_USD,
         amount=FVal('20.00'),
         location_label='gemini',
-        unique_id='560628883',
+        event_identifier=create_event_identifier_from_unique_id(
+            location=Location.GEMINI,
+            unique_id='560628883',
+        ),
     ), SwapEvent(
         timestamp=TimestampMS(1584721109000),
         location=Location.GEMINI,
@@ -191,7 +208,10 @@ def test_gemini_query_trades(sandbox_gemini):
         asset=A_USD,
         amount=FVal('0.20'),
         location_label='gemini',
-        unique_id='560628883',
+        event_identifier=create_event_identifier_from_unique_id(
+            location=Location.GEMINI,
+            unique_id='560628883',
+        ),
     )]
 
 

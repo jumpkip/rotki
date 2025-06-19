@@ -3,13 +3,15 @@ import type { FrontendSettingsPayload } from '@/types/settings/frontend-settings
 import type {
   DataUtilities,
   DateUtilities,
+  GraphApi,
+  NewGraphApi,
   PremiumApi,
   PremiumInterface,
   SettingsApi,
   Themes,
   TimeUnit,
 } from '@rotki/common';
-import { useGraph } from '@/composables/graphs';
+import { useGraph, useNewGraph } from '@/composables/graphs';
 import { displayDateFormatter } from '@/data/date-formatter';
 import { DARK_COLORS, LIGHT_COLORS } from '@/plugins/theme';
 import {
@@ -93,14 +95,21 @@ function settings(): SettingsApi {
 }
 
 export function usePremiumApi(): PremiumInterface {
+  function graphs(canvasId: string): GraphApi;
+  function graphs(): NewGraphApi;
+
+  function graphs(canvasId?: string): GraphApi | NewGraphApi {
+    return canvasId ? useGraph(canvasId) : useNewGraph();
+  }
+
   return {
     api: (): PremiumApi => ({
       data: data(),
       date,
-      graphs: useGraph,
+      graphs,
       settings: settings(),
     }),
     useHostComponents: true,
-    version: 25,
+    version: 26,
   };
 }

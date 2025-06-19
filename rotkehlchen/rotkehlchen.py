@@ -22,7 +22,7 @@ from rotkehlchen.balances.manual import (
     account_for_manually_tracked_asset_balances,
     get_manually_tracked_balances,
 )
-from rotkehlchen.chain.accounts import SingleBlockchainAccountData
+from rotkehlchen.chain.accounts import OptionalBlockchainAccount, SingleBlockchainAccountData
 from rotkehlchen.chain.aggregator import ChainsAggregator
 from rotkehlchen.chain.arbitrum_one.manager import ArbitrumOneManager
 from rotkehlchen.chain.arbitrum_one.node_inquirer import ArbitrumOneInquirer
@@ -31,6 +31,7 @@ from rotkehlchen.chain.base.manager import BaseManager
 from rotkehlchen.chain.base.node_inquirer import BaseInquirer
 from rotkehlchen.chain.binance_sc.manager import BinanceSCManager
 from rotkehlchen.chain.binance_sc.node_inquirer import BinanceSCInquirer
+from rotkehlchen.chain.bitcoin.manager import BitcoinManager
 from rotkehlchen.chain.ethereum.manager import EthereumManager
 from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
 from rotkehlchen.chain.ethereum.oracles.uniswap import UniswapV2Oracle, UniswapV3Oracle
@@ -224,18 +225,18 @@ class Rotkehlchen:
         assert self.task_manager is not None, 'task manager should have been initialized at this point'  # noqa: E501
 
         for address in addresses:
-            account_tuple = (address, blockchain.to_chain_id())
+            account_data = OptionalBlockchainAccount(address=address, chain=blockchain)
             for greenlet in self.api_task_greenlets:
                 is_evm_tx_greenlet = (
                     greenlet.dead is False and
                     len(greenlet.args) >= 1 and
                     isinstance(greenlet.args[0], FunctionType) and
-                    greenlet.args[0].__qualname__ == 'RestAPI.refresh_evm_transactions'
+                    greenlet.args[0].__qualname__ == 'RestAPI.refresh_transactions'
                 )
                 if (
                         is_evm_tx_greenlet and
                         greenlet.kwargs.get('only_cache', False) is False and
-                        account_tuple in greenlet.kwargs['filter_query'].accounts
+                        account_data in greenlet.kwargs['accounts']
                 ):
                     greenlet.kill(exception=GreenletKilledError('Killed due to request for evm address removal'))  # noqa: E501
 
@@ -444,6 +445,7 @@ class Rotkehlchen:
                 ethereum_inquirer=ethereum_inquirer,
                 database=self.data.db,
             ),
+            bitcoin_manager=BitcoinManager(),
             msg_aggregator=self.msg_aggregator,
             database=self.data.db,
             greenlet_manager=self.greenlet_manager,
@@ -1035,9 +1037,26 @@ class Rotkehlchen:
                 blockchain=None,
                 ignore_cache=ignore_cache,
             )  # copies below since if cache is used we end up modifying the balance sheet object
-            if len(blockchain_result.totals.assets) != 0:
-                balances[str(Location.BLOCKCHAIN)] = blockchain_result.totals.assets.copy()
-            liabilities = blockchain_result.totals.liabilities.copy()
+
+            blockchain_assets: dict[Asset, Balance] = {}
+            for asset, asset_balances in blockchain_result.totals.assets.items():
+                total_balance = Balance()
+                for balance in asset_balances.values():
+                    total_balance += balance
+                if total_balance.amount != ZERO:
+                    blockchain_assets[asset] = total_balance
+
+            if len(blockchain_assets) != 0:
+                balances[str(Location.BLOCKCHAIN)] = blockchain_assets
+
+            liabilities = {}
+            for asset, asset_balances in blockchain_result.totals.liabilities.items():
+                total_balance = Balance()
+                for balance in asset_balances.values():
+                    total_balance += balance
+                if total_balance.amount != ZERO:
+                    liabilities[asset] = total_balance
+
         except (RemoteError, EthSyncError) as e:
             problem_free = False
             liabilities = {}

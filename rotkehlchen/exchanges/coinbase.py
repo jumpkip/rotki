@@ -42,6 +42,7 @@ from rotkehlchen.history.events.structures.swap import (
     get_swap_spend_receive,
 )
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
+from rotkehlchen.history.events.utils import create_event_identifier_from_unique_id
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import (
@@ -398,7 +399,7 @@ class Coinbase(ExchangeInterface):
             # this next_uri will be used in next iteration
             next_uri = json_ret['pagination']['next_uri']
             if not next_uri:
-                # As per the docs: https://developers.coinbase.com/api/v2?python#pagination
+                # As per the docs: https://docs.cdp.coinbase.com/coinbase-app/docs/pagination
                 # once we get an empty next_uri we are done
 
                 break
@@ -558,10 +559,9 @@ class Coinbase(ExchangeInterface):
         - RemoteError
         """
         history_events: list[HistoryEvent | AssetMovement | SwapEvent] = []
-        options = {}
+        options = {'order': 'asc'}
         if last_tx_id is not None:
             options['starting_after'] = last_tx_id
-            options['order'] = 'asc'
         transactions = self._api_query(f'accounts/{account_id}/transactions', options=options)
         transaction_pairs: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)  # Maps every trade id to their two transactions  # noqa: E501
         if len(transactions) == 0:
@@ -776,7 +776,10 @@ class Coinbase(ExchangeInterface):
             receive=AssetAmount(asset=native_asset, amount=native_amount),
             fee=fee,
             location_label=self.name,
-            unique_id=str(tx_a['trade']['id']),
+            event_identifier=create_event_identifier_from_unique_id(
+                location=self.location,
+                unique_id=str(tx_a['trade']['id']),
+            ),
         )
 
     def _process_coinbase_trade(self, event: dict[str, Any]) -> list[SwapEvent]:
@@ -867,7 +870,10 @@ class Coinbase(ExchangeInterface):
                 asset=asset_from_coinbase(event['fee']['currency'], time=timestamp),
             ) if 'fee' in event else None,
             location_label=self.name,
-            unique_id=str(event['id']),
+            event_identifier=create_event_identifier_from_unique_id(
+                location=self.location,
+                unique_id=str(event['id']),
+            ),
         )
 
     def _process_advanced_trade(
@@ -930,7 +936,10 @@ class Coinbase(ExchangeInterface):
                 amount=abs(deserialize_fval_or_zero(event['advanced_trade_fill']['commission'])),
             ),
             location_label=self.name,
-            unique_id=str(event['id']),
+            event_identifier=create_event_identifier_from_unique_id(
+                location=self.location,
+                unique_id=str(event['id']),
+            ),
         )
 
     def _deserialize_asset_movement(self, raw_data: dict[str, Any]) -> list[AssetMovement] | None:

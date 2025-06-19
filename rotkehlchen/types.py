@@ -134,7 +134,6 @@ class ExternalService(SerializableEnumNameMixin):
     BEACONCHAIN = auto()
     LOOPRING = auto()
     OPENSEA = auto()
-    BINANCE_SC_ETHERSCAN = auto()
     BLOCKSCOUT = auto()
     MONERIUM = auto()
     THEGRAPH = auto()
@@ -219,9 +218,6 @@ TuplesOfBlockchainAddresses = tuple[BTCAddress, ...] | tuple[ChecksumEvmAddress,
 
 T_Price = FVal
 Price = NewType('Price', T_Price)
-
-T_TradeID = str
-TradeID = NewType('TradeID', T_TradeID)
 
 
 class AssetAmount(NamedTuple):
@@ -626,8 +622,16 @@ EVM_CHAINS_WITH_TRANSACTIONS_TYPE = Literal[
     SupportedBlockchain.SCROLL,
     SupportedBlockchain.BINANCE_SC,
 ]
-
 EVM_CHAINS_WITH_TRANSACTIONS: tuple[EVM_CHAINS_WITH_TRANSACTIONS_TYPE, ...] = typing.get_args(EVM_CHAINS_WITH_TRANSACTIONS_TYPE)  # noqa: E501
+
+NON_EVM_CHAINS_WITH_TRANSACTIONS_TYPE = Literal[
+    SupportedBlockchain.ZKSYNC_LITE,
+    # TODO: add bitcoin here
+]
+NON_EVM_CHAINS_WITH_TRANSACTIONS: tuple[EVM_CHAINS_WITH_TRANSACTIONS_TYPE, ...] = typing.get_args(NON_EVM_CHAINS_WITH_TRANSACTIONS_TYPE)  # noqa: E501
+
+CHAINS_WITH_TRANSACTIONS_TYPE = EVM_CHAINS_WITH_TRANSACTIONS_TYPE | NON_EVM_CHAINS_WITH_TRANSACTIONS_TYPE  # noqa: E501
+CHAINS_WITH_TRANSACTIONS: tuple[CHAINS_WITH_TRANSACTIONS_TYPE, ...] = EVM_CHAINS_WITH_TRANSACTIONS + NON_EVM_CHAINS_WITH_TRANSACTIONS  # noqa: E501
 
 EVM_CHAIN_IDS_WITH_TRANSACTIONS_TYPE = Literal[
     ChainID.ETHEREUM,
@@ -872,7 +876,6 @@ EVM_EVMLIKE_LOCATIONS: tuple[EVM_EVMLIKE_LOCATIONS_TYPE, ...] = EVM_LOCATIONS + 
 
 # For now Location enum has only evmlike chains. This will change so keep separate variable
 BLOCKCHAIN_LOCATIONS_TYPE: TypeAlias = EVM_EVMLIKE_LOCATIONS_TYPE
-BLOCKCHAIN_LOCATIONS: Final = EVM_EVMLIKE_LOCATIONS
 
 
 class ExchangeAuthCredentials(NamedTuple):
@@ -1209,6 +1212,7 @@ class CacheType(Enum):
     PENDLE_POOLS = auto()
     PENDLE_SY_TOKENS = auto()
     PENDLE_YIELD_TOKENS = auto()  # store the count of all SYs, PTs, YTs & LP tokens per chain
+    BEEFY_VAULTS = auto()
 
     def serialize(self) -> str:
         # Using custom serialize method instead of SerializableEnumMixin since mixin replaces
@@ -1269,6 +1273,7 @@ UniqueCacheType = Literal[
     CacheType.CURVE_CRVUSD_COLLATERAL_TOKEN,
     CacheType.CURVE_CRVUSD_AMM,
     CacheType.PENDLE_YIELD_TOKENS,
+    CacheType.BEEFY_VAULTS,
 ]
 
 UNIQUE_CACHE_KEYS: tuple[UniqueCacheType, ...] = typing.get_args(UniqueCacheType)

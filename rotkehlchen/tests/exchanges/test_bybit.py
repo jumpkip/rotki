@@ -9,7 +9,7 @@ import pytest
 
 from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import Asset
-from rotkehlchen.constants.assets import A_ETH, A_ETH_MATIC, A_SOL, A_USDC
+from rotkehlchen.constants.assets import A_ETH, A_ETH_MATIC, A_USDC
 from rotkehlchen.constants.timing import DAY_IN_SECONDS
 from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.errors.misc import RemoteError
@@ -18,6 +18,7 @@ from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.asset_movement import AssetMovement
 from rotkehlchen.history.events.structures.swap import SwapEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
+from rotkehlchen.tests.utils.constants import A_SOL
 from rotkehlchen.types import Location, Timestamp, TimestampMS
 from rotkehlchen.utils.misc import ts_now
 
@@ -201,53 +202,53 @@ def test_trades(bybit_exchange: Bybit) -> None:
         )
 
     assert events == [SwapEvent(
+        event_identifier='6870b958a71561119578ac1c98d346fdcbe1ec89e0408fc9a1d825df17fc8f3a',
         timestamp=TimestampMS(1702297236826),
         location=Location.BYBIT,
         event_subtype=HistoryEventSubType.SPEND,
         asset=A_USDC,
         amount=FVal('8.29549'),
         location_label='bybit',
-        unique_id='1573377285745286144',
     ), SwapEvent(
+        event_identifier='6870b958a71561119578ac1c98d346fdcbe1ec89e0408fc9a1d825df17fc8f3a',
         timestamp=TimestampMS(1702297236826),
         location=Location.BYBIT,
         event_subtype=HistoryEventSubType.RECEIVE,
         asset=A_SOL,
         amount=FVal('0.119'),
         location_label='bybit',
-        unique_id='1573377285745286144',
     ), SwapEvent(
+        event_identifier='e17bb4a812dcbfd54c097cda3990f99fe38fb8d829843636051dc9be8dd9c12d',
         timestamp=TimestampMS(1702297107954),
         location=Location.BYBIT,
         event_subtype=HistoryEventSubType.SPEND,
         asset=A_USDC,
         amount=FVal('17.482000'),
         location_label='bybit',
-        unique_id='1573376610655280128',
     ), SwapEvent(
+        event_identifier='e17bb4a812dcbfd54c097cda3990f99fe38fb8d829843636051dc9be8dd9c12d',
         timestamp=TimestampMS(1702297107954),
         location=Location.BYBIT,
         event_subtype=HistoryEventSubType.RECEIVE,
         asset=A_ETH_MATIC,
         amount=FVal('20.00'),
         location_label='bybit',
-        unique_id='1573376610655280128',
     ), SwapEvent(
+        event_identifier='294efd1df37cfe316f763f198ec6c471412d806497d2d2d5c90a2b53402db3ac',
         timestamp=TimestampMS(1701201377325),
         location=Location.BYBIT,
         event_subtype=HistoryEventSubType.SPEND,
         asset=A_USDC,
         amount=FVal('5.1573250'),
         location_label='bybit',
-        unique_id='1564184955935005696',
     ), SwapEvent(
+        event_identifier='294efd1df37cfe316f763f198ec6c471412d806497d2d2d5c90a2b53402db3ac',
         timestamp=TimestampMS(1701201377325),
         location=Location.BYBIT,
         event_subtype=HistoryEventSubType.RECEIVE,
         asset=A_ETH,
         amount=FVal('0.00250'),
         location_label='bybit',
-        unique_id='1564184955935005696',
     )]
 
 
@@ -291,6 +292,7 @@ def test_deposit_withdrawals(bybit_exchange: Bybit) -> None:
     ]
 
 
+@pytest.mark.asset_test
 @pytest.mark.skipif(
     'CI' in os.environ,
     reason='Cannot connect to server due to cloudflare blocking the github server',

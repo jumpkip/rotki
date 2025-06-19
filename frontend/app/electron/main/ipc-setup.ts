@@ -2,11 +2,12 @@ import type { AppConfig } from '@electron/main/app-config';
 import type { LogService } from '@electron/main/log-service';
 import type { SettingsManager } from '@electron/main/settings-manager';
 import type { BackendOptions, Credentials, SystemVersion, TrayUpdate } from '@shared/ipc';
+import type { LogLevel } from '@shared/log-level';
 import type { ProgressInfo } from 'electron-builder';
 import process from 'node:process';
 import { IpcCommands } from '@electron/ipc-commands';
 import { loadConfig } from '@electron/main/config';
-import { startHttp, startWalletConnectBridgeServer, stopHttp } from '@electron/main/http';
+import { HttpServer } from '@electron/main/http';
 import { PasswordManager } from '@electron/main/password-manager';
 import { selectPort } from '@electron/main/port-utils';
 import { assert, type DebugSettings } from '@rotki/common';
@@ -28,6 +29,7 @@ interface Callbacks {
 
 export class IpcManager {
   private readonly passwordManager = new PasswordManager();
+  private readonly httpServer: HttpServer;
   private walletImportTimeout: NodeJS.Timeout | undefined;
 
   private firstStart = true;
@@ -53,11 +55,13 @@ export class IpcManager {
     private readonly logger: LogService,
     private readonly settings: SettingsManager,
     private readonly config: AppConfig,
-  ) {}
+  ) {
+    this.httpServer = new HttpServer(logger);
+  }
 
   initialize(callbacks: Callbacks) {
     this.callbacks = callbacks;
-    this.logger.log('Registering IPC handlers');
+    this.logger.info('Registering IPC handlers');
     ipcMain.on(IpcCommands.SYNC_GET_DEBUG, (event) => {
       event.returnValue = { persistStore: this.settings.appSettings.persistStore ?? false } satisfies DebugSettings;
     });
@@ -81,7 +85,9 @@ export class IpcManager {
     ipcMain.handle(IpcCommands.INVOKE_VERSION, () => this.version);
     ipcMain.handle(IpcCommands.INVOKE_IS_MAC, () => this.version.os === 'darwin');
 
-    ipcMain.on(IpcCommands.LOG_TO_FILE, (_, message: string) => this.logger.log(message));
+    ipcMain.on(IpcCommands.LOG_TO_FILE, (_, level: LogLevel, message: string) => {
+      this.logger.write(level, message);
+    });
 
     ipcMain.handle(IpcCommands.INVOKE_THEME, (event, selectedTheme: number) => {
       const themeSource = ['dark', 'system', 'light'] as const;
@@ -146,7 +152,7 @@ export class IpcManager {
   };
 
   private readonly openPath = (_event: Electron.IpcMainInvokeEvent, path: string): void => {
-    shell.openPath(path).catch(error => this.logger.log(error));
+    shell.openPath(path).catch(error => this.logger.error(error));
   };
 
   private readonly getConfig = async (_event: Electron.IpcMainInvokeEvent, defaultConfig: boolean): Promise<Partial<BackendOptions>> => {
@@ -162,7 +168,7 @@ export class IpcManager {
     try {
       const portNumber = await selectPort(40000);
       return await new Promise((resolve) => {
-        const port = startHttp(
+        const port = this.httpServer.start(
           addresses => resolve({ addresses }),
           portNumber,
         );
@@ -175,7 +181,7 @@ export class IpcManager {
           clearTimeout(this.walletImportTimeout);
 
         this.walletImportTimeout = setTimeout(() => {
-          stopHttp();
+          this.httpServer.stop();
           resolve({ error: 'waiting timeout' });
         }, 120000);
       });
@@ -191,7 +197,7 @@ export class IpcManager {
     try {
       // If server is already running, just open the existing URL
       if (this.walletConnectBridgePort) {
-        this.logger.log(`Wallet Connect Bridge already running at http://localhost:${this.walletConnectBridgePort}`);
+        this.logger.info(`Wallet Connect Bridge already running at http://localhost:${this.walletConnectBridgePort}`);
         await shell.openExternal(`http://localhost:${this.walletConnectBridgePort}/#/wallet-bridge`);
         return;
       }
@@ -199,27 +205,27 @@ export class IpcManager {
       const portNumber = await selectPort(40010);
       this.walletConnectBridgePort = portNumber; // Store the port
 
-      startWalletConnectBridgeServer(portNumber, this.logger);
+      this.httpServer.startWalletConnectBridgeServer(portNumber);
 
       // Open the Wallet Connect Bridge in Electron (same URL in dev/prod)
       await shell.openExternal(`http://localhost:${portNumber}/#/wallet-bridge`);
     }
     catch (error: any) {
-      this.logger.log(`Error opening Wallet Connect Bridge: ${error}`);
+      this.logger.error(`Error opening Wallet Connect Bridge: ${error}`);
     }
   };
 
   private readonly restartBackend = async (event: Electron.IpcMainInvokeEvent, options: Partial<BackendOptions>): Promise<boolean> => {
-    this.logger.log(`Restarting backend with options: ${JSON.stringify(options)}`);
+    this.logger.info(`Restarting backend with options: ${JSON.stringify(options)}`);
     if (this.firstStart) {
       this.firstStart = false;
       const pids = await this.requireCallbacks.getRunningCorePIDs();
       if (pids.length > 0) {
         event.sender.send(IpcCommands.BACKEND_PROCESS_DETECTED, pids);
-        this.logger.log(`Detected existing backend process: ${pids.join(', ')}`);
+        this.logger.warn(`Detected existing backend process: ${pids.join(', ')}`);
       }
       else {
-        this.logger.log('No existing backend process detected');
+        this.logger.debug('No existing backend process detected');
       }
     }
 
@@ -228,12 +234,12 @@ export class IpcManager {
     if (!this.restarting) {
       this.restarting = true;
       try {
-        this.logger.log('Starting backend process');
+        this.logger.info('Starting backend process');
         await this.requireCallbacks.restartSubprocesses(options);
         success = true;
       }
       catch (error: any) {
-        this.logger.log(error);
+        this.logger.error(error);
       }
       finally {
         this.restarting = false;
@@ -251,7 +257,7 @@ export class IpcManager {
           resolve();
         }
         catch (error: any) {
-          this.logger.log(error);
+          this.logger.error(error);
           reject(error instanceof Error ? error : new Error(error));
         }
       })());
@@ -262,7 +268,7 @@ export class IpcManager {
       return true;
     }
     catch (error: any) {
-      this.logger.log(error);
+      this.logger.error(error);
       return error;
     }
   };
@@ -283,7 +289,7 @@ export class IpcManager {
       autoUpdater.downloadUpdate()
         .then(() => resolve(true))
         .catch((error) => {
-          this.logger.log(error);
+          this.logger.error(error);
           resolve(false);
         })
         .finally(() => {
@@ -302,14 +308,12 @@ export class IpcManager {
       autoUpdater.once('update-available', () => resolve(true));
       autoUpdater.once('update-not-available', () => resolve(false));
       autoUpdater.once('error', (error: Error) => {
-        console.error(error);
-        this.logger.log(error);
+        this.logger.error(error);
         resolve(false);
       });
 
       autoUpdater.checkForUpdates().catch((error: any) => {
-        console.error(error);
-        this.logger.log(error);
+        this.logger.error(error);
         resolve(false);
       });
     });
@@ -318,10 +322,10 @@ export class IpcManager {
   private setupUpdaterInterop() {
     autoUpdater.autoDownload = false;
     autoUpdater.logger = {
-      error: (message?: any) => this.logger.log(`(error): ${message}`),
-      info: (message?: any) => this.logger.log(`(info): ${message}`),
-      debug: (message: string) => this.logger.log(`(debug): ${message}`),
-      warn: (message?: any) => this.logger.log(`(warn): ${message}`),
+      error: (message?: any) => this.logger.error(message),
+      info: (message?: any) => this.logger.info(message),
+      debug: (message: string) => this.logger.debug(message),
+      warn: (message?: any) => this.logger.warn(message),
     };
     ipcMain.handle(IpcCommands.INVOKE_UPDATE_CHECK, this.checkForUpdates);
     ipcMain.handle(IpcCommands.INVOKE_DOWNLOAD_UPDATE, this.downloadUpdate);

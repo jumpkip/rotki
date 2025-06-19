@@ -2,6 +2,28 @@
 Changelog
 =========
 
+* :feature:`9853` magpie protocol swaps in all supported evm chains will now be properly understood by rotki.
+* :feature:`4467` rotki will now correctly decode Beefy Finance transactions in all supported EVM chains.
+* :feature:`10169` rotki will now properly decode spark airdrop claim and staking.
+* :feature:`9913` History events can now be filtered by description.
+* :feature:`7768` Experimental version of crypto.com exchange integration. Test it and give us feedback.
+
+* :release:`1.39.1 <2025-06-13>`
+* :bug:`-` Users will now be able to perform on-chain send transactions using older wallets such as Trust Wallet.
+* :feature:`10079` Users will now be able to switch the chain directly from rotki on the on-chain page if they use WalletConnect.
+* :bug:`-` For ETH staking MEV rewards the informational event will no longer be shown as it will be superseded by the combined MEV reward events.
+* :bug:`-` Transaction decoding will no longer fail when encountering a certain rare case of problematic spam tokens.
+* :bug:`-` Swaps receiving EURe in Gnosis that were not working for selected DEXes will now be properly decoded again.
+* :bug:`-` Some specific 0x settler swaps in Optimism will now be properly decoded.
+* :bug:`-` When exporting history as CSV the events will now properly appear sorted by timestamp.
+* :bug:`10087` Users will now be able to use the electron app wallet bridge when using Windows.
+* :bug:`-` Token detection will no longer fail when encountering certain NFTs with improper implementations.
+* :bug:`10096` CSV imports for trades from rotki custom trades, uphold, cointracking, shapeshift, kucoin and blockpit should now work properly and not show only a single event per trade/swap.
+* :bug:`-` Users will now be able to see the events in PnL reports without getting an error when the events don't have notes.
+
+* :release:`1.39.0 <2025-06-04>`
+* :feature:`-` DigixDAO DGD refunds will now be properly decoded.
+* :feature:`-` Users will be able to perform quick actions for an asset (such as ignoring the asset) by right-clicking the asset icon.
 * :bug:`-` The order of borrowing and fee events in liquity DSProxy events should now be correct.
 * :bug:`-` Binance CSV import now correctly handles complex trade entries that span multiple rows.
 * :bug:`-` Balancer pool token price errors are now properly handled instead of breaking portfolio snapshots.

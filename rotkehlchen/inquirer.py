@@ -27,6 +27,8 @@ from rotkehlchen.chain.evm.decoding.aura_finance.constants import CPT_AURA_FINAN
 from rotkehlchen.chain.evm.decoding.aura_finance.utils import get_aura_pool_price
 from rotkehlchen.chain.evm.decoding.balancer.constants import CPT_BALANCER_V1, CPT_BALANCER_V2
 from rotkehlchen.chain.evm.decoding.balancer.utils import get_balancer_pool_price
+from rotkehlchen.chain.evm.decoding.beefy_finance.constants import CPT_BEEFY_FINANCE
+from rotkehlchen.chain.evm.decoding.beefy_finance.utils import query_beefy_vault_price
 from rotkehlchen.chain.evm.decoding.curve.constants import CURVE_CHAIN_ID_TYPE, CURVE_CHAIN_IDS
 from rotkehlchen.chain.evm.decoding.curve.lend.utils import get_curve_vault_token_price
 from rotkehlchen.chain.evm.decoding.gearbox.gearbox_cache import (
@@ -249,6 +251,12 @@ def get_underlying_asset_price(token: EvmToken) -> tuple[Price | None, CurrentPr
         )
     elif token.protocol == CPT_PENDLE:
         price = query_pendle_price(token)
+    elif token.protocol == CPT_BEEFY_FINANCE:
+        price = query_beefy_vault_price(
+            vault_token=token,
+            inquirer=Inquirer(),
+            evm_inquirer=Inquirer.get_evm_manager(chain_id=token.chain_id).node_inquirer,
+        )
 
     if token == A_FARM_DAI:
         price, oracle = Inquirer.find_usd_price_and_oracle(A_DAI)
@@ -788,21 +796,6 @@ class Inquirer:
             ignore_cache=ignore_cache,
             skip_onchain=skip_onchain,
         ).get(from_asset, ZERO_PRICE)
-
-    @staticmethod
-    def find_price_and_oracle(
-            from_asset: Asset,
-            to_asset: Asset,
-            ignore_cache: bool = False,
-            skip_onchain: bool = False,
-    ) -> tuple[Price, CurrentPriceOracle]:
-        """Wrapper for find_prices_and_oracles to get the price and oracle for a single asset."""
-        return Inquirer.find_prices_and_oracles(
-            from_assets=[from_asset],
-            to_asset=to_asset,
-            ignore_cache=ignore_cache,
-            skip_onchain=skip_onchain,
-        ).get(from_asset, (ZERO_PRICE, CurrentPriceOracle.BLOCKCHAIN))
 
     @staticmethod
     def find_prices(

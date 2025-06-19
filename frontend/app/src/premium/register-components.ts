@@ -10,6 +10,7 @@ import DateDisplay from '@/components/display/DateDisplay.vue';
 import PercentageDisplay from '@/components/display/PercentageDisplay.vue';
 import GraphTooltipWrapper from '@/components/graphs/GraphTooltipWrapper.vue';
 import MissingDailyPrices from '@/components/graphs/MissingDailyPrices.vue';
+import NewGraphTooltipWrapper from '@/components/graphs/NewGraphTooltipWrapper.vue';
 import AssetDetails from '@/components/helper/AssetDetails.vue';
 import BlockchainAccountSelector from '@/components/helper/BlockchainAccountSelector.vue';
 import RangeSelector from '@/components/helper/date/RangeSelector.vue';
@@ -39,6 +40,7 @@ import {
   RuiChip,
   RuiColorPicker,
   RuiDataTable,
+  RuiDateTimePicker,
   RuiDialog,
   RuiDivider,
   RuiIcon,
@@ -67,6 +69,7 @@ function ruiRegister(app: App): void {
   app.component('RuiProgress', RuiProgress);
   app.component('RuiAccordions', RuiAccordions);
   app.component('RuiAccordion', RuiAccordion);
+  app.component('RuiDateTimePicker', RuiDateTimePicker);
 }
 
 export function registerComponents(app: App): void {
@@ -129,6 +132,8 @@ export function registerComponents(app: App): void {
   app.component('AssetBalanceStatisticSourceSetting', AssetBalanceStatisticSourceSetting);
 
   app.component('MissingDailyPrices', MissingDailyPrices);
+
+  app.component('NewGraphTooltipWrapper', NewGraphTooltipWrapper);
   ruiRegister(app);
   logger.info('Components registered');
 }

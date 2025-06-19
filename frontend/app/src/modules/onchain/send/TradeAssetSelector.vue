@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import type { TradableAsset } from '@/modules/onchain/types';
 import ChainSelect from '@/components/accounts/blockchain/ChainSelect.vue';
+import { useTokenDetection } from '@/composables/balances/token-detection';
 import TradeAssetDisplay from '@/modules/onchain/send/TradeAssetDisplay.vue';
 import { useBalanceQueries } from '@/modules/onchain/send/use-balance-queries';
 import { useTradableAsset } from '@/modules/onchain/use-tradable-asset';
 import { useWalletStore } from '@/modules/onchain/use-wallet-store';
+import { useTaskStore } from '@/store/tasks';
+import { TaskType } from '@/types/task-type';
 import { type BigNumber, Blockchain } from '@rotki/common';
 
 const asset = defineModel<string>({ required: true });
@@ -30,6 +33,10 @@ const { t } = useI18n({ useScope: 'global' });
 const { allOwnedAssets, getAssetDetail } = useTradableAsset(address);
 
 const { connected, connectedAddress, supportedChainsForConnectedAccount } = storeToRefs(useWalletStore());
+const { useIsTaskRunning } = useTaskStore();
+
+const isDetecting = useIsTaskRunning(TaskType.FETCH_DETECTED_TOKENS);
+
 const { useQueryingBalances } = useBalanceQueries(connected, connectedAddress);
 
 const assetDetail = getAssetDetail(asset, chain);
@@ -53,8 +60,8 @@ function getOwnedAssetsByChain(chain: string) {
 }
 
 async function selectAsset(item: TradableAsset) {
-  set(asset, item.asset);
   set(chain, item.chain);
+  set(asset, item.asset);
   set(openDialog, false);
 }
 
@@ -65,7 +72,7 @@ function setMax() {
 watchImmediate([asset, chain, allOwnedAssets], ([currentAsset, chain, _]) => {
   const ownedByChain = getOwnedAssetsByChain(chain);
 
-  if (!ownedByChain.map(item => item.asset).includes(currentAsset) && ownedByChain.length > 0) {
+  if (ownedByChain.length > 0 && !ownedByChain.map(item => item.asset).includes(currentAsset)) {
     set(asset, ownedByChain[0].asset || '');
   }
 });
@@ -75,9 +82,12 @@ watchImmediate([address, chain], ([_, currentChain]) => {
   if (currentChain) {
     const filteredByChain = owned.filter(item => item.chain === currentChain);
     if (filteredByChain.length > 0) {
-      set(asset, filteredByChain[0].asset);
-      return;
+      const currentAsset = get(asset);
+      if (!currentAsset || !filteredByChain.map(item => item.asset).includes(currentAsset)) {
+        set(asset, filteredByChain[0].asset);
+      }
     }
+    return;
   }
 
   const mostBalance = owned[0];
@@ -90,6 +100,15 @@ watchImmediate([address, chain], ([_, currentChain]) => {
 watchImmediate(chain, (chain) => {
   set(internalChain, chain);
 });
+
+function redetectTokens() {
+  const chain = get(internalChain);
+  const addressVal = get(address);
+
+  if (addressVal && chain) {
+    useTokenDetection(chain, addressVal).detectTokens();
+  }
+}
 </script>
 
 <template>
@@ -158,12 +177,34 @@ watchImmediate(chain, (chain) => {
         >
           {{ t('trade.warning.query_on_progress') }}
         </RuiAlert>
-        <ChainSelect
-          v-model="internalChain"
-          hide-details
-          dense
-          :items="chainOptions"
-        />
+        <div class="flex gap-2 items-center">
+          <ChainSelect
+            v-model="internalChain"
+            class="flex-1"
+            hide-details
+            dense
+            :items="chainOptions"
+          />
+          <RuiTooltip
+            :open-delay="400"
+            :popper="{ placement: 'top' }"
+          >
+            <template #activator>
+              <RuiButton
+                variant="text"
+                icon
+                class="!p-1"
+                color="primary"
+                :disabled="!address || !internalChain"
+                :loading="useQueryingBalances || isDetecting"
+                @click="redetectTokens()"
+              >
+                <RuiIcon name="lu-refresh-ccw" />
+              </RuiButton>
+            </template>
+            {{ t('account_balances.detect_tokens.tooltip.redetect') }}
+          </RuiTooltip>
+        </div>
       </div>
       <div
         v-if="assetOptions.length > 0"

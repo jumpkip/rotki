@@ -1,13 +1,107 @@
 import type { Ref } from 'vue';
 import { useDarkMode } from '@/composables/dark-mode';
-import { assert, type BigNumber, bigNumberify, type GraphApi, type TooltipDisplayOption } from '@rotki/common';
-import { Chart, registerables, type TooltipModel } from 'chart.js';
+import { assert, type BigNumber, type GradientArea, type GraphApi, type NewGraphApi, Zero } from '@rotki/common';
+import { Chart, registerables } from 'chart.js';
 import zoomPlugin from 'chartjs-plugin-zoom';
+import { LineChart, PieChart } from 'echarts/charts';
+import { DataZoomComponent, GridComponent, LegendComponent, TooltipComponent } from 'echarts/components';
+import { use } from 'echarts/core';
+import { CanvasRenderer } from 'echarts/renderers';
+import { THEME_KEY } from 'vue-echarts';
 
 export function initGraph(): void {
+  use([
+    CanvasRenderer,
+    LineChart,
+    TooltipComponent,
+    GridComponent,
+    DataZoomComponent,
+    PieChart,
+    LegendComponent,
+  ]);
+
+  // chart.js
   Chart.defaults.font.family = 'Roboto';
   Chart.register(...registerables);
   Chart.register(zoomPlugin);
+}
+
+export function useNewGraph(): NewGraphApi {
+  const { isDark } = useRotkiTheme();
+  const { store } = useRotkiTheme();
+  const { usedTheme } = useDarkMode();
+
+  provide(THEME_KEY, store);
+
+  const white = '#ffffff';
+  const secondaryBlack = '#3f1300';
+
+  const baseColor = computed<string>(() => get(usedTheme).graph);
+
+  const gradient = computed<GradientArea>(() => {
+    const color = get(baseColor);
+    const colorStops = [
+      { color: `${color}80`, offset: 0 },
+      { color: `${color}00`, offset: 1 },
+    ];
+    return {
+      color: {
+        colorStops,
+        type: 'linear',
+        x: 0,
+        x2: 0,
+        y: 0,
+        y2: 1,
+      },
+    };
+  });
+
+  const secondaryColor = computed<string>(() => (get(isDark) ? white : secondaryBlack));
+
+  return {
+    baseColor,
+    gradient,
+    secondaryColor,
+  };
+}
+
+export interface TooltipData {
+  visible: boolean;
+  x: number;
+  y: number;
+  timestamp: number;
+  value: BigNumber;
+  currentBalance: boolean;
+}
+
+interface UseGraphTooltipReturn {
+  tooltipData: Ref<TooltipData>;
+  resetTooltipData: () => void;
+}
+
+export function useGraphTooltip(): UseGraphTooltipReturn {
+  const defaultTooltipData = (): TooltipData => ({
+    currentBalance: false,
+    timestamp: 0,
+    value: Zero,
+    visible: false,
+    x: 0,
+    y: 0,
+  });
+
+  const tooltipData = ref<TooltipData>(defaultTooltipData());
+
+  function resetTooltipData(): void {
+    set(tooltipData, {
+      ...get(tooltipData),
+      visible: false,
+    });
+  }
+
+  return {
+    resetTooltipData,
+    tooltipData,
+  };
 }
 
 export function useGraph(canvasId: string): GraphApi {
@@ -51,71 +145,5 @@ export function useGraph(canvasId: string): GraphApi {
     gradient,
     gridColor,
     secondaryColor,
-  };
-}
-
-export interface TooltipContent {
-  readonly time: string;
-  readonly value: BigNumber;
-  readonly currentBalance?: boolean;
-}
-
-interface UseTooltipReturn {
-  tooltipDisplayOption: Ref<TooltipDisplayOption>;
-  tooltipContent: Ref<TooltipContent>;
-  calculateTooltipPosition: (element: HTMLElement, tooltipModel: TooltipModel<'line'>) => Partial<TooltipDisplayOption>;
-}
-
-export function useTooltip(id: string): UseTooltipReturn {
-  const getDefaultTooltipDisplayOption = (): TooltipDisplayOption => ({
-    id,
-    left: 0,
-    top: 0,
-    visible: false,
-    xAlign: 'left',
-    yAlign: 'center',
-  });
-
-  const getDefaultTooltipContent = (): TooltipContent => ({
-    time: '',
-    value: bigNumberify(0),
-  });
-
-  const tooltipDisplayOption = ref<TooltipDisplayOption>(getDefaultTooltipDisplayOption());
-  const tooltipContent = ref<TooltipContent>(getDefaultTooltipContent());
-
-  const calculateTooltipPosition = (
-    element: HTMLElement,
-    tooltipModel: TooltipModel<'line'>,
-  ): Partial<TooltipDisplayOption> => {
-    let { x, y } = tooltipModel;
-    const { xAlign, yAlign } = tooltipModel;
-
-    const elemWidth = element.clientWidth;
-    const elemHeight = element.clientHeight;
-
-    if (tooltipModel.xAlign === 'center')
-      x += (tooltipModel.width - elemWidth) / 2;
-    else if (tooltipModel.xAlign === 'right')
-      x += tooltipModel.width - elemWidth;
-
-    if (tooltipModel.yAlign === 'center')
-      y += (tooltipModel.height - elemHeight) / 2;
-    else if (tooltipModel.yAlign === 'bottom')
-      y += tooltipModel.height - elemHeight;
-
-    return {
-      left: x,
-      top: y,
-      visible: true,
-      xAlign,
-      yAlign,
-    };
-  };
-
-  return {
-    calculateTooltipPosition,
-    tooltipContent,
-    tooltipDisplayOption,
   };
 }

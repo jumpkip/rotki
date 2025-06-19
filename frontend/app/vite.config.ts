@@ -76,7 +76,7 @@ export default defineConfig({
       '@reown/appkit',
       '@reown/appkit/vue',
       '@reown/appkit/networks',
-      '@reown/appkit-adapter-wagmi',
+      '@reown/appkit-adapter-ethers',
       '@reown/walletkit',
       '@walletconnect/core',
       '@walletconnect/jsonrpc-utils',
@@ -179,7 +179,7 @@ export default defineConfig({
           'vue-vendor': ['vue', 'vue-router', 'pinia', 'vue-i18n'],
           'common': ['@rotki/common', 'bignumber.js'],
           'ui-vendor': ['@rotki/ui-library'],
-          'chart': ['chart.js', 'chartjs-plugin-zoom'],
+          'chart': ['echarts', 'vue-echarts', 'chart.js', 'chartjs-plugin-zoom'],
           'editor': ['vanilla-jsoneditor'],
           'utils': [
             '@vueuse/math',
@@ -197,7 +197,7 @@ export default defineConfig({
           'wallet-connect': [
             '@reown/walletkit',
             '@reown/appkit',
-            '@reown/appkit-adapter-wagmi',
+            '@reown/appkit-adapter-ethers',
             '@walletconnect/core',
           ],
         },

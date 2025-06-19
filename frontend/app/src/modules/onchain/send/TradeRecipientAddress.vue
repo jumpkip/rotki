@@ -5,6 +5,7 @@ import { useAccountAddresses } from '@/modules/balances/blockchain/use-account-a
 import TradeAddressDisplay from '@/modules/onchain/send/TradeAddressDisplay.vue';
 import { useWalletStore } from '@/modules/onchain/use-wallet-store';
 import { useAddressesNamesStore } from '@/store/blockchain/accounts/addresses-names';
+import { uniqueObjects } from '@/utils/data';
 import { isValidEthAddress } from '@rotki/common';
 import { startPromise } from '@shared/utils';
 import { useTemplateRef } from 'vue';
@@ -118,7 +119,13 @@ watch(debouncedSearchValue, async (value) => {
   if (privateBooks.length > 0) {
     values.push(...privateBooks);
   }
-  else if (value.endsWith('.eth')) {
+
+  const tracked = get(trackedAddresses).filter(item => item.includes(value));
+  if (tracked.length > 0) {
+    values.push(...tracked.map(item => ({ address: item })));
+  }
+
+  if (value.endsWith('.eth')) {
     set(resolvingEns, true);
     const address = await resolveEnsNames(value);
     set(resolvingEns, false);
@@ -140,7 +147,7 @@ watch(debouncedSearchValue, async (value) => {
     });
   }
 
-  set(directOptions, values.filter(item => isNotConnectedAddress(item.address)));
+  set(directOptions, uniqueObjects(values.filter(item => isNotConnectedAddress(item.address)), item => item.address));
 });
 
 watch(connectedAddress, (connectedAddress) => {
@@ -155,6 +162,19 @@ const { containerProps: trackedContainerProps, list: trackedList, wrapperProps: 
 
 const { containerProps: addressBookContainerProps, list: addressBookList, wrapperProps: addressBookWrapperProps } = useVirtualList(filteredAddressBookOptions, {
   itemHeight: 56,
+});
+
+function applySearchInput() {
+  const value = get(searchValue);
+  if (isValidEthAddress(value)) {
+    select(value);
+  }
+}
+
+watch(openSuggestionsMenu, (curr, prev) => {
+  if (!curr && prev) {
+    applySearchInput();
+  }
 });
 </script>
 
@@ -176,6 +196,7 @@ const { containerProps: addressBookContainerProps, list: addressBookList, wrappe
         >
           <TradeAddressDisplay
             dense
+            :chain="chain"
             :address="model"
             readonly
           />
@@ -219,6 +240,7 @@ const { containerProps: addressBookContainerProps, list: addressBookList, wrappe
               class="outline-none w-full bg-transparent text-sm placeholder:text-rui-grey-400 dark:placeholder:text-rui-grey-700"
               placeholder="E.g. 0x9531c059098e3d194ff87febb587ab07b30b1306"
               @click="openSuggestionsMenu = true"
+              @blur="applySearchInput()"
             />
           </label>
           <div class="p-3 pl-0">
@@ -257,6 +279,7 @@ const { containerProps: addressBookContainerProps, list: addressBookList, wrappe
           :key="option.address"
           :address="option.address"
           :name="option.name"
+          :chain="chain"
           @click="select(option.address)"
         />
       </div>
@@ -294,10 +317,7 @@ const { containerProps: addressBookContainerProps, list: addressBookList, wrappe
         />
       </RuiButton>
       <div class="flex flex-col max-h-[calc(100vh-200px)] overflow-hidden">
-        <div
-          class="flex flex-1 flex-col relative overflow-hidden"
-          :class="{ 'min-h-[calc(50vh-100px)]': trackedAddresses.length > 0 }"
-        >
+        <div class="flex flex-1 flex-col relative overflow-hidden">
           <div class="uppercase text-xs font-medium px-4 border-b border-default py-2 bg-rui-grey-50 dark:bg-rui-grey-900">
             {{ t('trade.recipient.tracked_addresses') }}
           </div>
@@ -323,10 +343,7 @@ const { containerProps: addressBookContainerProps, list: addressBookList, wrappe
             </div>
           </div>
         </div>
-        <div
-          class="flex flex-1 flex-col overflow-hidden border-t border-default"
-          :class="{ 'min-h-[calc(50vh-100px)]': filteredAddressBookOptions.length > 0 }"
-        >
+        <div class="flex flex-1 flex-col overflow-hidden border-t border-default">
           <div class="uppercase text-xs font-medium px-4 border-b border-default py-2">
             {{ t('trade.recipient.from_private_address_book') }}
           </div>

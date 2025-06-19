@@ -18,7 +18,7 @@ from rotkehlchen.chain.ethereum.modules.eth2.structures import (
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants import ONE
 from rotkehlchen.constants.assets import A_ETH
-from rotkehlchen.constants.misc import ZERO
+from rotkehlchen.constants.misc import DEFAULT_BALANCE_LABEL, ZERO
 from rotkehlchen.db.cache import DBCacheDynamic
 from rotkehlchen.db.eth2 import DBEth2
 from rotkehlchen.db.evmtx import DBEvmTx
@@ -478,10 +478,11 @@ def test_staking_performance_filtering_pagination(
     expected_result = {
         'validators': {
             '432840': {
-                'withdrawals': '33.593010259',
-                'sum': '33.68891977241534547',
+                'withdrawals': '1.591595871',
+                'sum': '1.68891977241534547',
+                'exits': '0.001414388',
                 'execution_blocks': '0.09590951341534547',
-                'apr': '0.780799175122596180057410572372936459198786258714734674710110898385290611566666',  # noqa: E501
+                'apr': '0.0391436464587952914253981459740635046779612036267745547809124733591012534768631',  # noqa: E501
             },
             '624729': {
                 'withdrawals': '1.289917788',
@@ -490,10 +491,11 @@ def test_staking_performance_filtering_pagination(
             },
         },
         'sums': {
-            'withdrawals': '34.882928047',
-            'sum': '34.97883756041534547',
+            'withdrawals': '2.881513659',
+            'sum': '2.97883756041534547',
+            'exits': '0.001414388',
             'execution_blocks': '0.09590951341534547',
-            'apr': '0.405406335684489482161983387612884561464925550813334077327164831506244407843798',  # noqa: E501
+            'apr': '0.0345785713525890378459771744134480842045130232693540173625656189931497287988972',  # noqa: E501
         },
         'entries_total': 402,
         'entries_found': 2,
@@ -990,12 +992,12 @@ def test_query_eth2_balances(
     assert len(per_acc) == 2
     # hope they don't get slashed ;(
     amount_proportion = base_amount * ownership_proportion
-    assert FVal(per_acc[validators[0].public_key]['assets']['ETH2']['amount']) >= base_amount
-    assert FVal(per_acc[validators[1].public_key]['assets']['ETH2']['amount']) >= amount_proportion
+    assert FVal(per_acc[validators[0].public_key]['assets']['ETH2'][DEFAULT_BALANCE_LABEL]['amount']) >= base_amount  # noqa: E501
+    assert FVal(per_acc[validators[1].public_key]['assets']['ETH2'][DEFAULT_BALANCE_LABEL]['amount']) >= amount_proportion  # noqa: E501
     totals = outcome['totals']
     assert len(totals['assets']) == 1
     assert len(totals['liabilities']) == 0
-    assert FVal(totals['assets']['ETH2']['amount']) >= base_amount + amount_proportion
+    assert FVal(totals['assets']['ETH2'][DEFAULT_BALANCE_LABEL]['amount']) >= base_amount + amount_proportion  # noqa: E501
 
     # now add 1 more validator and query ETH2 balances again to see it's included
     # the reason for this is to see the cache is properly invalidated at addition
@@ -1018,13 +1020,13 @@ def test_query_eth2_balances(
     per_acc = outcome['per_account']['eth2']
     assert len(per_acc) == 3
     amount_proportion = base_amount * ownership_proportion
-    assert FVal(per_acc[v0_pubkey]['assets']['ETH2']['amount']) >= base_amount
-    assert FVal(per_acc[validators[0].public_key]['assets']['ETH2']['amount']) >= base_amount
-    assert FVal(per_acc[validators[1].public_key]['assets']['ETH2']['amount']) >= amount_proportion
+    assert FVal(per_acc[v0_pubkey]['assets']['ETH2'][DEFAULT_BALANCE_LABEL]['amount']) >= base_amount  # noqa: E501
+    assert FVal(per_acc[validators[0].public_key]['assets']['ETH2'][DEFAULT_BALANCE_LABEL]['amount']) >= base_amount  # noqa: E501
+    assert FVal(per_acc[validators[1].public_key]['assets']['ETH2'][DEFAULT_BALANCE_LABEL]['amount']) >= amount_proportion  # noqa: E501
     totals = outcome['totals']
     assert len(totals['assets']) == 1
     assert len(totals['liabilities']) == 0
-    assert FVal(totals['assets']['ETH2']['amount']) >= 2 * base_amount + amount_proportion
+    assert FVal(totals['assets']['ETH2'][DEFAULT_BALANCE_LABEL]['amount']) >= 2 * base_amount + amount_proportion  # noqa: E501
 
 
 @pytest.mark.vcr(match_on=['beaconchain_matcher'])
@@ -1113,12 +1115,13 @@ def test_query_combined_mev_reward_and_block_production_events(rotkehlchen_api_s
     assert result['entries_total'] == 21
     event_identifier = None
     for entry in result['entries']:
-        if entry['entry']['block_number'] == block_number:
+        entry_block_number = entry['entry']['event_identifier'][4:]
+        if entry_block_number == str(block_number):
             assert entry['grouped_events_num'] == 3
             event_identifier = entry['entry']['event_identifier']
-        elif entry['entry']['block_number'] in {17055026, 16589592, 15938405}:
+        elif entry_block_number in {17055026, 16589592, 15938405}:
             assert entry['grouped_events_num'] == 2
-        elif entry['entry']['block_number'] in {16135531, 15849710, 15798693}:
+        elif entry_block_number in {16135531, 15849710, 15798693}:
             assert entry['grouped_events_num'] == 1
 
     # now query the events of the combined group
@@ -1327,7 +1330,7 @@ def test_balances_get_deleted_when_removing_validator(rotkehlchen_api_server: 'A
         blockchain='ETH2',
     ), json={'async_query': False})
     result = assert_proper_sync_response_with_result(response)
-    assert FVal(result['totals']['assets']['ETH2']['amount']) >= FVal(32)
+    assert FVal(result['totals']['assets']['ETH2'][DEFAULT_BALANCE_LABEL]['amount']) >= FVal(32)
 
     response = requests.delete(  # delete validator
         api_url_for(
@@ -1498,11 +1501,11 @@ def test_redecode_block_production_events(rotkehlchen_api_server: 'APIServer') -
         # Check raw data from the db since deserializing EthBlockEvents performs the same check
         # for if the address is tracked that we are trying to test here.
         assert cursor.execute('SELECT * FROM history_events').fetchall() == [
-            (1, 4, f'BP1_{block_number}', 0, timestamp, 'f', mev_builder_address, 'ETH', reward1, f'Validator {v_index} produced block {block_number} with {reward1} ETH going to {mev_builder_address} as the block reward', 'informational', 'block production', None),  # noqa: E501
-            (2, 4, f'BP1_{block_number}', 1, timestamp, 'f', fee_recipient_address, 'ETH', reward2, f'Validator {v_index} produced block {block_number}. Relayer reported {reward2} ETH as the MEV reward going to {fee_recipient_address}', 'informational', 'mev reward', None),  # noqa: E501
-            (3, 2, f'BP1_{block_number}', 2, timestamp, 'f', fee_recipient_address, 'ETH', reward2, f'Received {reward2} ETH from {mev_builder_address} as mev reward for block {block_number} in {tx_hash_str}', 'staking', 'mev reward', f'{{"validator_index": {v_index}}}'),  # noqa: E501
-            (4, 4, f'BP1_{block_number + 1}', 0, timestamp + 1, 'f', fee_recipient_address, 'ETH', reward3, f'Validator {v_index} produced block {block_number + 1} with {reward3} ETH going to {fee_recipient_address} as the block reward', 'staking', 'block production', None),  # noqa: E501
-            (5, 4, f'BP1_{block_number + 2}', 0, timestamp + 2, 'f', fee_recipient_address, 'ETH', reward4, f'Validator {v_index} produced block {block_number + 2} with {reward4} ETH going to {fee_recipient_address} as the block reward', 'informational', 'block production', None),  # noqa: E501
+            (1, 4, f'BP1_{block_number}', 0, timestamp, 'f', mev_builder_address, 'ETH', reward1, f'Validator {v_index} produced block {block_number} with {reward1} ETH going to {mev_builder_address} as the block reward', 'informational', 'block production', None, 0),  # noqa: E501
+            (2, 4, f'BP1_{block_number}', 1, timestamp, 'f', fee_recipient_address, 'ETH', reward2, f'Validator {v_index} produced block {block_number}. Relayer reported {reward2} ETH as the MEV reward going to {fee_recipient_address}', 'informational', 'mev reward', None, 0),  # noqa: E501
+            (3, 2, f'BP1_{block_number}', 2, timestamp, 'f', fee_recipient_address, 'ETH', reward2, f'Received {reward2} ETH from {mev_builder_address} as mev reward for block {block_number} in {tx_hash_str}', 'staking', 'mev reward', f'{{"validator_index": {v_index}}}', 0),  # noqa: E501
+            (4, 4, f'BP1_{block_number + 1}', 0, timestamp + 1, 'f', fee_recipient_address, 'ETH', reward3, f'Validator {v_index} produced block {block_number + 1} with {reward3} ETH going to {fee_recipient_address} as the block reward', 'staking', 'block production', None, 0),  # noqa: E501
+            (5, 4, f'BP1_{block_number + 2}', 0, timestamp + 2, 'f', fee_recipient_address, 'ETH', reward4, f'Validator {v_index} produced block {block_number + 2} with {reward4} ETH going to {fee_recipient_address} as the block reward', 'informational', 'block production', None, 0),  # noqa: E501
         ]
         # Confirm combine_block_with_tx_events marked the EthBlockEvent as hidden
         assert dbevents.get_hidden_event_ids(cursor) == [2]

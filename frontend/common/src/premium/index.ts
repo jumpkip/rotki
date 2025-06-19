@@ -111,6 +111,30 @@ export interface SettingsApi {
   };
 }
 
+interface ColorStop {
+  color: string;
+  offset: number;
+}
+
+interface GradientColor {
+  colorStops: ColorStop[];
+  type: 'linear';
+  x: number;
+  x2: number;
+  y: number;
+  y2: number;
+}
+
+export interface GradientArea {
+  color: GradientColor;
+}
+
+export interface NewGraphApi {
+  baseColor: ComputedRef<string>;
+  gradient: ComputedRef<GradientArea>;
+  secondaryColor: ComputedRef<string>;
+}
+
 export interface GraphApi {
   getCanvasCtx: () => CanvasRenderingContext2D;
   baseColor: ComputedRef<string>;
@@ -121,7 +145,17 @@ export interface GraphApi {
   gridColor: ComputedRef<string>;
 }
 
-type GetGraphApi = (canvasId: string) => GraphApi;
+interface GetGraphApi {
+  /**
+   * Initializes and returns an instance of GraphApi for a specified canvas element.
+   *
+   * @param {string} canvasId - The ID of the canvas element where the graph will be rendered.
+   * @returns {GraphApi} An instance of the GraphApi that provides methods to interact with the graph.
+   * @deprecated
+   */
+  (canvasId: string): GraphApi;
+  (): NewGraphApi;
+}
 
 export interface PremiumApi {
   readonly date: DateUtilities;

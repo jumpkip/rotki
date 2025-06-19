@@ -16,8 +16,8 @@ from rotkehlchen.assets.converters import asset_from_nexo
 from rotkehlchen.assets.ignored_assets_handling import IgnoredAssetsHandling
 from rotkehlchen.assets.types import AssetType
 from rotkehlchen.assets.utils import (
+    get_crypto_asset_by_symbol,
     get_or_create_evm_token,
-    symbol_to_evm_token,
 )
 from rotkehlchen.constants.assets import A_DAI, A_USDT
 from rotkehlchen.constants.misc import GLOBALDB_NAME
@@ -97,6 +97,7 @@ def test_ethereum_tokens():
         EvmToken('BTC')
 
 
+@pytest.mark.asset_test
 def test_cryptocompare_asset_support(cryptocompare):
     """Try to detect if a token that we have as not supported by cryptocompare got added"""
     cc_assets = cryptocompare.all_coins()
@@ -589,6 +590,23 @@ def test_case_does_not_matter_for_asset_constructor():
     assert a1.identifier == 'BTC'
     assert a2.identifier == 'BTC'
 
+    def symbol_to_evm_token(symbol: str) -> EvmToken:
+        """Tries to turn the given symbol to an evm token
+
+        May raise:
+        - UnknownAsset if an evm token can't be found by the symbol or if
+        more than one tokens match this symbol
+        """
+        maybe_asset = get_crypto_asset_by_symbol(
+            symbol=symbol,
+            asset_type=AssetType.EVM_TOKEN,
+            chain_id=ChainID.ETHEREUM,
+        )
+        if maybe_asset is None:
+            raise UnknownAsset(symbol)
+
+        return maybe_asset.resolve_to_evm_token()
+
     a3 = symbol_to_evm_token('DAI')
     a4 = symbol_to_evm_token('dAi')
     assert a3.identifier == a4.identifier == strethaddress_to_identifier('0x6B175474E89094C44Da98b954EedeAC495271d0F')  # noqa: E501
@@ -598,6 +616,7 @@ def test_case_does_not_matter_for_asset_constructor():
     'CI' in os.environ,
     reason='SLOW TEST -- it executes locally every time we check the assets so can be skipped',
 )
+@pytest.mark.asset_test
 def test_coingecko_identifiers_are_reachable(socket_enabled):  # pylint: disable=unused-argument
     """
     Test that all assets have a coingecko entry and that all the identifiers exist in coingecko

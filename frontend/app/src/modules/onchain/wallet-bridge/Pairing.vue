@@ -4,6 +4,8 @@ import type { TransactionRequest, TransactionResponse } from 'ethers';
 import AppImage from '@/components/common/AppImage.vue';
 import { useWalletHelper } from '@/modules/onchain/use-wallet-helper';
 import { EIP155, ROTKI_DAPP_METADATA, useWalletStore } from '@/modules/onchain/use-wallet-store';
+import { uniqueStrings } from '@/utils/data';
+import { logger } from '@/utils/logging';
 import { type IWalletKit, WalletKit, type WalletKitTypes } from '@reown/walletkit';
 import { assert } from '@rotki/common';
 import { get, set } from '@vueuse/core';
@@ -16,6 +18,7 @@ const props = defineProps<{
   connected?: boolean;
   address?: string;
   connectedChainId?: number;
+  supportedChainIds: number[];
 }>();
 
 const COMPATIBLE_METHODS = [
@@ -56,7 +59,7 @@ interface LogEntry {
   type: 'info' | 'success' | 'error';
 }
 
-const { address, connected, connectedChainId } = toRefs(props);
+const { address, connected, connectedChainId, supportedChainIds } = toRefs(props);
 
 const { t } = useI18n({ useScope: 'global' });
 const projectId = import.meta.env.VITE_WALLET_CONNECT_PROJECT_ID as string;
@@ -67,8 +70,8 @@ const isConnecting = ref(false);
 const walletKit = ref<IWalletKit>();
 const activeSessions = ref<SessionTypes.Struct[]>([]);
 
-const { getBrowserProvider } = useWalletStore();
-const { getEip155ChainId, getEvmChainNameFromChainId } = useWalletHelper();
+const { getBrowserProvider, switchNetwork } = useWalletStore();
+const { getChainIdFromNamespace, getEip155ChainId, getEvmChainNameFromChainId } = useWalletHelper();
 
 function addLog(message: string, type: 'info' | 'success' | 'error' = 'info') {
   const timestamp = new Date().toLocaleTimeString();
@@ -185,7 +188,7 @@ async function triggerTransaction(request: TransactionRequest): Promise<Transact
     return await signer.sendTransaction(request);
   }
   catch (error) {
-    console.error(error);
+    logger.error(error);
     throw error;
   }
 }
@@ -194,11 +197,12 @@ async function onSessionProposal({ id, params }: WalletKitTypes.SessionProposal)
   const kit = get(walletKit);
   const addressVal = get(address);
   const chainId = get(connectedChainId);
+  const supportedChainIdsVal = get(supportedChainIds);
 
   if (!kit || !addressVal || !chainId)
     return;
 
-  const chainIds = [chainId];
+  const chainIds = [...new Set([chainId, ...supportedChainIdsVal])];
 
   try {
     // ------- namespaces builder util ------------ //
@@ -223,7 +227,7 @@ async function onSessionProposal({ id, params }: WalletKitTypes.SessionProposal)
     refreshActiveSessions();
   }
   catch (error) {
-    console.error(error);
+    logger.error(error);
   }
 }
 
@@ -232,6 +236,30 @@ async function onSessionRequest(event: WalletKitTypes.SessionRequest) {
   assert(kit);
 
   const { id, params, topic } = event;
+
+  async function returnError(error: string) {
+    assert(kit);
+    const response = formatJsonRpcError(id, error);
+    await kit.respondSessionRequest({ response, topic });
+  }
+
+  if (!get(connected)) {
+    return returnError('Browser wallet signer is not connected');
+  }
+
+  const chainId = get(connectedChainId);
+  const { chainId: chainIdWithNamespace } = params;
+  const desiredChainId = getChainIdFromNamespace(chainIdWithNamespace);
+
+  if (chainId !== desiredChainId) {
+    try {
+      await switchNetwork(BigInt(desiredChainId));
+    }
+    catch {
+      return returnError('Failed to switch network');
+    }
+  }
+
   try {
     const request = params.request.params[0];
     const result = await triggerTransaction(request);
@@ -241,8 +269,7 @@ async function onSessionRequest(event: WalletKitTypes.SessionRequest) {
     await kit.respondSessionRequest({ response, topic });
   }
   catch (error: any) {
-    const response = formatJsonRpcError(id, error);
-    await kit.respondSessionRequest({ response, topic });
+    await returnError(error);
   }
 }
 
@@ -278,24 +305,20 @@ async function updateSession(session: SessionTypes.Struct, chainId: string, addr
   const newEip155ChainId = getEip155ChainId(chainId);
   const newEip155Account = `${newEip155ChainId}:${address}`;
 
-  const isNewSession = !currentEip155Accounts.includes(newEip155Account);
+  const namespaces: SessionTypes.Namespaces = {
+    [EIP155]: {
+      ...session.namespaces[EIP155],
+      accounts: [newEip155Account, ...currentEip155Accounts].filter(uniqueStrings),
+      chains: [newEip155ChainId, ...currentEip155ChainIds].filter(uniqueStrings),
+    },
+  };
 
-  if (isNewSession) {
-    const namespaces: SessionTypes.Namespaces = {
-      [EIP155]: {
-        ...session.namespaces[EIP155],
-        accounts: [newEip155Account, ...currentEip155Accounts],
-        chains: [newEip155ChainId, ...currentEip155ChainIds],
-      },
-    };
+  const { acknowledged } = await kit.updateSession({
+    namespaces,
+    topic: session.topic,
+  });
 
-    const { acknowledged } = await kit.updateSession({
-      namespaces,
-      topic: session.topic,
-    });
-
-    await acknowledged();
-  }
+  await acknowledged();
 
   // Switch to the new chain
   await chainChanged(session.topic, chainId);
@@ -308,6 +331,7 @@ async function updateSessions(chainId?: string, address?: string) {
   if (!chainId || !address) {
     return;
   }
+
   for await (const session of get(activeSessions)) {
     await updateSession(session, chainId, address);
   }
@@ -351,12 +375,6 @@ watch(activeSessions, () => {
   updateSessions(get(connectedChainId)?.toString(), get(address));
 });
 
-watch(connected, (connected) => {
-  if (!connected) {
-    disconnectAllSessions();
-  }
-});
-
 onBeforeMount(initializeWalletKit);
 onBeforeUnmount(clear);
 
@@ -367,12 +385,10 @@ const secondStep = '2';
   <div>
     <div
       class="py-4 border-t border-default"
-      :class="{ 'opacity-30': !connected }"
+      :class="{ 'opacity-30': !connected && activeSessions.length === 0 }"
     >
       <div class="flex gap-2">
-        <div
-          class="rounded-full bg-rui-primary text-white size-8 flex items-center justify-center font-bold"
-        >
+        <div class="rounded-full bg-rui-primary text-white size-8 flex items-center justify-center font-bold">
           {{ secondStep }}
         </div>
         <div class="mt-1 flex-1">
@@ -387,6 +403,7 @@ const secondStep = '2';
             <RuiTextArea
               v-model="pairUri"
               :label="t('trade.bridge.label')"
+              :placeholder="t('trade.bridge.placeholder')"
               :disabled="!connected"
               variant="outlined"
               color="primary"

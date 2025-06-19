@@ -5,13 +5,13 @@ import type {
   RecentTransaction,
   TransactionParams,
 } from '@/modules/onchain/types';
-import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
 import { useInterop } from '@/composables/electron-interop';
 import { useSupportedChains } from '@/composables/info/chains';
 import { useWalletHelper } from '@/modules/onchain/use-wallet-helper';
-import { WagmiAdapter } from '@reown/appkit-adapter-wagmi';
+import { useAssetCacheStore } from '@/store/assets/asset-cache';
+import { EthersAdapter } from '@reown/appkit-adapter-ethers';
 import { type AppKitNetwork, arbitrum, base, bsc, gnosis, mainnet, optimism, polygon, scroll } from '@reown/appkit/networks';
-import { type AppKit, createAppKit, useAppKitProvider } from '@reown/appkit/vue';
+import { type AppKit, createAppKit } from '@reown/appkit/vue';
 import { assert, bigNumberify } from '@rotki/common';
 import { startPromise } from '@shared/utils';
 import { BrowserProvider, formatUnits, getAddress, type TransactionResponse } from 'ethers';
@@ -39,17 +39,11 @@ export const supportedNetworks: [AppKitNetwork, ...AppKitNetwork[]] = [
 
 const DEFAULT_GAS_LIMIT = 21000n; // for native transfers
 
-function buildAppKit(isPackaged: boolean): AppKit {
-  const projectId = isPackaged ? import.meta.env.VITE_WALLET_CONNECT_PROJECT_ID as string : 'a8a07e2bdf6f30c0f749ba31504766bf';
-
-  const wagmiAdapter = new WagmiAdapter({
-    networks: supportedNetworks,
-    projectId,
-    ssr: false,
-  });
+function buildAppKit(): AppKit {
+  const projectId = import.meta.env.VITE_WALLET_CONNECT_PROJECT_ID as string;
 
   return createAppKit({
-    adapters: [wagmiAdapter],
+    adapters: [new EthersAdapter()],
     allowUnsupportedChain: true,
     features: {
       analytics: true,
@@ -73,11 +67,10 @@ export const useWalletStore = defineStore('wallet', () => {
   const preparing = ref<boolean>(false);
   const waitingForWalletConfirmation = ref<boolean>(false);
   const isWalletConnect = ref<boolean>(false);
-  const { isPackaged } = useInterop();
 
-  const appKit: AppKit = buildAppKit(isPackaged);
+  const appKit: AppKit = buildAppKit();
 
-  const { assetSymbol } = useAssetInfoRetrieval();
+  const { getAssetMappingHandler } = useAssetCacheStore();
   const { getChainFromChainId, getChainIdFromNamespace, updateStatePostTransaction } = useWalletHelper();
   const { prepareERC20Transfer, prepareNativeTransfer } = useTradeApi();
   const { getEvmChainName } = useSupportedChains();
@@ -104,7 +97,8 @@ export const useWalletStore = defineStore('wallet', () => {
   };
 
   const getBrowserProvider = (): BrowserProvider => {
-    const { walletProvider } = useAppKitProvider(EIP155);
+    assert(appKit);
+    const walletProvider = appKit.getProvider(EIP155);
     return new BrowserProvider(walletProvider as any);
   };
 
@@ -158,6 +152,14 @@ export const useWalletStore = defineStore('wallet', () => {
     resetState();
   };
 
+  const { isPackaged } = useInterop();
+
+  const resetWalletConnection = async (): Promise<void> => {
+    if (isPackaged) {
+      await disconnect();
+    }
+  };
+
   const switchNetwork = async (chainId: bigint): Promise<void> => {
     assert(appKit);
 
@@ -203,18 +205,26 @@ export const useWalletStore = defineStore('wallet', () => {
     }
   };
 
-  const generateTransactionContext = (params: TransactionParams): string => {
+  const generateTransactionContext = async (params: TransactionParams): Promise<string> => {
     const fromAddress = get(connectedAddress) ?? 'unknown';
     const amount = params.amount;
-    const asset = params.native
-      ? params.assetIdentifier
-      : get(assetSymbol(params.assetIdentifier));
+    const id = params.assetIdentifier;
+    const asset = params.native || !id
+      ? id
+      : await (async (): Promise<string | undefined> => {
+        const mapping = await getAssetMappingHandler([id]);
+        const assetMapping = mapping?.assets;
+        if (!assetMapping) {
+          return id;
+        }
+        return assetMapping[id]?.symbol || id;
+      })();
 
     return `Send ${amount} ${asset || params.assetIdentifier} from ${fromAddress} to ${params.to}`;
   };
 
-  const addRecentTransaction = (hash: string, chain: string, params: TransactionParams): void => {
-    const context = generateTransactionContext(params);
+  const addRecentTransaction = async (hash: string, chain: string, params: TransactionParams): Promise<void> => {
+    const context = await generateTransactionContext(params);
     set(recentTransactions, [
       {
         chain,
@@ -247,6 +257,29 @@ export const useWalletStore = defineStore('wallet', () => {
 
   const sendTransaction = async (params: TransactionParams): Promise<TransactionResponse> => {
     assert(appKit);
+
+    const universalProvider = await appKit.getUniversalProvider();
+
+    if (universalProvider && universalProvider.isWalletConnect) {
+      try {
+        const session = universalProvider.session;
+        if (session && session.topic) {
+          set(preparing, true);
+          const pingPromise = universalProvider.client.ping({ topic: session.topic });
+          const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('Ping timeout after 5s')), 5000);
+          });
+
+          await Promise.race([pingPromise, timeoutPromise]);
+        }
+      }
+      catch {
+        throw new Error('It seems that your wallet is inactive. If you are using browser wallet bridge, make sure the page is open.');
+      }
+      finally {
+        set(preparing, false);
+      }
+    }
 
     try {
       const fromAddress = get(connectedAddress);
@@ -284,7 +317,10 @@ export const useWalletStore = defineStore('wallet', () => {
           fromAddress,
           toAddress: params.to,
         };
-        backendPayload = await prepareNativeTransfer(payload);
+        backendPayload = {
+          ...await prepareNativeTransfer(payload),
+          data: '0x',
+        };
       }
 
       set(preparing, false);
@@ -293,9 +329,12 @@ export const useWalletStore = defineStore('wallet', () => {
         set(waitingForWalletConfirmation, true);
         const provider = getBrowserProvider();
         const signer = await provider.getSigner();
-        tx = await signer.sendTransaction(backendPayload);
+        tx = await signer.sendTransaction({
+          ...backendPayload,
+          type: 0,
+        });
         set(waitingForWalletConfirmation, false);
-        addRecentTransaction(tx.hash, getChainFromChainId(chainId), params);
+        startPromise(addRecentTransaction(tx.hash, getChainFromChainId(chainId), params));
         await tx.wait();
         updateTransactionStatus(tx.hash, 'completed');
         startPromise(updateStatePostTransaction(getRecentTransactionByTxHash(tx.hash)));
@@ -334,6 +373,7 @@ export const useWalletStore = defineStore('wallet', () => {
     open,
     preparing,
     recentTransactions,
+    resetWalletConnection,
     sendTransaction,
     supportedChainIds,
     supportedChainsForConnectedAccount,

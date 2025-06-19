@@ -2516,28 +2516,28 @@ Query supported ethereum modules
    :statuscode 409: Some other error. Check error message for details.
    :statuscode 500: Internal rotki error
 
-Querying evm transactions
+Querying blockchain transactions
 =================================
 
-.. http:post:: /api/(version)/blockchains/evm/transactions/
+.. http:post:: /api/(version)/blockchains/transactions/
 
    .. note::
       This endpoint can also be queried asynchronously by using ``"async_query": true``
 
-   Doing a POST on the evm transactions endpoint will query all evm transactions for all the tracked user addresses and save them to the DB. Caller can also specify a chain and/or an address to further filter the query.
+   Doing a POST on the blockchains transactions endpoint will query all transactions for all the tracked user addresses and save them to the DB. Caller can also specify a list of accounts to further filter the query, where each account contains an address and optionally its blockchain.
 
    **Example Request**:
 
    .. http:example:: curl wget httpie python-requests
 
-      POST /api/1/blockchains/evm/transactions HTTP/1.1
+      POST /api/1/blockchains/transactions HTTP/1.1
       Host: localhost:5042
       Content-Type: application/json;charset=UTF-8
 
       {
           "accounts": [{
               "address": "0x3CAdbeB58CB5162439908edA08df0A305b016dA8",
-              "evm_chain": "optimism"
+              "blockchain": "optimism"
           }, {
               "address": "0xF2Eb18a344b2a9dC769b1914ad035Cbb614Fd238"
           }],
@@ -2545,11 +2545,9 @@ Querying evm transactions
           "to_timestamp": 1572080165
       }
 
-   :reqjson list[string] accounts: List of accounts to filter by. Each account contains an ``"address"`` key which is required and is an evm address. It can also contains an ``"evm_chain"`` field which is the specific chain for which to limit the address.
+   :reqjson list[string] accounts: List of accounts to filter by. Each account contains a required ``address`` field which is a blockchain address and an optional ``blockchain`` field which is the specific chain for which to limit the address.
    :reqjson int from_timestamp: The timestamp after which to return transactions. If not given zero is considered as the start.
    :reqjson int to_timestamp: The timestamp until which to return transactions. If not given all transactions from ``from_timestamp`` until now are returned.
-   :reqjson string evm_chain: Optional. The name of the evm chain by which to filter all transactions. ``"ethereum"``, ``"optimism"`` etc.
-
 
    **Example Response**:
 
@@ -2987,11 +2985,20 @@ Querying onchain balances
                    },
                    "eth": { "0x78b0AD50E768D2376C6BA7de33F426ecE4e03e0B": {
                        "assets": {
-                           "ETH": {"amount": "10", "usd_value": "1650.53"},
-                           "eip155:1/erc20:0x6B175474E89094C44Da98b954EedeAC495271d0F": {"amount": "15", "usd_value": "15.21"}
+                           "ETH": {
+                               "address": {"amount": "10", "usd_value": "1650.53"}
+                           },
+                           "eip155:1/erc20:0x6B175474E89094C44Da98b954EedeAC495271d0F": {
+                               "address": {"amount": "15", "usd_value": "15.21"}
+                           },
+                           "eip155:1/erc20:0xdAC17F958D2ee523a2206206994597C13D831ec7": {
+                               "makerdao vault": {"amount": "3", "usd_value": "54"}
+                           }
                        },
                        "liabilities": {
-                           "eip155:1/erc20:0x6B175474E89094C44Da98b954EedeAC495271d0F": {"amount": "20", "usd_value": "20.35"}
+                           "eip155:1/erc20:0x6B175474E89094C44Da98b954EedeAC495271d0F": {
+                               "makerdao vault": {"amount": "20", "usd_value": "20.35"}
+                           }
                        }
                   }},
                    "eth2": { "0x9675faa8d15665e30d31dc10a332828fa15e2c7490f7d1894d9092901b139801ce476810f8e1e0c7658a9abdb9c4412e": {
@@ -3019,7 +3026,7 @@ Querying onchain balances
           "message": ""
       }
 
-   :resjson object per_account: The blockchain balances per account per asset. Each element of this object has a blockchain asset as its key. Then each asset has an address for that blockchain as its key and each address an object with the following keys: ``"amount"`` for the amount stored in the asset in the address and ``"usd_value"`` for the equivalent $ value as of the request. Ethereum accounts have a mapping of tokens owned by each account. ETH accounts may have an optional liabilities key. This would be the same as assets. BTC accounts are separated in standalone accounts and in accounts that have been derived from an xpub. The xpub ones are listed in a list under the ``"xpubs"`` key. Each entry has the xpub, the derivation path and the list of addresses and their balances.
+   :resjson object per_account: The blockchain balances per account per asset. Each element of this object has a blockchain asset as its key. Then each asset has an address for that blockchain as its key and each address an object with the following keys: ``"amount"`` for the amount stored in the asset in the address and ``"usd_value"`` for the equivalent USD value as of the request. For EVM accounts, balances are organized by category: ``"address"`` represents tokens held directly in the address and available for use, while protocol-specific labels (like ``"makerdao vault"``, ``"aave"``, ``"morpho"``) show tokens locked in DeFi protocols. ETH accounts may have an optional liabilities key with the same structure. BTC accounts are separated in standalone accounts and in accounts that have been derived from an xpub. The xpub ones are listed in a list under the ``"xpubs"`` key. Each entry has the xpub, the derivation path and the list of addresses and their balances.
    :resjson object total: The blockchain balances in total per asset. Has 2 keys. One for assets and one for liabilities. The liabilities key may be missing if no liabilities exist.
 
    :statuscode 200: Balances successfully queried.
@@ -4694,92 +4701,6 @@ Statistics rendering code
    :statuscode 409: There is a problem reaching the rotki server.
    :statuscode 500: Internal rotki error.
 
-
-Querying asset movements
-===========================
-
-.. http:get:: /api/(version)/asset_movements
-
-   .. note::
-      This endpoint also accepts parameters as query arguments.
-
-   Doing a GET on this endpoint will return all asset movements (deposits/withdrawals) from all possible exchanges for the current user. It can be further filtered by a time range of a location. For non premium users there is a limit on the amount of movements returned.
-
-   **Example Request**:
-
-   .. http:example:: curl wget httpie python-requests
-
-      GET /api/1/asset_movements HTTP/1.1
-      Host: localhost:5042
-      Content-Type: application/json;charset=UTF-8
-
-      {"from_timestamp": 1451606400, "to_timestamp": 1571663098, "location": "kraken", "only_cache": false}
-
-   :reqjson int limit: Optional. This signifies the limit of records to return as per the `sql spec <https://www.sqlite.org/lang_select.html#limitoffset>`__.
-   :reqjson int offset: This signifies the offset from which to start the return of records per the `sql spec <https://www.sqlite.org/lang_select.html#limitoffset>`__.
-   :reqjson list[string] order_by_attributes: Optional. This is the list of attributes of the asset movements table by which to order the results. If none is given 'time' is assumed. Valid values are: ['time', 'location', 'category', 'amount', 'fee'].
-   :reqjson list[bool] ascending: Optional. False by default. Defines the order by which results are returned depending on the chosen order by attribute.
-   :reqjson int from_timestamp: The timestamp from which to query. Can be missing in which case we query from 0.
-   :reqjson int to_timestamp: The timestamp until which to query. Can be missing in which case we query until now.
-   :reqjson string location: Optionally filter asset movements by location. A valid location name has to be provided. Valid locations are for now only exchanges for deposits/withdrawals.
-   :reqjson string asset: Optionally filter asset movements by asset. A valid asset identifier has to be provided. If missing, movements are not filtered by asset.
-   :reqjson string action: Optionally filter asset movements by action type. A valid action type (deposit, withdrawals) has to be provided. If missing movements are not filtered by type.
-   :reqjson bool only_cache: Optional. If this is true then the equivalent exchange/location is not queried, but only what is already in the DB is returned.
-   :reqjson bool exclude_ignored_assets: Optional. If this is true then the asset movements of ignored assets are not returned, defaults to ``"true"``.
-
-
-   **Example Response**:
-
-   .. sourcecode:: http
-
-      HTTP/1.1 200 OK
-      Content-Type: application/json
-
-      {
-          "result": {
-              "entries": [{
-                  "entry": {
-                      "identifier": "foo"
-                      "location": "kraken",
-                      "category": "deposit",
-                      "address": "0x78b0AD50E768D2376C6BA7de33F426ecE4e03e0B",
-                      "transaction_id": "3a4b9b2404f6e6fb556c3e1d46a9752f5e70a93ac1718605c992b80aacd8bd1d",
-                      "timestamp": 1451706400
-                      "asset": "ETH",
-                      "amount": "500.55",
-                      "fee_asset": "ETH",
-                      "fee": "0.1",
-                      "link": "optional exchange unique id"
-                  },
-                  "ignored_in_accounting": false
-              }],
-              "entries_found": 80,
-              "entries_total": 120,
-              "entries_limit": 100,
-          "message": ""
-      }
-
-   :resjson object entries: An array of deposit/withdrawal objects and their metadata. Each entry is composed of the main movement entry under the ``"entry"`` key and other metadata like ``"ignored_in_accounting"`` for each asset movement.
-   :resjsonarr string identifier: The uniquely identifying identifier for this asset movement
-   :resjsonarr string location: A valid location at which the deposit/withdrawal occurred
-   :resjsonarr string category: Either ``"deposit"`` or ``"withdrawal"``
-   :resjsonarr string address: The source address if this is a deposit or the destination address if this is a withdrawal.
-   :resjsonarr string transaction_id: The transaction id
-   :resjsonarr integer timestamp: The timestamp at which the deposit/withdrawal occurred
-   :resjsonarr string asset: The asset deposited or withdrawn
-   :resjsonarr string amount: The amount of asset deposited or withdrawn
-   :resjsonarr string fee_asset: The asset in which ``fee`` is denominated in
-   :resjsonarr string fee: The fee that was paid, if anything, for this deposit/withdrawal
-   :resjsonarr string link: Optional unique exchange identifier for the deposit/withdrawal
-   :resjson int entries_found: The number of entries found for the current filter. Ignores pagination.
-   :resjson int entries_limit: The limit of entries if free version. -1 for premium.
-   :resjson int entries_total: The number of total entries ignoring all filters.
-   :statuscode 200: Deposits/withdrawals are successfully returned
-   :statuscode 400: Provided JSON is in some way malformed
-   :statuscode 409: No user is logged in.
-   :statuscode 500: Internal rotki error
-   :statuscode 502: Error querying the remote for the asset movements
-
 Dealing with History Events
 ============================================
 
@@ -5637,6 +5558,7 @@ Exporting History Events
    :reqjson list[string] event_subtypes: An optional list of event subtypes by which to filter the decoded events.
    :reqjson list location: An optional location name to filter events only for that location.
    :reqjson list[string] location_labels: A list of location labels to optionally filter by. Location label is a string field that allows you to provide more information about the location. When used in blockchains, it is used to specify the user's address. For exchange events, it's the exchange name assigned by the user.
+   :reqjson string notes_substring: An optional string to filter events by searching for a substring in the notes field. This searches both user notes and auto-generated notes.
    :reqjson object entry_types: An object with two keys named 'values' and 'behavior'. 'values' is a list of entry types to optionally filter by. 'behavior' is optional and is a string with the value 'include' or 'exclude' which defines the filtering behavior. It defaults to 'include'. Entry type is the event category and defines the schema. Possible values are: "history event," "evm event," "eth withdrawal event," "eth block event," "eth deposit event."
    :reqjson string asset: The asset to optionally filter by.
    :reqjson list[string] tx_hashes: An optional list of transaction hashes to filter for. This will make it an EVM event query.
@@ -6651,7 +6573,7 @@ Querying periodic data
 
 Getting blockchain account data
 ===============================
-.. http:get:: /api/(version)/blockchains/(name)/accounts
+.. http:get:: /api/(version)/blockchains/(blockchain)/accounts
 
    .. note::
       Supported blockchains: ``"BTC", "BCH", "ETH", "KSM", "DOT", "AVAX", "OPTIMISM"``
@@ -8654,7 +8576,7 @@ Adding EVM accounts to all EVM chains
 Adding blockchain accounts
 ===========================
 
-.. http:put:: /api/(version)/blockchains/(name)/accounts
+.. http:put:: /api/(version)/blockchains/(blockchain)/accounts
 
    .. note::
       Supported blockchains: ``"BTC", "BCH", "ETH", "KSM", "DOT", "AVAX", "OPTIMISM"``
@@ -8959,7 +8881,7 @@ Deleting BTC/BCH xpubs
 Editing blockchain account data
 =================================
 
-.. http:patch:: /api/(version)/blockchains/(name)/accounts
+.. http:patch:: /api/(version)/blockchains/(blockchain)/accounts
 
    .. note::
       Supported blockchains: ``"BTC", "BCH", "ETH", "KSM", "DOT", "AVAX", "OPTIMISM"``
@@ -9149,7 +9071,7 @@ Account operations by chain type
 Removing blockchain accounts
 ==============================
 
-.. http:delete:: /api/(version)/blockchains/(name)/accounts
+.. http:delete:: /api/(version)/blockchains/(blockchain)/accounts
 
    .. note::
       Supported blockchains: ``"BTC", "BCH", "ETH", "KSM", "DOT", "AVAX", "OPTIMISM"``
@@ -12001,7 +11923,7 @@ Add EVM Transaction By Hash
 Get Binance Savings Interests History
 =======================================
 
-.. http:post:: /api/(version)/exchange/(location)/savings
+.. http:post:: /api/(version)/exchanges/(location)/savings
 
    Doing a POST on this endpoint will return all history events relating to interest payments for the specified location.
    .. note::
@@ -12012,7 +11934,7 @@ Get Binance Savings Interests History
 
    .. http:example:: curl wget httpie python-requests
 
-      POST /api/1/exchange/binance/savings HTTP/1.1
+      POST /api/1/exchanges/binance/savings HTTP/1.1
       Host: localhost:5042
       Content-Type: application/json;charset=UTF-8
 
@@ -12493,12 +12415,18 @@ Get all valid locations
                 "is_exchange_with_key": true,
                 "is_exchange_without_api_secret": true
               }
+            "cryptocom": {
+              "image": "crypto_com.svg",
+              "exchange_detail": {
+                "is_exchange_with_key": true,
+                "experimental": true
+              }
             },
             "external": {"icon": "mdi-book"}
         }
       }
 
-  :resjson list[string] locations: A mapping of locations to their details. Can contain `image` or `icon` depending on whether a known image should be used or an icon from the icon set. Additionally, it can contain a `display_name` if a special name needs to be used. If the location is an exchange, it may also include an `is_exchange` key, or an `exchange_details` object if the location has more details for the exchange data. The `exchange_details` object can contain `is_exchange_with_key` for exchanges requiring an API key, `is_exchange_with_passphrase` for exchanges needing an API key and passphrase, and `is_exchange_without_api_secret` for exchanges that do not require an API secret key, all within the exchange_detail object.
+  :resjson list[string] locations: A mapping of locations to their details. Can contain `image` or `icon` depending on whether a known image should be used or an icon from the icon set. Additionally, it can contain a `display_name` if a special name needs to be used. If the location is an exchange, it may also include an `is_exchange` key, or an `exchange_details` object if the location has more details for the exchange data. The `exchange_details` object can contain `is_exchange_with_key` for exchanges requiring an API key, `is_exchange_with_passphrase` for exchanges needing an API key and passphrase, and `is_exchange_without_api_secret` for exchanges that do not require an API secret key, all within the exchange_detail object. If the exchange implementation is experimenta then the experimental key will exist and be set to true.
 
   :statuscode 200: Information was correctly returned
   :statuscode 500: Internal rotki error
@@ -12537,7 +12465,7 @@ Refresh protocol data
   :statuscode 500: Internal rotki error
 
 
-.. http:post:: /api/(version/protocols/data/refresh
+.. http:post:: /api/(version)/protocols/data/refresh
 
    Doing a POST on this endpoint will refresh the data for the selected protocol.
 

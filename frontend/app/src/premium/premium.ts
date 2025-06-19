@@ -129,10 +129,11 @@ export const ThemeManager = createFactory('ThemeManager');
 declare global {
   interface Window {
     'Vue': any;
+    'VueEcharts': any;
     'Chart': typeof Chart;
+    'chartjs-plugin-zoom': any;
     'VueUse': any;
     'VueUseShared': any;
-    'chartjs-plugin-zoom': any;
     'zod': any;
     'bn': any;
     'VueRouter': any;

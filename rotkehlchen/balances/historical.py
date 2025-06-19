@@ -1,6 +1,6 @@
 import logging
 from collections import defaultdict
-from typing import TYPE_CHECKING, Final, TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.constants import DAY_IN_SECONDS, ONE, ZERO
@@ -27,8 +27,6 @@ if TYPE_CHECKING:
     from rotkehlchen.assets.asset import EvmToken
     from rotkehlchen.db.dbhandler import DBHandler
     from rotkehlchen.types import ChecksumEvmAddress
-
-BATCH_SIZE: Final = 250
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -261,9 +259,6 @@ class HistoricalBalancesManager:
                 from_ts=from_ts,
                 to_ts=to_ts,
                 order_by_rules=[('timestamp', True)],
-                # this only excludes the event that touches the ignored asset
-                # and not the entire group of events per event_identifier.
-                exclude_entire_event_group_on_ignored_asset=False,
                 exclude_ignored_assets=True,
                 assets=assets,
                 exclude_subtypes=[

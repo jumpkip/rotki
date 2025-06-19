@@ -7,6 +7,7 @@ from rotkehlchen.chain.ethereum.constants import CPT_KRAKEN, CPT_POLONIEX, CPT_U
 from rotkehlchen.chain.ethereum.modules.monerium.constants import V1_TO_V2_MONERIUM_MAPPINGS
 from rotkehlchen.chain.evm.constants import MERKLE_CLAIM
 from rotkehlchen.chain.evm.decoding.base import BaseDecoderToolsWithDSProxy
+from rotkehlchen.chain.evm.decoding.constants import CPT_ACCOUNT_DELEGATION
 from rotkehlchen.chain.evm.decoding.decoder import EVMTransactionDecoderWithDSProxy
 from rotkehlchen.chain.evm.decoding.structures import (
     DEFAULT_DECODING_OUTPUT,
@@ -71,6 +72,10 @@ class EthereumTransactionDecoder(EVMTransactionDecoderWithDSProxy):
                     identifier=CPT_UPHOLD,
                     label='Uphold.com',
                     image='uphold.svg',
+                ), CounterpartyDetails(
+                    identifier=CPT_ACCOUNT_DELEGATION,
+                    label='Account delegation',
+                    image='account_delegation.svg',
                 ),
             ],
             base_tools=BaseDecoderToolsWithDSProxy(
@@ -78,8 +83,8 @@ class EthereumTransactionDecoder(EVMTransactionDecoderWithDSProxy):
                 evm_inquirer=ethereum_inquirer,
                 is_non_conformant_erc721_fn=self._is_non_conformant_erc721,
                 address_is_exchange_fn=self._address_is_exchange,
+                exceptions_mappings=V1_TO_V2_MONERIUM_MAPPINGS,
             ),
-            exceptions_mappings=V1_TO_V2_MONERIUM_MAPPINGS,
             beacon_chain=beacon_chain,
         )
 
